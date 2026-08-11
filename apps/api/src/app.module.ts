@@ -5,6 +5,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { CollectorsModule } from './modules/collectors/collectors.module';
 import { ContainersModule } from './modules/containers/containers.module';
 import { MerchantsModule } from './modules/merchants/merchants.module';
+import { OrdersModule } from './modules/orders/orders.module';
 import { StationsModule } from './modules/stations/stations.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RedisModule } from './redis/redis.module';
@@ -19,6 +20,7 @@ import { RedisModule } from './redis/redis.module';
     RedisModule,
     AuthModule,
     MerchantsModule,
+    OrdersModule,
     CollectorsModule,
     StationsModule,
     ContainersModule,

@@ -70,6 +70,8 @@ model Ward {
   code       String      @unique
   name       String
   city       String      @default("Ho Chi Minh City")
+  centerLat  Float?      @map("center_lat")
+  centerLng  Float?      @map("center_lng")
   createdAt  DateTime    @default(now()) @map("created_at")
   updatedAt  DateTime    @updatedAt @map("updated_at")
   deletedAt  DateTime?   @map("deleted_at")
@@ -87,6 +89,7 @@ model Merchant {
   businessName String       @map("business_name")
   address      String?
   avgDailyLiters Decimal?   @map("avg_daily_liters") @db.Decimal(10, 2)
+  lastCollectedAt DateTime? @map("last_collected_at")
   location     Unsupported("geography(Point, 4326)")?
   status       EntityStatus @default(ACTIVE)
   isActive     Boolean      @default(true) @map("is_active")
@@ -108,6 +111,7 @@ model Collector {
   userId       String                  @unique @map("user_id") @db.Uuid
   wardId       String                  @map("ward_id") @db.Uuid
   displayName  String                  @map("display_name")
+  maxCapacityLiters Decimal             @default(100) @map("max_capacity_l") @db.Decimal(10, 2)
   status       EntityStatus            @default(ACTIVE)
   isActive     Boolean                 @default(true) @map("is_active")
   lastSeenAt   DateTime?               @map("last_seen_at")
@@ -157,6 +161,7 @@ model Container {
   deletedAt      DateTime?          @map("deleted_at")
   merchant       Merchant           @relation(fields: [merchantId], references: [id])
   transactions   CollectionTransaction[]
+  orders         CollectionOrder[]
 
   @@index([merchantId, state])
   @@map("containers")
@@ -165,6 +170,9 @@ model Container {
 model CollectionOrder {
   id           String                  @id @default(uuid()) @db.Uuid
   merchantId   String                  @map("merchant_id") @db.Uuid
+  containerId  String?                 @map("container_id") @db.Uuid
+  expectedLiters Decimal?              @map("expected_liters") @db.Decimal(10, 2)
+  note         String?
   collectorId  String?                 @map("collector_id") @db.Uuid
   status       OrderStatus             @default(READY)
   source       OrderSource             @default(MANUAL)
@@ -177,6 +185,7 @@ model CollectionOrder {
   updatedAt    DateTime                @updatedAt @map("updated_at")
   deletedAt    DateTime?               @map("deleted_at")
   merchant     Merchant                @relation(fields: [merchantId], references: [id])
+  container    Container?              @relation(fields: [containerId], references: [id])
   collector    Collector?              @relation(fields: [collectorId], references: [id])
   transactions CollectionTransaction[]
 

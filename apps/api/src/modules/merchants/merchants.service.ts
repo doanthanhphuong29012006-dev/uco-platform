@@ -1,6 +1,6 @@
 import { ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma} from '@prisma/client';
-import { EntityStatus, Role } from '@prisma/client';
+import { EntityStatus, OrderStatus, Role } from '@prisma/client';
 import type {
   MerchantListQueryInput,
   MerchantPatchInput,
@@ -40,6 +40,44 @@ export class MerchantsService {
       throw new NotFoundException('Merchant profile not found');
     }
     return this.findOne(merchant.id);
+  }
+
+  async dashboard(user: AccessTokenPayload) {
+    const merchant = await this.prisma.merchant.findUnique({ where: { userId: user.sub } });
+    if (!merchant || merchant.status === EntityStatus.INACTIVE) {
+      throw new NotFoundException('Merchant profile not found');
+    }
+    const monthStart = new Date();
+    monthStart.setUTCDate(1);
+    monthStart.setUTCHours(0, 0, 0, 0);
+    const [containers, pendingOrders, monthlyLiters, latestTransaction] = await Promise.all([
+      this.prisma.container.findMany({
+        where: { merchantId: merchant.id, status: EntityStatus.ACTIVE },
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.collectionOrder.count({
+        where: { merchantId: merchant.id, status: { in: [OrderStatus.READY, OrderStatus.ASSIGNED] }, deletedAt: null },
+      }),
+      this.prisma.collectionTransaction.aggregate({
+        where: { merchantId: merchant.id, collectedAt: { gte: monthStart }, deletedAt: null },
+        _sum: { actualLiters: true },
+      }),
+      this.prisma.collectionTransaction.findFirst({
+        where: { merchantId: merchant.id, deletedAt: null },
+        orderBy: { collectedAt: 'desc' },
+        select: { collectedAt: true },
+      }),
+    ]);
+    return {
+      containers: containers.map((container) => ({
+        code: container.qrCode,
+        state: container.state,
+        capacity_l: container.capacityLiters === null ? null : Number(container.capacityLiters),
+      })),
+      pending_orders: pendingOrders,
+      liters_this_month: monthlyLiters._sum.actualLiters === null ? 0 : Number(monthlyLiters._sum.actualLiters),
+      last_collected_at: latestTransaction?.collectedAt ?? merchant.lastCollectedAt,
+    };
   }
 
   async update(user: AccessTokenPayload, id: string, input: MerchantPatchInput) {

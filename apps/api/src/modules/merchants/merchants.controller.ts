@@ -22,6 +22,12 @@ export class MerchantsController {
   }
 
   @Roles(Role.MERCHANT, Role.ADMIN)
+  @Get('me/dashboard')
+  dashboard(@CurrentUser() user: AccessTokenPayload) {
+    return this.service.dashboard(user);
+  }
+
+  @Roles(Role.MERCHANT, Role.ADMIN)
   @Get('me')
   me(@CurrentUser() user: AccessTokenPayload) {
     return this.service.me(user);

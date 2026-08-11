@@ -22,6 +22,7 @@ const merchantSeeds = [
     lat: 10.78255,
     lng: 106.68475,
     avgDailyLiters: 20,
+    lastCollectedDaysAgo: 0,
   },
   {
     id: '20000000-0000-4000-8000-000000000002',
@@ -34,6 +35,7 @@ const merchantSeeds = [
     lat: 10.78195,
     lng: 106.68535,
     avgDailyLiters: 18,
+    lastCollectedDaysAgo: 3,
   },
   {
     id: '20000000-0000-4000-8000-000000000003',
@@ -46,6 +48,7 @@ const merchantSeeds = [
     lat: 10.78305,
     lng: 106.68615,
     avgDailyLiters: 25,
+    lastCollectedDaysAgo: 10,
   },
   {
     id: '20000000-0000-4000-8000-000000000004',
@@ -58,6 +61,7 @@ const merchantSeeds = [
     lat: 10.78095,
     lng: 106.68425,
     avgDailyLiters: 15,
+    lastCollectedDaysAgo: 0,
   },
   {
     id: '20000000-0000-4000-8000-000000000005',
@@ -70,6 +74,7 @@ const merchantSeeds = [
     lat: 10.78155,
     lng: 106.68375,
     avgDailyLiters: 22,
+    lastCollectedDaysAgo: 3,
   },
 ] as const;
 
@@ -138,6 +143,8 @@ async function main(): Promise<void> {
       code: 'Q3-P7',
       name: 'Phường 7, Quận 3',
       city: 'Ho Chi Minh City',
+      centerLat: 10.7818,
+      centerLng: 106.6851,
       deletedAt: null,
     },
     create: {
@@ -145,6 +152,8 @@ async function main(): Promise<void> {
       code: 'Q3-P7',
       name: 'Phường 7, Quận 3',
       city: 'Ho Chi Minh City',
+      centerLat: 10.7818,
+      centerLng: 106.6851,
     },
   });
 
@@ -172,6 +181,7 @@ async function main(): Promise<void> {
         businessName: merchant.businessName,
         address: merchant.address,
         avgDailyLiters: merchant.avgDailyLiters,
+        lastCollectedAt: new Date(Date.now() - merchant.lastCollectedDaysAgo * 24 * 60 * 60 * 1000),
         status: 'ACTIVE',
         isActive: true,
         deletedAt: null,
@@ -183,6 +193,7 @@ async function main(): Promise<void> {
         businessName: merchant.businessName,
         address: merchant.address,
         avgDailyLiters: merchant.avgDailyLiters,
+        lastCollectedAt: new Date(Date.now() - merchant.lastCollectedDaysAgo * 24 * 60 * 60 * 1000),
         status: 'ACTIVE',
       },
     });
@@ -203,6 +214,7 @@ async function main(): Promise<void> {
         userId: collector.userId,
         wardId,
         displayName: collector.displayName,
+        maxCapacityLiters: 100,
         status: 'ACTIVE',
         isActive: true,
         deletedAt: null,
@@ -212,6 +224,7 @@ async function main(): Promise<void> {
         userId: collector.userId,
         wardId,
         displayName: collector.displayName,
+        maxCapacityLiters: 100,
         status: 'ACTIVE',
       },
     });

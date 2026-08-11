@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ContainerState, EntityStatus } from '@eco-oil/shared-types';
+import { ContainerState, EntityStatus, OrderStatus } from '@eco-oil/shared-types';
 
 export const uuidSchema = z.string().uuid();
 export const phoneSchema = z.string().min(8).max(20);
@@ -111,3 +111,31 @@ export const containerAssignSchema = z.object({
   merchant_id: uuidSchema,
 });
 export type ContainerAssignInput = z.infer<typeof containerAssignSchema>;
+
+export const orderReadySchema = z.object({
+  container_id: uuidSchema.optional(),
+  expected_liters: z.number().finite().positive().max(100000).optional(),
+  note: z.string().trim().max(1000).optional(),
+});
+export type OrderReadyInput = z.infer<typeof orderReadySchema>;
+
+export const orderListQuerySchema = paginationSchema.extend({
+  status: z.nativeEnum(OrderStatus).optional(),
+});
+export type OrderListQueryInput = z.infer<typeof orderListQuerySchema>;
+
+const optionalCoordinate = z.coerce.number().finite();
+export const routeQuerySchema = z
+  .object({
+    lat: optionalCoordinate.min(-90).max(90).optional(),
+    lng: optionalCoordinate.min(-180).max(180).optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.lat !== undefined && value.lng === undefined) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ['lng'], message: 'lng is required with lat' });
+    }
+    if (value.lng !== undefined && value.lat === undefined) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ['lat'], message: 'lat is required with lng' });
+    }
+  });
+export type RouteQueryInput = z.infer<typeof routeQuerySchema>;
