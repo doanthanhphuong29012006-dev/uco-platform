@@ -13,6 +13,9 @@ import { PrismaService } from '../src/prisma/prisma.service';
 const containerOneId = '60000000-0000-4000-8000-000000000001';
 const containerTwoId = '60000000-0000-4000-8000-000000000003';
 const containerThreeId = '60000000-0000-4000-8000-000000000005';
+const merchantOneId = '20000000-0000-4000-8000-000000000001';
+const merchantTwoId = '20000000-0000-4000-8000-000000000002';
+const merchantThreeId = '20000000-0000-4000-8000-000000000003';
 
 describe('Orders and collector routes (e2e)', () => {
   let app: INestApplication;
@@ -31,10 +34,15 @@ describe('Orders and collector routes (e2e)', () => {
     app.setGlobalPrefix('api/v1', { exclude: ['health'] });
     app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
     await app.init();
-    await app.get(PrismaService).collectionOrder.updateMany({
+    const prisma = app.get(PrismaService);
+    await prisma.collectionOrder.updateMany({
       where: { status: { in: ['READY', 'ASSIGNED'] } },
       data: { status: 'CANCELLED', cancelledAt: new Date() },
     });
+    const now = Date.now();
+    await prisma.merchant.update({ where: { id: merchantOneId }, data: { avgDailyLiters: 20, lastCollectedAt: new Date(now) } });
+    await prisma.merchant.update({ where: { id: merchantTwoId }, data: { avgDailyLiters: 18, lastCollectedAt: new Date(now - 3 * 24 * 60 * 60 * 1000) } });
+    await prisma.merchant.update({ where: { id: merchantThreeId }, data: { avgDailyLiters: 25, lastCollectedAt: new Date(now - 10 * 24 * 60 * 60 * 1000) } });
   });
 
   afterAll(async () => {

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ContainerState, EntityStatus, OrderStatus } from '@eco-oil/shared-types';
+import { ContainerState, EntityStatus, OrderStatus, Quality } from '@eco-oil/shared-types';
 
 export const uuidSchema = z.string().uuid();
 export const phoneSchema = z.string().min(8).max(20);
@@ -139,3 +139,24 @@ export const routeQuerySchema = z
     }
   });
 export type RouteQueryInput = z.infer<typeof routeQuerySchema>;
+
+export const collectionCreateSchema = z.object({
+  client_uuid: uuidSchema,
+  order_id: uuidSchema,
+  container_code: z.string().trim().min(1).max(100),
+  actual_liters: z.number().finite().positive().max(100000),
+  quality: z.nativeEnum(Quality),
+  geo: z.object({
+    lat: z.number().finite().min(-90).max(90),
+    lng: z.number().finite().min(-180).max(180),
+  }),
+  photos: z.array(z.string().url()).max(20).default([]),
+  collected_at: z.coerce.date().optional(),
+});
+export type CollectionCreateInput = z.infer<typeof collectionCreateSchema>;
+
+export const collectionListQuerySchema = paginationSchema.extend({
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+});
+export type CollectionListQueryInput = z.infer<typeof collectionListQuerySchema>;

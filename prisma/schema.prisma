@@ -47,6 +47,10 @@ enum DeliveryStatus {
   REJECTED
 }
 
+enum AlertType {
+  GEO_MISMATCH
+}
+
 model User {
   id        String    @id @default(uuid()) @db.Uuid
   zaloId    String    @unique @map("zalo_id")
@@ -155,6 +159,7 @@ model Container {
   state          ContainerState     @default(AT_MERCHANT)
   status         EntityStatus       @default(ACTIVE)
   capacityLiters Decimal?           @map("capacity_liters") @db.Decimal(10, 2)
+  lastSeenAt     DateTime?          @map("last_seen_at")
   isActive       Boolean            @default(true) @map("is_active")
   createdAt      DateTime           @default(now()) @map("created_at")
   updatedAt      DateTime           @updatedAt @map("updated_at")
@@ -212,6 +217,7 @@ model CollectionTransaction {
   container    Container          @relation(fields: [containerId], references: [id])
   merchant     Merchant           @relation(fields: [merchantId], references: [id])
   collector    Collector          @relation(fields: [collectorId], references: [id])
+  alerts       Alert[]
 
   @@map("collection_transactions")
 }
@@ -233,6 +239,19 @@ model StationDelivery {
   @@index([stationId, deliveredAt])
   @@index([collectorId, deliveredAt])
   @@map("station_deliveries")
+}
+
+model Alert {
+  id            String               @id @default(uuid()) @db.Uuid
+  transactionId String               @map("transaction_id") @db.Uuid
+  type          AlertType
+  message       String?
+  details       Json                 @default("{}")
+  createdAt     DateTime             @default(now()) @map("created_at")
+  transaction   CollectionTransaction @relation(fields: [transactionId], references: [id])
+
+  @@index([type, createdAt])
+  @@map("alerts")
 }
 
 model RefreshToken {
