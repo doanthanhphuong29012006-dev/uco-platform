@@ -14,6 +14,11 @@ enum Role {
   ADMIN
 }
 
+enum EntityStatus {
+  ACTIVE
+  INACTIVE
+}
+
 enum ContainerState {
   AT_MERCHANT
   IN_TRANSIT
@@ -81,7 +86,9 @@ model Merchant {
   wardId       String       @map("ward_id") @db.Uuid
   businessName String       @map("business_name")
   address      String?
+  avgDailyLiters Decimal?   @map("avg_daily_liters") @db.Decimal(10, 2)
   location     Unsupported("geography(Point, 4326)")?
+  status       EntityStatus @default(ACTIVE)
   isActive     Boolean      @default(true) @map("is_active")
   createdAt    DateTime     @default(now()) @map("created_at")
   updatedAt    DateTime     @updatedAt @map("updated_at")
@@ -101,6 +108,7 @@ model Collector {
   userId       String                  @unique @map("user_id") @db.Uuid
   wardId       String                  @map("ward_id") @db.Uuid
   displayName  String                  @map("display_name")
+  status       EntityStatus            @default(ACTIVE)
   isActive     Boolean                 @default(true) @map("is_active")
   lastSeenAt   DateTime?               @map("last_seen_at")
   createdAt    DateTime                @default(now()) @map("created_at")
@@ -123,6 +131,7 @@ model Station {
   name       String
   address    String?
   location   Unsupported("geography(Point, 4326)")?
+  status     EntityStatus      @default(ACTIVE)
   isActive   Boolean           @default(true) @map("is_active")
   createdAt  DateTime          @default(now()) @map("created_at")
   updatedAt  DateTime          @updatedAt @map("updated_at")
@@ -140,6 +149,7 @@ model Container {
   merchantId     String             @map("merchant_id") @db.Uuid
   qrCode         String             @unique @map("qr_code")
   state          ContainerState     @default(AT_MERCHANT)
+  status         EntityStatus       @default(ACTIVE)
   capacityLiters Decimal?           @map("capacity_liters") @db.Decimal(10, 2)
   isActive       Boolean            @default(true) @map("is_active")
   createdAt      DateTime           @default(now()) @map("created_at")

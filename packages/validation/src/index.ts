@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ContainerState, EntityStatus } from '@eco-oil/shared-types';
 
 export const uuidSchema = z.string().uuid();
 export const phoneSchema = z.string().min(8).max(20);
@@ -16,3 +17,97 @@ export const refreshTokenSchema = z.object({
 });
 
 export type RefreshTokenInput = z.infer<typeof refreshTokenSchema>;
+
+const coordinateSchema = z.number().finite();
+
+export const merchantRegisterSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  address: z.string().trim().min(1).max(500),
+  lat: coordinateSchema.min(-90).max(90),
+  lng: coordinateSchema.min(-180).max(180),
+  ward_id: uuidSchema,
+  avg_daily_liters: z.number().finite().nonnegative().max(100000).optional(),
+});
+export type MerchantRegisterInput = z.infer<typeof merchantRegisterSchema>;
+
+export const merchantPatchSchema = merchantRegisterSchema.partial().superRefine((value, context) => {
+  if (value.lat !== undefined && value.lng === undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['lng'], message: 'lng is required with lat' });
+  }
+  if (value.lng !== undefined && value.lat === undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['lat'], message: 'lat is required with lng' });
+  }
+});
+export type MerchantPatchInput = z.infer<typeof merchantPatchSchema>;
+
+export const entityStatusSchema = z.object({
+  status: z.nativeEnum(EntityStatus),
+});
+export type EntityStatusInput = z.infer<typeof entityStatusSchema>;
+
+export const paginationSchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  include_inactive: z.coerce.boolean().default(false),
+});
+
+export const merchantListQuerySchema = paginationSchema.extend({
+  ward_id: uuidSchema.optional(),
+  status: z.nativeEnum(EntityStatus).optional(),
+});
+export type MerchantListQueryInput = z.infer<typeof merchantListQuerySchema>;
+
+export const adminPersonCreateSchema = z.object({
+  user_id: uuidSchema,
+  display_name: z.string().trim().min(1).max(200),
+  ward_id: uuidSchema,
+});
+export type AdminPersonCreateInput = z.infer<typeof adminPersonCreateSchema>;
+
+export const adminPersonPatchSchema = adminPersonCreateSchema.partial();
+export type AdminPersonPatchInput = z.infer<typeof adminPersonPatchSchema>;
+export const personListQuerySchema = paginationSchema.extend({
+  ward_id: uuidSchema.optional(),
+  status: z.nativeEnum(EntityStatus).optional(),
+});
+export type PersonListQueryInput = z.infer<typeof personListQuerySchema>;
+
+export const stationCreateSchema = z.object({
+  user_id: uuidSchema,
+  name: z.string().trim().min(1).max(200),
+  address: z.string().trim().min(1).max(500),
+  lat: coordinateSchema.min(-90).max(90),
+  lng: coordinateSchema.min(-180).max(180),
+  ward_id: uuidSchema,
+});
+export type StationCreateInput = z.infer<typeof stationCreateSchema>;
+
+export const stationPatchSchema = stationCreateSchema.partial().superRefine((value, context) => {
+  if (value.lat !== undefined && value.lng === undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['lng'], message: 'lng is required with lat' });
+  }
+  if (value.lng !== undefined && value.lat === undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['lat'], message: 'lat is required with lng' });
+  }
+});
+export type StationPatchInput = z.infer<typeof stationPatchSchema>;
+
+export const containerCreateSchema = z.object({
+  ward_code: z.string().trim().min(1).max(30).optional(),
+  merchant_id: uuidSchema,
+  qr_code: z.string().trim().min(1).max(100).optional(),
+  capacity_liters: z.number().finite().positive().max(100000).optional(),
+  state: z.nativeEnum(ContainerState).optional(),
+});
+export type ContainerCreateInput = z.infer<typeof containerCreateSchema>;
+
+export const containerListQuerySchema = paginationSchema.extend({
+  state: z.nativeEnum(ContainerState).optional(),
+  merchant_id: uuidSchema.optional(),
+});
+export type ContainerListQueryInput = z.infer<typeof containerListQuerySchema>;
+
+export const containerAssignSchema = z.object({
+  merchant_id: uuidSchema,
+});
+export type ContainerAssignInput = z.infer<typeof containerAssignSchema>;

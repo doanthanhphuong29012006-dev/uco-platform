@@ -42,6 +42,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@eco-oil/shared-types':
+        specifier: workspace:*
+        version: link:../../packages/shared-types
       '@eco-oil/validation':
         specifier: workspace:*
         version: link:../../packages/validation
@@ -115,6 +118,9 @@ importers:
 
   packages/validation:
     dependencies:
+      '@eco-oil/shared-types':
+        specifier: workspace:*
+        version: link:../shared-types
       zod:
         specifier: ^3.24.2
         version: 3.25.76

@@ -16,6 +16,7 @@
     "@nestjs/jwt": "^11.0.0",
     "@nestjs/platform-express": "^11.0.11",
     "@prisma/client": "^6.5.0",
+    "@eco-oil/shared-types": "workspace:*",
     "@eco-oil/validation": "workspace:*",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
