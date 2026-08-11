@@ -24,12 +24,14 @@ export class AuthController {
     return this.authService.refresh(input.refresh_token);
   }
 
+  @Roles(Role.MERCHANT, Role.COLLECTOR, Role.STATION, Role.ADMIN)
   @Post('logout')
   logout(@CurrentUser() user: AccessTokenPayload, @Body() body: unknown) {
     const input = refreshTokenSchema.parse(body);
     return this.authService.logout(user.sub, input.refresh_token);
   }
 
+  @Roles(Role.MERCHANT, Role.COLLECTOR, Role.STATION, Role.ADMIN)
   @Get('me')
   me(@CurrentUser() user: AccessTokenPayload) {
     return this.authService.me(user.sub);

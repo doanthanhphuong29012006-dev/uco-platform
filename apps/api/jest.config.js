@@ -8,4 +8,5 @@ module.exports = {
   },
   collectCoverageFrom: ['src/**/*.(t|j)s'],
   testEnvironment: 'node',
+  setupFiles: ['<rootDir>/test/setup-env.ts'],
 };

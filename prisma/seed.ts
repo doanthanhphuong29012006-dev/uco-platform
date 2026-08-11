@@ -306,9 +306,9 @@ async function main(): Promise<void> {
     ORDER BY role, "zalo_id"
   `;
 
-  console.log('\nSeed login users:');
+  console.info('\nSeed login users:');
   console.table(loginUsers);
-  console.log(
+  console.info(
     JSON.stringify(
       {
         seeded: counts[0],

@@ -141,7 +141,7 @@ export class OrdersService {
         distance_m: row.distanceM,
       });
     }
-    // TODO: persist route/route_stops when re-optimization is introduced in Sprint 4.
+    // TODO(sprint-4): Persist route/route_stops when re-optimization is introduced.
     return { stops, total_expected_liters: total, remaining_capacity_l: Math.max(maxCapacity - total, 0) };
   }
 

@@ -1,8 +1,4 @@
 process.env.NODE_ENV = 'test';
-process.env.DATABASE_URL = 'postgres://postgres:postgres@localhost:5433/uco_test';
-process.env.REDIS_URL = 'redis://localhost:6379';
-process.env.JWT_SECRET = 'dev-secret';
-process.env.ZALO_AUTH_MODE = 'mock';
 
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Role } from '@prisma/client';

@@ -4,7 +4,7 @@ import type { IZaloAuthProvider } from './zalo-auth.provider';
 @Injectable()
 export class RealZaloAuthProvider implements IZaloAuthProvider {
   async verify(code: string): Promise<{ zaloId: string; phone: string; name?: string }> {
-    // TODO: gọi Zalo Graph API với app_id/app_secret khi production OAuth được cấu hình.
+    // TODO(sprint-4): Integrate Zalo Graph API with app_id/app_secret from the deployment secret manager.
     void code;
     throw new ServiceUnavailableException('Real Zalo OAuth provider is not configured');
   }
