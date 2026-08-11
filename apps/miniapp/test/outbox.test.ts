@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { CollectionCreateRequest, SyncBatchResponse } from '@eco-oil/shared-types';
+import type { CollectionCreateRequest, StationDeliveryCreateRequest, StationDeliveryResponse, SyncBatchResponse } from '@eco-oil/shared-types';
 import { syncOutbox, type SyncBatchClient } from '../src/lib/outbox-sync';
 import type { OutboxRecord, OutboxStats, OutboxStore } from '../src/lib/outbox-db';
 
@@ -146,4 +146,51 @@ test('network failure keeps the original payload and retries later', async () =>
   assert.equal(saved?.attempts, 1);
   assert.equal(saved?.last_error, 'Failed to fetch');
   assert.deepEqual(saved?.payload, source.payload);
+});
+
+test('station delivery rows use the delivery endpoint and retain the server receipt', async () => {
+  const clientUuid = crypto.randomUUID();
+  const payload: StationDeliveryCreateRequest = {
+    client_uuid: clientUuid,
+    station_id: '00000000-0000-4000-8000-000000000002',
+    transaction_ids: ['00000000-0000-4000-8000-000000000003'],
+    actual_liters: 10,
+    note: 'Khớp số lít',
+    photos: [],
+  };
+  const source: OutboxRecord = {
+    client_uuid: clientUuid,
+    type: 'station_delivery',
+    payload,
+    status: 'pending',
+    attempts: 0,
+    last_error: null,
+    next_attempt_at: null,
+    created_at: new Date().toISOString(),
+    synced_at: null,
+  };
+  const store = new MemoryOutboxStore([source]);
+  let calls = 0;
+  const serverResponse: StationDeliveryResponse = {
+    ...payload,
+    id: 'delivery-1',
+    collector_id: 'collector-1',
+    expected_liters: 10,
+    variance_l: 0,
+    variance_pct: 0,
+    status: 'OK',
+    created_at: new Date().toISOString(),
+  };
+  const client: SyncBatchClient = {
+    syncBatch: async () => { throw new Error('collection endpoint must not receive a station delivery'); },
+    createStationDelivery: async () => { calls += 1; return serverResponse; },
+  };
+
+  await syncOutbox({ store, client });
+
+  const saved = await store.get(clientUuid);
+  assert.equal(calls, 1);
+  assert.equal(saved?.status, 'synced');
+  assert.equal(saved?.server_id, 'delivery-1');
+  assert.deepEqual(saved?.server_response, serverResponse);
 });

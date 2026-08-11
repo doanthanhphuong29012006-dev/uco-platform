@@ -17,6 +17,8 @@ type DeliveryRow = {
   variance_liters: number;
   variance_pct: number;
   status: DeliveryStatus;
+  note: string | null;
+  photos: unknown;
   delivered_at: Date;
   created_at: Date;
   transaction_ids: string[];
@@ -79,6 +81,7 @@ export class StationDeliveriesService {
           INSERT INTO "station_deliveries" (
             "id", "client_uuid", "station_id", "collector_id", "expected_liters", "actual_liters",
             "variance_liters", "variance_pct", "status", "delivered_at", "created_at"
+            , "note", "photos"
           ) VALUES (
             ${randomUUID()}::uuid,
             ${input.client_uuid},
@@ -90,15 +93,17 @@ export class StationDeliveriesService {
             ${variancePct},
             ${status}::"DeliveryStatus",
             ${deliveredAt},
-            now()
+            now(),
+            ${input.note ?? null},
+            ${JSON.stringify(input.photos ?? [])}::jsonb
           )
           ON CONFLICT ("client_uuid") DO NOTHING
           RETURNING *
         )
         SELECT inserted."id", inserted."client_uuid", inserted."station_id", inserted."collector_id",
           inserted."expected_liters"::float8 AS "expected_liters", inserted."actual_liters"::float8 AS "actual_liters",
-          inserted."variance_liters"::float8 AS "variance_liters", inserted."variance_pct"::float8 AS "variance_pct",
-          inserted."status"::text AS "status", inserted."delivered_at", inserted."created_at",
+        inserted."variance_liters"::float8 AS "variance_liters", inserted."variance_pct"::float8 AS "variance_pct",
+          inserted."status"::text AS "status", inserted."note", inserted."photos", inserted."delivered_at", inserted."created_at",
           ARRAY[]::uuid[] AS "transaction_ids"
         FROM inserted
       `;
@@ -165,7 +170,7 @@ export class StationDeliveriesService {
       SELECT sd."id", sd."client_uuid", sd."station_id", sd."collector_id",
         sd."expected_liters"::float8 AS "expected_liters", sd."actual_liters"::float8 AS "actual_liters",
         sd."variance_liters"::float8 AS "variance_liters", sd."variance_pct"::float8 AS "variance_pct",
-        sd."status"::text AS "status", sd."delivered_at", sd."created_at",
+        sd."status"::text AS "status", sd."note", sd."photos", sd."delivered_at", sd."created_at",
         COALESCE(array_agg(ct."id") FILTER (WHERE ct."id" IS NOT NULL), ARRAY[]::uuid[]) AS "transaction_ids"
       FROM "station_deliveries" sd
       LEFT JOIN "collection_transactions" ct ON ct."station_delivery_id" = sd."id"
@@ -181,7 +186,7 @@ export class StationDeliveriesService {
       SELECT sd."id", sd."client_uuid", sd."station_id", sd."collector_id",
         sd."expected_liters"::float8 AS "expected_liters", sd."actual_liters"::float8 AS "actual_liters",
         sd."variance_liters"::float8 AS "variance_liters", sd."variance_pct"::float8 AS "variance_pct",
-        sd."status"::text AS "status", sd."delivered_at", sd."created_at",
+        sd."status"::text AS "status", sd."note", sd."photos", sd."delivered_at", sd."created_at",
         COALESCE(array_agg(ct."id") FILTER (WHERE ct."id" IS NOT NULL), ARRAY[]::uuid[]) AS "transaction_ids"
       FROM "station_deliveries" sd
       LEFT JOIN "collection_transactions" ct ON ct."station_delivery_id" = sd."id"
@@ -204,6 +209,8 @@ export class StationDeliveriesService {
       variance_l: Number(row.variance_liters),
       variance_pct: Number(row.variance_pct),
       status: row.status,
+      note: row.note,
+      photos: row.photos,
       delivered_at: row.delivered_at,
       created_at: row.created_at,
     };

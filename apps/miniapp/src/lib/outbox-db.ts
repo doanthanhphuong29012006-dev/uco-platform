@@ -1,5 +1,5 @@
 import Dexie, { type Table } from 'dexie';
-import type { CollectionCreateRequest, ContainerLookupResponse, CurrentRouteResponse } from '@eco-oil/shared-types';
+import type { CollectionCreateRequest, ContainerLookupResponse, CurrentRouteResponse, StationDeliveryCreateRequest } from '@eco-oil/shared-types';
 
 export type OutboxType = 'collection' | 'station_delivery';
 export type OutboxStatus = 'pending' | 'syncing' | 'synced' | 'failed';
@@ -14,6 +14,8 @@ export interface OutboxRecord {
   next_attempt_at: string | null;
   created_at: string;
   synced_at: string | null;
+  server_id?: string;
+  server_response?: unknown;
 }
 
 export interface CachedRouteRecord {
@@ -148,6 +150,22 @@ export async function enqueueCollection(payload: CollectionCreateRequest): Promi
   const record: OutboxRecord = {
     client_uuid: payload.client_uuid,
     type: 'collection',
+    payload,
+    status: 'pending',
+    attempts: 0,
+    last_error: null,
+    next_attempt_at: null,
+    created_at: new Date().toISOString(),
+    synced_at: null,
+  };
+  await dexieOutboxStore.addPending(record);
+  return record;
+}
+
+export async function enqueueStationDelivery(payload: StationDeliveryCreateRequest): Promise<OutboxRecord> {
+  const record: OutboxRecord = {
+    client_uuid: payload.client_uuid,
+    type: 'station_delivery',
     payload,
     status: 'pending',
     attempts: 0,

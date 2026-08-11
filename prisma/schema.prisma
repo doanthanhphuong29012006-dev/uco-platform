@@ -246,6 +246,8 @@ model StationDelivery {
   varianceLiters Decimal        @map("variance_liters") @db.Decimal(10, 2)
   variancePct    Decimal        @map("variance_pct") @db.Decimal(10, 6)
   status         DeliveryStatus @default(OK)
+  note           String?
+  photos         Json           @default("[]")
   deliveredAt    DateTime       @default(now()) @map("delivered_at")
   createdAt      DateTime       @default(now()) @map("created_at")
   deletedAt      DateTime?      @map("deleted_at")

@@ -164,6 +164,7 @@ export interface CollectionCreateRequest {
   quality: Quality;
   geo: GeoPoint;
   photos: string[];
+  collected_at?: string;
 }
 
 export interface CollectionTransactionResponse extends CollectionCreateRequest {
@@ -185,4 +186,36 @@ export interface SyncBatchResult {
 export interface SyncBatchResponse {
   results: SyncBatchResult[];
   summary: { created: number; duplicate: number; failed: number };
+}
+
+export interface StationRecommendation {
+  id: string;
+  name: string;
+  address: string | null;
+  lat: number;
+  lng: number;
+  capacity_l: number;
+  current_volume_l: number;
+  remaining_capacity_l: number;
+  distance_m: number;
+}
+
+export interface StationDeliveryCreateRequest {
+  client_uuid: string;
+  station_id: string;
+  transaction_ids: string[];
+  actual_liters: number;
+  delivered_at?: string;
+  note?: string;
+  photos?: string[];
+}
+
+export interface StationDeliveryResponse extends StationDeliveryCreateRequest {
+  id: string;
+  collector_id: string;
+  expected_liters: number;
+  variance_l: number;
+  variance_pct: number;
+  status: DeliveryStatus;
+  created_at: string;
 }

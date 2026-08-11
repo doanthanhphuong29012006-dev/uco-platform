@@ -13,17 +13,20 @@ import { startOutboxSyncWorker, syncOutbox } from '../lib/outbox-sync';
 import { zaloClient, WARD_CENTER } from '../lib/zalo-client';
 import type { PhotoAsset } from '../lib/zalo-client';
 import { StatusView } from '../components/StatusView';
+import { StationDeliveryFlow } from './StationDeliveryFlow';
 
 type CollectorScreen =
   | { name: 'route' }
   | { name: 'qr'; stop: RouteStop }
   | { name: 'entry'; stop: RouteStop; container: ContainerLookupResponse }
   | { name: 'summary' }
+  | { name: 'station-delivery' }
   | { name: 'outbox' };
 
-interface CompletedStop {
+export interface CompletedStop {
   liters: number;
   clientUuid: string;
+  stop: RouteStop;
 }
 
 export function CollectorFlow() {
@@ -82,7 +85,7 @@ export function CollectorFlow() {
   }
 
   function onCollectionSaved(stop: RouteStop, liters: number, clientUuid: string): void {
-    setCompleted((current) => ({ ...current, [stop.order_id]: { liters, clientUuid } }));
+    setCompleted((current) => ({ ...current, [stop.order_id]: { liters, clientUuid, stop } }));
     setScreen({ name: 'route' });
     void queryClient.invalidateQueries({ queryKey: ['collector-route'] });
   }
@@ -102,7 +105,9 @@ export function CollectorFlow() {
       />
     );
   } else if (screen.name === 'summary') {
-    content = <CollectorSummaryScreen route={route.data?.route} completed={completed} totalStops={initialStopCount ?? route.data?.route.stops.length ?? 0} onBack={() => setScreen({ name: 'route' })} />;
+    content = <CollectorSummaryScreen route={route.data?.route} completed={completed} totalStops={initialStopCount ?? route.data?.route.stops.length ?? 0} onBack={() => setScreen({ name: 'route' })} onOpenDelivery={() => setScreen({ name: 'station-delivery' })} />;
+  } else if (screen.name === 'station-delivery') {
+    content = <StationDeliveryFlow completed={completed} onBack={() => setScreen({ name: 'route' })} />;
   } else if (route.isPending) {
     content = <StatusView title="Đang tải tuyến hôm nay…" />;
   } else if (route.isError) {
@@ -356,6 +361,7 @@ function CollectorEntryScreen({ stop, container, onBack, onSuccess }: { stop: Ro
       quality,
       geo: currentGeo,
       photos: photos.map((photo) => photo.url),
+      collected_at: new Date().toISOString(),
     };
     try {
       await enqueueCollection(payload);
@@ -391,7 +397,7 @@ function CollectorEntryScreen({ stop, container, onBack, onSuccess }: { stop: Ro
   );
 }
 
-function CollectorSummaryScreen({ route, completed, totalStops, onBack }: { route: CurrentRouteResponse | undefined; completed: Record<string, CompletedStop>; totalStops: number; onBack: () => void }) {
+function CollectorSummaryScreen({ route, completed, totalStops, onBack, onOpenDelivery }: { route: CurrentRouteResponse | undefined; completed: Record<string, CompletedStop>; totalStops: number; onBack: () => void; onOpenDelivery: () => void }) {
   const totalCollected = Object.values(completed).reduce((sum, item) => sum + item.liters, 0);
   const vehicleCapacity = route ? route.total_expected_liters + route.remaining_capacity_l : 0;
   return (
@@ -400,7 +406,7 @@ function CollectorSummaryScreen({ route, completed, totalStops, onBack }: { rout
       <header className="collector-screen-heading"><p className="eyebrow">KẾT QUẢ CA</p><h1>Tóm tắt thu gom</h1></header>
       <div className="summary-hero"><span>Đã thu hôm nay</span><strong>{formatLiters(totalCollected)}</strong></div>
       <section className="summary-grid"><div><span>Điểm đã thu</span><strong>{Object.keys(completed).length} / {totalStops}</strong></div><div><span>Dung tích còn lại</span><strong>{formatLiters(Math.max(vehicleCapacity - totalCollected, 0))}</strong></div></section>
-      <button className="station-button" disabled>Đi nộp trạm <small>Sắp có ở bước tiếp theo</small></button>
+      <button className="station-button" onClick={onOpenDelivery} disabled={Object.keys(completed).length === 0}>Đi nộp trạm <small>{Object.keys(completed).length === 0 ? 'Chưa có giao dịch' : 'Đối soát và chọn trạm'}</small></button>
     </div>
   );
 }

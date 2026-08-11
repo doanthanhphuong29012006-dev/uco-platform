@@ -1,4 +1,4 @@
-import type { CollectionCreateRequest, SyncBatchResponse } from '@eco-oil/shared-types';
+import type { CollectionCreateRequest, StationDeliveryCreateRequest, StationDeliveryResponse, SyncBatchResponse } from '@eco-oil/shared-types';
 import {
   OUTBOX_BATCH_SIZE,
   OUTBOX_RETENTION_DAYS,
@@ -9,6 +9,7 @@ import {
 
 export interface SyncBatchClient {
   syncBatch(items: CollectionCreateRequest[]): Promise<SyncBatchResponse>;
+  createStationDelivery?(payload: StationDeliveryCreateRequest): Promise<StationDeliveryResponse>;
 }
 
 export interface SyncOutboxOptions {
@@ -31,6 +32,10 @@ function backoffMs(attempts: number): number {
 }
 
 function errorText(error: unknown): string {
+  if (typeof error === 'object' && error !== null && 'code' in error && 'message' in error) {
+    const sdkError = error as { code: unknown; message: unknown };
+    return `${String(sdkError.code)}: ${String(sdkError.message)}`;
+  }
   if (error instanceof Error) {
     return error.message;
   }
@@ -57,42 +62,60 @@ async function performSync({ store = dexieOutboxStore, client, now = () => new D
     return { sent: 0, synced: 0, failed: 0 };
   }
 
-  const syncable = records.filter((record) => record.type === 'collection');
+  const collectionRecords = records.filter((record) => record.type === 'collection');
+  const stationDeliveryRecords = records.filter((record) => record.type === 'station_delivery');
   for (const record of records) {
     await store.update({ ...record, status: 'syncing' });
   }
 
-  let response: SyncBatchResponse;
-  try {
-    const syncClient = client ?? (await import('./api')).api;
-    response = await syncClient.syncBatch(syncable.map((record) => record.payload as CollectionCreateRequest));
-  } catch (error) {
-    for (const record of records) {
-      await store.update(failedRecord(record, errorText(error), currentTime));
-    }
-    return { sent: syncable.length, synced: 0, failed: records.length };
-  }
-
-  const results = new Map(response.results.map((result) => [result.client_uuid, result]));
+  const syncClient = client ?? (await import('./api')).api;
   let synced = 0;
   let failed = 0;
-  for (const record of records) {
-    const result = record.type === 'collection' ? results.get(record.client_uuid) : undefined;
-    if (result?.status === 'created' || result?.status === 'duplicate') {
-      await store.update({ ...record, status: 'synced', last_error: null, next_attempt_at: null, synced_at: currentTime.toISOString() });
-      synced += 1;
-      continue;
+  let sent = 0;
+
+  if (collectionRecords.length > 0) {
+    sent += collectionRecords.length;
+    try {
+      const response = await syncClient.syncBatch(collectionRecords.map((record) => record.payload as CollectionCreateRequest));
+      const results = new Map(response.results.map((result) => [result.client_uuid, result]));
+      for (const record of collectionRecords) {
+        const result = results.get(record.client_uuid);
+        if (result?.status === 'created' || result?.status === 'duplicate') {
+          await store.update({ ...record, status: 'synced', last_error: null, next_attempt_at: null, synced_at: currentTime.toISOString(), server_id: result.id });
+          synced += 1;
+        } else {
+          const message = result?.error
+            ? `${result.error.code}: ${result.error.message}`
+            : 'Không nhận được kết quả đồng bộ cho giao dịch';
+          await store.update(failedRecord(record, message, currentTime));
+          failed += 1;
+        }
+      }
+    } catch (error) {
+      for (const record of collectionRecords) {
+        await store.update(failedRecord(record, errorText(error), currentTime));
+        failed += 1;
+      }
     }
-    const message = record.type !== 'collection'
-      ? 'Loại giao dịch chưa được hỗ trợ đồng bộ'
-      : result?.error
-        ? `${result.error.code}: ${result.error.message}`
-        : 'Không nhận được kết quả đồng bộ cho giao dịch';
-    await store.update(failedRecord(record, message, currentTime));
-    failed += 1;
   }
+
+  for (const record of stationDeliveryRecords) {
+    sent += 1;
+    try {
+      if (!syncClient.createStationDelivery) {
+        throw new Error('API nộp trạm chưa được cấu hình');
+      }
+      const response = await syncClient.createStationDelivery(record.payload as StationDeliveryCreateRequest);
+      await store.update({ ...record, status: 'synced', last_error: null, next_attempt_at: null, synced_at: currentTime.toISOString(), server_id: response.id, server_response: response });
+      synced += 1;
+    } catch (error) {
+      await store.update(failedRecord(record, errorText(error), currentTime));
+      failed += 1;
+    }
+  }
+
   await store.deleteSyncedBefore(new Date(currentTime.getTime() - OUTBOX_RETENTION_DAYS * 24 * 60 * 60 * 1_000));
-  return { sent: syncable.length, synced, failed };
+  return { sent, synced, failed };
 }
 
 export function syncOutbox(options: SyncOutboxOptions = {}): Promise<SyncSummary> {

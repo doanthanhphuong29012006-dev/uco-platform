@@ -176,6 +176,8 @@ export const stationDeliveryCreateSchema = z.object({
   }),
   actual_liters: z.number().finite().positive().max(100000),
   delivered_at: z.coerce.date().optional(),
+  note: z.string().trim().max(1000).optional(),
+  photos: z.array(z.string().url()).max(20).default([]),
 });
 export type StationDeliveryCreateInput = z.infer<typeof stationDeliveryCreateSchema>;
 

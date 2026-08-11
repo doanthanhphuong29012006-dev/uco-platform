@@ -11,6 +11,9 @@ import type {
   MerchantTransaction,
   PagedResponse,
   SyncBatchResponse,
+  StationDeliveryCreateRequest,
+  StationDeliveryResponse,
+  StationRecommendation,
 } from '@eco-oil/shared-types';
 import { tokenStorage } from './storage';
 
@@ -154,4 +157,8 @@ export const api = {
     request<CollectionTransactionResponse>('/collections', { method: 'POST', body: payload }),
   syncBatch: (items: CollectionCreateRequest[]) =>
     request<SyncBatchResponse>('/sync/batch', { method: 'POST', body: { items } }),
+  recommendStations: (location: GeoPoint, liters: number) =>
+    request<StationRecommendation[]>(`/stations/recommend?lat=${location.lat}&lng=${location.lng}&liters=${liters}`),
+  createStationDelivery: (payload: StationDeliveryCreateRequest) =>
+    request<StationDeliveryResponse>('/station-deliveries', { method: 'POST', body: payload }),
 };
