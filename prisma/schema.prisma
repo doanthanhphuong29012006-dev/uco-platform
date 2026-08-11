@@ -43,12 +43,19 @@ enum Quality {
 }
 
 enum DeliveryStatus {
-  RECEIVED
-  REJECTED
+  OK
+  FLAGGED
 }
 
 enum AlertType {
   GEO_MISMATCH
+  DELIVERY_VARIANCE
+}
+
+enum AlertSeverity {
+  LOW
+  MEDIUM
+  HIGH
 }
 
 model User {
@@ -139,6 +146,8 @@ model Station {
   name       String
   address    String?
   location   Unsupported("geography(Point, 4326)")?
+  capacityLiters     Decimal          @default(1000) @map("capacity_l") @db.Decimal(10, 2)
+  currentVolumeLiters Decimal          @default(0) @map("current_volume_l") @db.Decimal(10, 2)
   status     EntityStatus      @default(ACTIVE)
   isActive   Boolean           @default(true) @map("is_active")
   createdAt  DateTime          @default(now()) @map("created_at")
@@ -213,28 +222,36 @@ model CollectionTransaction {
   collectedAt  DateTime           @default(now()) @map("collected_at")
   createdAt    DateTime           @default(now()) @map("created_at")
   deletedAt    DateTime?          @map("deleted_at")
+  syncedAt     DateTime?          @map("synced_at")
+  stationDeliveryId String?       @map("station_delivery_id") @db.Uuid
   order        CollectionOrder?   @relation(fields: [orderId], references: [id])
   container    Container          @relation(fields: [containerId], references: [id])
   merchant     Merchant           @relation(fields: [merchantId], references: [id])
   collector    Collector          @relation(fields: [collectorId], references: [id])
   alerts       Alert[]
+  stationDelivery StationDelivery? @relation(fields: [stationDeliveryId], references: [id])
 
+  @@index([stationDeliveryId])
   @@map("collection_transactions")
 }
 
 model StationDelivery {
   id             String         @id @default(uuid()) @db.Uuid
+  clientUuid     String         @unique @map("client_uuid")
   stationId      String         @map("station_id") @db.Uuid
   collectorId    String         @map("collector_id") @db.Uuid
   expectedLiters Decimal        @map("expected_liters") @db.Decimal(10, 2)
   actualLiters   Decimal        @map("actual_liters") @db.Decimal(10, 2)
   varianceLiters Decimal        @map("variance_liters") @db.Decimal(10, 2)
-  status         DeliveryStatus @default(RECEIVED)
+  variancePct    Decimal        @map("variance_pct") @db.Decimal(10, 6)
+  status         DeliveryStatus @default(OK)
   deliveredAt    DateTime       @default(now()) @map("delivered_at")
   createdAt      DateTime       @default(now()) @map("created_at")
   deletedAt      DateTime?      @map("deleted_at")
   station        Station        @relation(fields: [stationId], references: [id])
   collector      Collector      @relation(fields: [collectorId], references: [id])
+  transactions   CollectionTransaction[]
+  alerts         Alert[]
 
   @@index([stationId, deliveredAt])
   @@index([collectorId, deliveredAt])
@@ -243,12 +260,15 @@ model StationDelivery {
 
 model Alert {
   id            String               @id @default(uuid()) @db.Uuid
-  transactionId String               @map("transaction_id") @db.Uuid
+  transactionId String?              @map("transaction_id") @db.Uuid
+  stationDeliveryId String?          @map("station_delivery_id") @db.Uuid
   type          AlertType
+  severity      AlertSeverity?
   message       String?
   details       Json                 @default("{}")
   createdAt     DateTime             @default(now()) @map("created_at")
-  transaction   CollectionTransaction @relation(fields: [transactionId], references: [id])
+  transaction   CollectionTransaction? @relation(fields: [transactionId], references: [id])
+  stationDelivery StationDelivery?    @relation(fields: [stationDeliveryId], references: [id])
 
   @@index([type, createdAt])
   @@map("alerts")

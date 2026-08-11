@@ -244,6 +244,7 @@ async function main(): Promise<void> {
       wardId,
       name: 'Trạm Eco-Oil Phường 7',
       address: '100 Cách Mạng Tháng Tám, Phường 7, Quận 3',
+      capacityLiters: 1000,
       status: 'ACTIVE',
       isActive: true,
       deletedAt: null,
@@ -254,6 +255,7 @@ async function main(): Promise<void> {
       wardId,
       name: 'Trạm Eco-Oil Phường 7',
       address: '100 Cách Mạng Tháng Tám, Phường 7, Quận 3',
+      capacityLiters: 1000,
       status: 'ACTIVE',
     },
   });

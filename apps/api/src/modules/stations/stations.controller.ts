@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Inject, Param, Patch, Post, Query } from '@nestjs/common';
 import { Role } from '@prisma/client';
-import { entityStatusSchema, personListQuerySchema, stationCreateSchema, stationPatchSchema } from '@eco-oil/validation';
+import { entityStatusSchema, personListQuerySchema, stationCreateSchema, stationPatchSchema, stationRecommendSchema } from '@eco-oil/validation';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { StationsService } from './stations.service';
 
@@ -18,6 +18,12 @@ export class StationsController {
   @Get()
   list(@Query() query: Record<string, unknown>) {
     return this.service.list(personListQuerySchema.parse(query));
+  }
+
+  @Roles(Role.COLLECTOR, Role.ADMIN)
+  @Get('recommend')
+  recommend(@Query() query: Record<string, unknown>) {
+    return this.service.recommend(stationRecommendSchema.parse(query));
   }
 
   @Roles(Role.ADMIN)

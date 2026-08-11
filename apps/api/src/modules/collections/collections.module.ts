@@ -7,5 +7,6 @@ import { CollectionsService } from './collections.service';
   imports: [PrismaModule],
   controllers: [CollectionsController],
   providers: [CollectionsService],
+  exports: [CollectionsService],
 })
 export class CollectionsModule {}

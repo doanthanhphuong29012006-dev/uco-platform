@@ -1,7 +1,7 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma} from '@prisma/client';
 import { EntityStatus, Role } from '@prisma/client';
-import type { EntityStatusInput, PersonListQueryInput, StationCreateInput, StationPatchInput } from '@eco-oil/validation';
+import type { EntityStatusInput, PersonListQueryInput, StationCreateInput, StationPatchInput, StationRecommendInput } from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
@@ -75,6 +75,48 @@ export class StationsService {
     return { data: rows.map((row) => this.serialize(row, pointMap.get(row.id))), meta: { page: query.page, limit: query.limit, total } };
   }
 
+  async recommend(query: StationRecommendInput) {
+    const rows = await this.prisma.$queryRaw<Array<{
+      id: string;
+      name: string;
+      address: string | null;
+      capacity_l: number;
+      current_volume_l: number;
+      remaining_capacity_l: number;
+      distance_m: number;
+      lat: number;
+      lng: number;
+    }>>`
+      SELECT s."id", s."name", s."address",
+        s."capacity_l"::float8 AS "capacity_l",
+        s."current_volume_l"::float8 AS "current_volume_l",
+        (s."capacity_l" - s."current_volume_l")::float8 AS "remaining_capacity_l",
+        ST_Distance(
+          s."location",
+          ST_SetSRID(ST_MakePoint(${query.lng}, ${query.lat}), 4326)::geography
+        )::float8 AS "distance_m",
+        ST_Y(s."location"::geometry)::float8 AS "lat",
+        ST_X(s."location"::geometry)::float8 AS "lng"
+      FROM "stations" s
+      WHERE s."status" = 'ACTIVE'
+        AND s."deleted_at" IS NULL
+        AND s."location" IS NOT NULL
+        AND s."capacity_l" - s."current_volume_l" >= ${query.liters}
+      ORDER BY "distance_m" ASC, s."id" ASC
+    `;
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      address: row.address,
+      lat: row.lat,
+      lng: row.lng,
+      capacity_l: Number(row.capacity_l),
+      current_volume_l: Number(row.current_volume_l),
+      remaining_capacity_l: Number(row.remaining_capacity_l),
+      distance_m: Number(row.distance_m),
+    }));
+  }
+
   async findOne(id: string) {
     const row = await this.getRequired(id);
     return this.serialize(row, (await this.prisma.getGeographyPoint('stations', id)) ?? undefined);
@@ -111,6 +153,8 @@ export class StationsService {
       address: row.address,
       lat: point?.lat ?? null,
       lng: point?.lng ?? null,
+      capacity_l: Number(row.capacityLiters),
+      current_volume_l: Number(row.currentVolumeLiters),
       status: row.status,
       is_active: row.isActive,
       ward: { id: row.ward.id, code: row.ward.code, name: row.ward.name },

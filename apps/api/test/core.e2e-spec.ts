@@ -37,6 +37,10 @@ describe('Core CRUD and PostGIS (e2e)', () => {
     await app.init();
 
     const prisma = app.get(PrismaService);
+    await prisma.container.update({
+      where: { id: '60000000-0000-4000-8000-000000000001' },
+      data: { state: 'AT_MERCHANT', lastSeenAt: null },
+    });
     await prisma.user.upsert({
       where: { id: testStationUserId },
       update: { role: Role.STATION, zaloId: testStationZaloId, phone: testStationPhone, name: 'Station Test' },

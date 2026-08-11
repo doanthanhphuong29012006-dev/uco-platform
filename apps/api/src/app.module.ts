@@ -10,6 +10,8 @@ import { OrdersModule } from './modules/orders/orders.module';
 import { StationsModule } from './modules/stations/stations.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RedisModule } from './redis/redis.module';
+import { StationDeliveriesModule } from './modules/station-deliveries/station-deliveries.module';
+import { SyncModule } from './modules/sync/sync.module';
 
 @Module({
   imports: [
@@ -26,6 +28,8 @@ import { RedisModule } from './redis/redis.module';
     StationsModule,
     ContainersModule,
     CollectionsModule,
+    StationDeliveriesModule,
+    SyncModule,
     HealthModule,
   ],
 })

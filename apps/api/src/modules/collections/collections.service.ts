@@ -46,7 +46,11 @@ export class CollectionsService {
     @Inject(ConfigService) private readonly config: ConfigService,
   ) {}
 
-  async create(user: AccessTokenPayload, input: CollectionCreateInput): Promise<{ data: ReturnType<CollectionsService['serialize']>; replayed: boolean }> {
+  async create(user: AccessTokenPayload, input: CollectionCreateInput) {
+    return this.processOne(user, input, false);
+  }
+
+  async processOne(user: AccessTokenPayload, input: CollectionCreateInput, synced: boolean): Promise<{ data: ReturnType<CollectionsService['serialize']>; replayed: boolean }> {
     const result: { row: CollectionRow | null; replayed: boolean } = await this.prisma.$transaction(async (tx) => {
       const collector = await tx.collector.findUnique({ where: { userId: user.sub } });
       if (!collector || collector.status === EntityStatus.INACTIVE) {
@@ -109,6 +113,7 @@ export class CollectionsService {
           INSERT INTO "collection_transactions" (
             "id", "client_uuid", "order_id", "container_id", "merchant_id", "collector_id",
             "actual_liters", "quality", "geo_point", "photos", "collected_at", "created_at"
+            , "synced_at"
           ) VALUES (
             ${randomUUID()}::uuid,
             ${input.client_uuid},
@@ -121,7 +126,8 @@ export class CollectionsService {
             ST_SetSRID(ST_MakePoint(${input.geo.lng}, ${input.geo.lat}), 4326)::geography,
             ${JSON.stringify(input.photos)}::jsonb,
             ${collectedAt},
-            now()
+            now(),
+            ${synced ? new Date() : null}
           )
           ON CONFLICT ("client_uuid") DO NOTHING
           RETURNING *
@@ -138,6 +144,9 @@ export class CollectionsService {
         const replay = await this.loadByClientUuid(tx, input.client_uuid);
         if (!replay) {
           throw new ConflictException('Idempotent transaction could not be loaded');
+        }
+        if (synced) {
+          await tx.collectionTransaction.update({ where: { id: replay.id }, data: { syncedAt: new Date() } });
         }
         return { row: replay, replayed: true };
       }

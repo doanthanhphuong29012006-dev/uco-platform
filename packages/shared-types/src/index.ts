@@ -33,6 +33,11 @@ export enum Quality {
   FLAG = 'FLAG',
 }
 
+export enum DeliveryStatus {
+  OK = 'OK',
+  FLAGGED = 'FLAGGED',
+}
+
 export type UserRole = Role;
 export type QualityStatus = Quality;
 

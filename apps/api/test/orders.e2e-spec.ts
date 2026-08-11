@@ -35,6 +35,10 @@ describe('Orders and collector routes (e2e)', () => {
     app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
     await app.init();
     const prisma = app.get(PrismaService);
+    await prisma.container.updateMany({
+      where: { id: { in: [containerOneId, containerTwoId, containerThreeId] } },
+      data: { state: 'AT_MERCHANT', lastSeenAt: null },
+    });
     await prisma.collectionOrder.updateMany({
       where: { status: { in: ['READY', 'ASSIGNED'] } },
       data: { status: 'CANCELLED', cancelledAt: new Date() },

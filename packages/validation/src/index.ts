@@ -160,3 +160,28 @@ export const collectionListQuerySchema = paginationSchema.extend({
   to: z.coerce.date().optional(),
 });
 export type CollectionListQueryInput = z.infer<typeof collectionListQuerySchema>;
+
+export const syncBatchSchema = z.object({
+  items: z.array(z.unknown()),
+});
+export type SyncBatchInput = z.infer<typeof syncBatchSchema>;
+
+export const stationDeliveryCreateSchema = z.object({
+  client_uuid: uuidSchema,
+  station_id: uuidSchema,
+  transaction_ids: z.array(uuidSchema).min(1).max(100).superRefine((ids, context) => {
+    if (new Set(ids).size !== ids.length) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: 'transaction_ids must be unique' });
+    }
+  }),
+  actual_liters: z.number().finite().positive().max(100000),
+  delivered_at: z.coerce.date().optional(),
+});
+export type StationDeliveryCreateInput = z.infer<typeof stationDeliveryCreateSchema>;
+
+export const stationRecommendSchema = z.object({
+  lat: z.coerce.number().finite().min(-90).max(90),
+  lng: z.coerce.number().finite().min(-180).max(180),
+  liters: z.coerce.number().finite().positive().max(100000),
+});
+export type StationRecommendInput = z.infer<typeof stationRecommendSchema>;
