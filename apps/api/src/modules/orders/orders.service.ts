@@ -119,7 +119,7 @@ export class OrdersService {
     const stops: Array<{
       seq: number;
       order_id: string;
-      merchant: { name: string; address: string | null; lat: number; lng: number };
+      merchant: { name: string; address: string | null; phone?: string | null; lat: number; lng: number };
       container_code: string;
       expected_liters: number;
       priority: number;
@@ -134,7 +134,7 @@ export class OrdersService {
       stops.push({
         seq: stops.length + 1,
         order_id: row.orderId,
-        merchant: { name: row.merchantName, address: row.merchantAddress, lat: row.merchantLat, lng: row.merchantLng },
+        merchant: { name: row.merchantName, address: row.merchantAddress, phone: row.merchantPhone, lat: row.merchantLat, lng: row.merchantLng },
         container_code: row.containerCode,
         expected_liters: row.expectedLiters,
         priority: row.priority,

@@ -125,3 +125,52 @@ export interface CollectionOrderResponse {
   container_state: ContainerState | null;
   capacity_l: number | null;
 }
+
+export interface GeoPoint {
+  lat: number;
+  lng: number;
+}
+
+export interface RouteStop {
+  seq: number;
+  order_id: string;
+  merchant: { name: string; address: string | null; phone?: string | null; lat: number; lng: number };
+  container_code: string;
+  expected_liters: number;
+  priority: number;
+  distance_m: number;
+}
+
+export interface CurrentRouteResponse {
+  stops: RouteStop[];
+  total_expected_liters: number;
+  remaining_capacity_l: number;
+}
+
+export interface ContainerLookupResponse {
+  id: string;
+  qr_code: string;
+  state: ContainerState;
+  status: EntityStatus;
+  capacity_liters: number | null;
+  merchant: { id: string; name: string; address: string | null; lat?: number; lng?: number };
+}
+
+export interface CollectionCreateRequest {
+  client_uuid: string;
+  order_id: string;
+  container_code: string;
+  actual_liters: number;
+  quality: Quality;
+  geo: GeoPoint;
+  photos: string[];
+}
+
+export interface CollectionTransactionResponse extends CollectionCreateRequest {
+  id: string;
+  container_id: string;
+  merchant_id: string;
+  collector_id: string;
+  collected_at: string;
+  created_at: string;
+}

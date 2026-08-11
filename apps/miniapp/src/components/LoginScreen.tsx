@@ -8,6 +8,7 @@ const seedAccounts = [
   { zaloId: 'zalo_merchant_03', phone: '0900000003', label: 'Phở Sài Gòn 1975' },
   { zaloId: 'zalo_merchant_04', phone: '0900000004', label: 'Bún Bò Huế Mạ Tôi' },
   { zaloId: 'zalo_merchant_05', phone: '0900000005', label: 'Cơm Tấm Góc Phố' },
+  { zaloId: 'zalo_collector_01', phone: '0910000001', label: 'Người thu gom 01' },
 ] as const;
 
 export function LoginScreen() {
@@ -44,7 +45,7 @@ export function LoginScreen() {
       {sdkUnavailable ? (
         <section className="dev-login-card">
           <p className="section-label">Môi trường phát triển</p>
-          <label htmlFor="seed-account">Chọn tài khoản quán</label>
+          <label htmlFor="seed-account">Chọn tài khoản thử nghiệm</label>
           <select id="seed-account" value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
             {seedAccounts.map((account) => (
               <option value={account.zaloId} key={account.zaloId}>

@@ -1,7 +1,12 @@
 import type {
   ApiErrorBody,
   AuthUser,
+  CollectionCreateRequest,
   CollectionOrderResponse,
+  CollectionTransactionResponse,
+  ContainerLookupResponse,
+  CurrentRouteResponse,
+  GeoPoint,
   MerchantDashboardResponse,
   MerchantTransaction,
   PagedResponse,
@@ -139,4 +144,11 @@ export const api = {
     request<PagedResponse<MerchantTransaction>>(`/merchants/me/transactions?page=${page}&limit=${limit}`),
   orders: () => request<PagedResponse<CollectionOrderResponse>>('/orders/me?page=1&limit=50'),
   cancelOrder: (orderId: string) => request<CollectionOrderResponse>(`/orders/${orderId}/cancel`, { method: 'POST' }),
+  currentRoute: (location?: GeoPoint) => {
+    const query = location ? `?lat=${location.lat}&lng=${location.lng}` : '';
+    return request<CurrentRouteResponse>(`/routes/current${query}`);
+  },
+  containerByQr: (code: string) => request<ContainerLookupResponse>(`/containers/by-qr/${encodeURIComponent(code)}`),
+  createCollection: (payload: CollectionCreateRequest) =>
+    request<CollectionTransactionResponse>('/collections', { method: 'POST', body: payload }),
 };

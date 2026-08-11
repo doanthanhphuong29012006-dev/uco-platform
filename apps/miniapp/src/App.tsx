@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
+import { Role } from '@eco-oil/shared-types';
 import { useAuthStore } from './stores/auth-store';
 import { LoginScreen } from './components/LoginScreen';
 import { HomePage } from './pages/HomePage';
 import { HistoryPage } from './pages/HistoryPage';
 import { OrdersPage } from './pages/OrdersPage';
+import { CollectorFlow } from './pages/CollectorFlow';
+import { StatusView } from './components/StatusView';
 
 type Tab = 'home' | 'history' | 'orders';
 
@@ -23,6 +26,14 @@ export function App() {
   }
   if (!user) {
     return <LoginScreen />;
+  }
+
+  if (user.role === Role.COLLECTOR) {
+    return <div className="app-shell"><main className="main-area"><CollectorFlow /></main></div>;
+  }
+
+  if (user.role !== Role.MERCHANT) {
+    return <StatusView title="Vai trò chưa được hỗ trợ" message="Tài khoản này chưa có giao diện trong ứng dụng." action={{ label: 'Đăng xuất', onClick: signOut }} />;
   }
 
   return (

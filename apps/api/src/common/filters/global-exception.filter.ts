@@ -1,4 +1,4 @@
-import { Catch, HttpException, HttpStatus } from '@nestjs/common';
+import { Catch, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import type { ArgumentsHost, ExceptionFilter } from '@nestjs/common';
 import type { Response } from 'express';
 import { ZodError } from 'zod';
@@ -11,8 +11,15 @@ type ErrorBody = {
 
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
+  private readonly logger = new Logger(GlobalExceptionFilter.name);
+
   catch(exception: unknown, host: ArgumentsHost): void {
     const response = host.switchToHttp().getResponse<Response>();
+    if (exception instanceof HttpException && exception.getStatus() >= HttpStatus.INTERNAL_SERVER_ERROR) {
+      this.logger.error(exception.stack ?? exception.message);
+    } else if (exception instanceof Error && !(exception instanceof ZodError)) {
+      this.logger.error(exception.stack ?? exception.message);
+    }
     const error = this.normalize(exception);
     const status = this.statusFor(exception);
     response.status(status).json(error);

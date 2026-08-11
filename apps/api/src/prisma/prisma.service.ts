@@ -15,6 +15,7 @@ export interface RouteOrderRow {
   orderId: string;
   merchantName: string;
   merchantAddress: string | null;
+  merchantPhone: string | null;
   merchantLat: number;
   merchantLng: number;
   containerCode: string;
@@ -75,6 +76,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         o."id" AS "orderId",
         m."business_name" AS "merchantName",
         m."address" AS "merchantAddress",
+        u."phone" AS "merchantPhone",
         ST_Y(COALESCE(m."location", ST_SetSRID(ST_MakePoint(COALESCE(w."center_lng", $1), COALESCE(w."center_lat", $2)), 4326)::geography)::geometry)::float8 AS "merchantLat",
         ST_X(COALESCE(m."location", ST_SetSRID(ST_MakePoint(COALESCE(w."center_lng", $1), COALESCE(w."center_lat", $2)), 4326)::geography)::geometry)::float8 AS "merchantLng",
         c."qr_code" AS "containerCode",
@@ -86,6 +88,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         )::float8 AS "distanceM"
       FROM "collection_orders" o
       JOIN "merchants" m ON m."id" = o."merchant_id"
+      JOIN "users" u ON u."id" = m."user_id"
       JOIN "containers" c ON c."id" = o."container_id"
       JOIN "wards" w ON w."id" = m."ward_id"
       CROSS JOIN origin
