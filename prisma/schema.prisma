@@ -46,6 +46,7 @@ model User {
   id        String    @id @default(uuid()) @db.Uuid
   zaloId    String    @unique @map("zalo_id")
   phone     String?   @unique
+  name      String?
   role      Role
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -53,6 +54,7 @@ model User {
   merchant  Merchant?
   collector Collector?
   station   Station?
+  refreshTokens RefreshToken[]
 
   @@index([role])
   @@map("users")
@@ -212,4 +214,18 @@ model StationDelivery {
   @@index([stationId, deliveredAt])
   @@index([collectorId, deliveredAt])
   @@map("station_deliveries")
+}
+
+model RefreshToken {
+  id         String    @id @default(uuid()) @db.Uuid
+  tokenHash  String    @unique @map("token_hash")
+  userId     String    @map("user_id") @db.Uuid
+  expiresAt  DateTime  @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+  replacedBy String?   @map("replaced_by") @db.Uuid
+  createdAt  DateTime  @default(now()) @map("created_at")
+  user       User      @relation(fields: [userId], references: [id])
+
+  @@index([userId, expiresAt, revokedAt])
+  @@map("refresh_tokens")
 }

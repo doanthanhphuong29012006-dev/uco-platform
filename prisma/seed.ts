@@ -14,8 +14,9 @@ const merchantSeeds = [
   {
     id: '20000000-0000-4000-8000-000000000001',
     userId: '40000000-0000-4000-8000-000000000101',
-    zaloId: 'mock-merchant-001',
+    zaloId: 'zalo_merchant_01',
     phone: '0900000001',
+    name: 'Merchant 01',
     businessName: 'Quán Cơm Nhà Mình',
     address: '12 Nguyễn Thị Minh Khai, Phường 7, Quận 3',
     lat: 10.78255,
@@ -24,8 +25,9 @@ const merchantSeeds = [
   {
     id: '20000000-0000-4000-8000-000000000002',
     userId: '40000000-0000-4000-8000-000000000102',
-    zaloId: 'mock-merchant-002',
+    zaloId: 'zalo_merchant_02',
     phone: '0900000002',
+    name: 'Merchant 02',
     businessName: 'Bếp Xanh Vegetarian',
     address: '35 Võ Văn Tần, Phường 7, Quận 3',
     lat: 10.78195,
@@ -34,8 +36,9 @@ const merchantSeeds = [
   {
     id: '20000000-0000-4000-8000-000000000003',
     userId: '40000000-0000-4000-8000-000000000103',
-    zaloId: 'mock-merchant-003',
+    zaloId: 'zalo_merchant_03',
     phone: '0900000003',
+    name: 'Merchant 03',
     businessName: 'Phở Sài Gòn 1975',
     address: '88 Điện Biên Phủ, Phường 7, Quận 3',
     lat: 10.78305,
@@ -44,8 +47,9 @@ const merchantSeeds = [
   {
     id: '20000000-0000-4000-8000-000000000004',
     userId: '40000000-0000-4000-8000-000000000104',
-    zaloId: 'mock-merchant-004',
+    zaloId: 'zalo_merchant_04',
     phone: '0900000004',
+    name: 'Merchant 04',
     businessName: 'Bún Bò Huế Mạ Tôi',
     address: '21 Trần Quốc Toản, Phường 7, Quận 3',
     lat: 10.78095,
@@ -54,8 +58,9 @@ const merchantSeeds = [
   {
     id: '20000000-0000-4000-8000-000000000005',
     userId: '40000000-0000-4000-8000-000000000105',
-    zaloId: 'mock-merchant-005',
+    zaloId: 'zalo_merchant_05',
     phone: '0900000005',
+    name: 'Merchant 05',
     businessName: 'Cơm Tấm Góc Phố',
     address: '64 Pasteur, Phường 7, Quận 3',
     lat: 10.78155,
@@ -67,15 +72,17 @@ const collectorSeeds = [
   {
     id: '50000000-0000-4000-8000-000000000001',
     userId: '40000000-0000-4000-8000-000000000201',
-    zaloId: 'mock-collector-001',
+    zaloId: 'zalo_collector_01',
     phone: '0910000001',
+    name: 'Collector 01',
     displayName: 'Nguyễn Văn Thu Gom 1',
   },
   {
     id: '50000000-0000-4000-8000-000000000002',
     userId: '40000000-0000-4000-8000-000000000202',
-    zaloId: 'mock-collector-002',
+    zaloId: 'zalo_collector_02',
     phone: '0910000002',
+    name: 'Collector 02',
     displayName: 'Trần Văn Thu Gom 2',
   },
 ] as const;
@@ -93,6 +100,7 @@ async function upsertUser(input: {
   id: string;
   zaloId: string;
   phone: string;
+  name: string;
   role: Role;
 }): Promise<void> {
   await prisma.user.upsert({
@@ -100,6 +108,7 @@ async function upsertUser(input: {
     update: {
       zaloId: input.zaloId,
       phone: input.phone,
+      name: input.name,
       role: input.role,
       deletedAt: null,
     },
@@ -136,8 +145,9 @@ async function main(): Promise<void> {
 
   await upsertUser({
     id: '40000000-0000-4000-8000-000000000999',
-    zaloId: 'mock-admin-001',
+    zaloId: 'zalo_admin_01',
     phone: '0990000001',
+    name: 'Admin Eco-Oil',
     role: Role.ADMIN,
   });
 
@@ -146,6 +156,7 @@ async function main(): Promise<void> {
       id: merchant.userId,
       zaloId: merchant.zaloId,
       phone: merchant.phone,
+      name: merchant.name,
       role: Role.MERCHANT,
     });
     await prisma.merchant.upsert({
@@ -174,6 +185,7 @@ async function main(): Promise<void> {
       id: collector.userId,
       zaloId: collector.zaloId,
       phone: collector.phone,
+      name: collector.name,
       role: Role.COLLECTOR,
     });
     await prisma.collector.upsert({
@@ -196,8 +208,9 @@ async function main(): Promise<void> {
 
   await upsertUser({
     id: stationUserId,
-    zaloId: 'mock-station-001',
+    zaloId: 'zalo_station_01',
     phone: '0920000001',
+    name: 'Station 01',
     role: Role.STATION,
   });
   await prisma.station.upsert({
@@ -256,7 +269,15 @@ async function main(): Promise<void> {
     FROM "merchants"
     ORDER BY "business_name"
   `;
+  const loginUsers = await prisma.$queryRaw<Array<{ zaloId: string; role: string; name: string }>>`
+    SELECT "zalo_id" AS "zaloId", role::text, COALESCE(name, '') AS name
+    FROM "users"
+    WHERE "zalo_id" LIKE 'zalo_%'
+    ORDER BY role, "zalo_id"
+  `;
 
+  console.log('\nSeed login users:');
+  console.table(loginUsers);
   console.log(
     JSON.stringify(
       {

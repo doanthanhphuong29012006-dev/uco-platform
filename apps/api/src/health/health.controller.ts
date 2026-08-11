@@ -1,6 +1,7 @@
 import { Controller, Get, Inject, ServiceUnavailableException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
+import { Public } from '../modules/auth/decorators/public.decorator';
 
 @Controller('health')
 export class HealthController {
@@ -10,6 +11,7 @@ export class HealthController {
   ) {}
 
   @Get()
+  @Public()
   async check(): Promise<{
     status: 'ok' | 'error';
     service: string;

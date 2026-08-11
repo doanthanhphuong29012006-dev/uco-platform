@@ -1,0 +1,43 @@
+import { Body, Controller, Get, Inject, Post } from '@nestjs/common';
+import { Role } from '@prisma/client';
+import { refreshTokenSchema, zaloAuthSchema } from '@eco-oil/validation';
+import { AuthService } from './auth.service';
+import { CurrentUser } from './decorators/current-user.decorator';
+import { Public } from './decorators/public.decorator';
+import { Roles } from './decorators/roles.decorator';
+import type { AccessTokenPayload } from './auth.types';
+
+@Controller('auth')
+export class AuthController {
+  constructor(@Inject(AuthService) private readonly authService: AuthService) {}
+
+  @Public()
+  @Post('zalo')
+  login(@Body() body: unknown) {
+    return this.authService.login(zaloAuthSchema.parse(body));
+  }
+
+  @Public()
+  @Post('refresh')
+  refresh(@Body() body: unknown) {
+    const input = refreshTokenSchema.parse(body);
+    return this.authService.refresh(input.refresh_token);
+  }
+
+  @Post('logout')
+  logout(@CurrentUser() user: AccessTokenPayload, @Body() body: unknown) {
+    const input = refreshTokenSchema.parse(body);
+    return this.authService.logout(user.sub, input.refresh_token);
+  }
+
+  @Get('me')
+  me(@CurrentUser() user: AccessTokenPayload) {
+    return this.authService.me(user.sub);
+  }
+
+  @Roles(Role.ADMIN)
+  @Get('admin-check')
+  adminCheck() {
+    return { ok: true, role: Role.ADMIN };
+  }
+}
