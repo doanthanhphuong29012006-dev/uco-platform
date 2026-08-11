@@ -23,7 +23,7 @@ pnpm dev
 The API listens on `http://localhost:3000` and the health endpoint is:
 
 ```powershell
-Invoke-RestMethod http://localhost:3000/api/v1/health
+Invoke-RestMethod http://localhost:3000/health
 ```
 
 Database migrations and seed data are introduced in the next implementation step.
