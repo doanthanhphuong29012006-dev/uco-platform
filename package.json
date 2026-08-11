@@ -9,6 +9,9 @@
     "format:check": "prettier --check .",
     "generate": "prisma generate",
     "lint": "turbo run lint",
+    "db:migrate": "prisma migrate dev",
+    "db:reset": "prisma migrate reset --force",
+    "db:seed": "prisma db seed",
     "prisma:migrate": "prisma migrate deploy",
     "prisma:validate": "prisma validate",
     "test": "turbo run test",
@@ -22,7 +25,11 @@
     "prisma": "^6.5.0",
     "turbo": "^2.4.4",
     "typescript": "^5.8.2",
-    "typescript-eslint": "^8.26.0"
+    "typescript-eslint": "^8.26.0",
+    "tsx": "^4.19.3"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.5.0"

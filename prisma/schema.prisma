@@ -7,11 +7,17 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum UserRole {
+enum Role {
   MERCHANT
   COLLECTOR
   STATION
   ADMIN
+}
+
+enum ContainerState {
+  AT_MERCHANT
+  IN_TRANSIT
+  AT_STATION
 }
 
 enum OrderStatus {
@@ -23,9 +29,10 @@ enum OrderStatus {
 
 enum OrderSource {
   MANUAL
+  PREDICTED
 }
 
-enum QualityStatus {
+enum Quality {
   PASS
   FLAG
 }
@@ -35,11 +42,30 @@ enum DeliveryStatus {
   REJECTED
 }
 
+model User {
+  id        String    @id @default(uuid()) @db.Uuid
+  zaloId    String    @unique @map("zalo_id")
+  phone     String?   @unique
+  role      Role
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  merchant  Merchant?
+  collector Collector?
+  station   Station?
+
+  @@index([role])
+  @@map("users")
+}
+
 model Ward {
   id         String      @id @default(uuid()) @db.Uuid
-  name       String
   code       String      @unique
+  name       String
+  city       String      @default("Ho Chi Minh City")
   createdAt  DateTime    @default(now()) @map("created_at")
+  updatedAt  DateTime    @updatedAt @map("updated_at")
+  deletedAt  DateTime?   @map("deleted_at")
   merchants  Merchant[]
   collectors Collector[]
   stations   Station[]
@@ -47,35 +73,24 @@ model Ward {
   @@map("wards")
 }
 
-model User {
-  id             String      @id @default(uuid()) @db.Uuid
-  zaloId         String      @unique @map("zalo_id")
-  phone          String?     @unique
-  role           UserRole
-  createdAt      DateTime    @default(now()) @map("created_at")
-  updatedAt      DateTime    @updatedAt @map("updated_at")
-  merchant       Merchant?
-  collector      Collector?
-  station        Station?
-
-  @@index([role])
-  @@map("users")
-}
-
 model Merchant {
-  id          String                  @id @default(uuid()) @db.Uuid
-  userId      String                  @unique @map("user_id") @db.Uuid
-  wardId      String                  @map("ward_id") @db.Uuid
-  businessName String                 @map("business_name")
-  address     String?
-  createdAt   DateTime                @default(now()) @map("created_at")
-  user        User                    @relation(fields: [userId], references: [id])
-  ward        Ward                    @relation(fields: [wardId], references: [id])
-  containers  Container[]
-  orders      CollectionOrder[]
+  id           String       @id @default(uuid()) @db.Uuid
+  userId       String       @unique @map("user_id") @db.Uuid
+  wardId       String       @map("ward_id") @db.Uuid
+  businessName String       @map("business_name")
+  address      String?
+  location     Unsupported("geography(Point, 4326)")?
+  isActive     Boolean      @default(true) @map("is_active")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+  deletedAt    DateTime?    @map("deleted_at")
+  user         User         @relation(fields: [userId], references: [id])
+  ward         Ward         @relation(fields: [wardId], references: [id])
+  containers   Container[]
+  orders       CollectionOrder[]
   transactions CollectionTransaction[]
 
-  @@index([wardId])
+  @@index([wardId, isActive])
   @@map("merchants")
 }
 
@@ -87,6 +102,8 @@ model Collector {
   isActive     Boolean                 @default(true) @map("is_active")
   lastSeenAt   DateTime?               @map("last_seen_at")
   createdAt    DateTime                @default(now()) @map("created_at")
+  updatedAt    DateTime                @updatedAt @map("updated_at")
+  deletedAt    DateTime?               @map("deleted_at")
   user         User                    @relation(fields: [userId], references: [id])
   ward         Ward                    @relation(fields: [wardId], references: [id])
   orders       CollectionOrder[]
@@ -94,51 +111,61 @@ model Collector {
   deliveries   StationDelivery[]
 
   @@index([wardId, isActive])
-  @@index([userId, lastSeenAt])
   @@map("collectors")
 }
 
 model Station {
-  id          String            @id @default(uuid()) @db.Uuid
-  userId      String            @unique @map("user_id") @db.Uuid
-  wardId      String            @map("ward_id") @db.Uuid
-  name        String
-  address     String?
-  createdAt   DateTime          @default(now()) @map("created_at")
-  user        User              @relation(fields: [userId], references: [id])
-  ward        Ward              @relation(fields: [wardId], references: [id])
-  deliveries  StationDelivery[]
+  id         String            @id @default(uuid()) @db.Uuid
+  userId     String            @unique @map("user_id") @db.Uuid
+  wardId     String            @map("ward_id") @db.Uuid
+  name       String
+  address    String?
+  location   Unsupported("geography(Point, 4326)")?
+  isActive   Boolean           @default(true) @map("is_active")
+  createdAt  DateTime          @default(now()) @map("created_at")
+  updatedAt  DateTime          @updatedAt @map("updated_at")
+  deletedAt  DateTime?         @map("deleted_at")
+  user       User              @relation(fields: [userId], references: [id])
+  ward       Ward              @relation(fields: [wardId], references: [id])
+  deliveries StationDelivery[]
 
-  @@index([wardId])
+  @@index([wardId, isActive])
   @@map("stations")
 }
 
 model Container {
-  id          String      @id @default(uuid()) @db.Uuid
-  merchantId  String      @map("merchant_id") @db.Uuid
-  qrCode      String      @unique @map("qr_code")
-  capacityLiters Decimal? @map("capacity_liters") @db.Decimal(10, 2)
-  isActive    Boolean     @default(true) @map("is_active")
-  createdAt   DateTime    @default(now()) @map("created_at")
-  merchant    Merchant    @relation(fields: [merchantId], references: [id])
-  transactions CollectionTransaction[]
+  id             String             @id @default(uuid()) @db.Uuid
+  merchantId     String             @map("merchant_id") @db.Uuid
+  qrCode         String             @unique @map("qr_code")
+  state          ContainerState     @default(AT_MERCHANT)
+  capacityLiters Decimal?           @map("capacity_liters") @db.Decimal(10, 2)
+  isActive       Boolean            @default(true) @map("is_active")
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+  deletedAt      DateTime?          @map("deleted_at")
+  merchant       Merchant           @relation(fields: [merchantId], references: [id])
+  transactions   CollectionTransaction[]
 
-  @@index([merchantId, isActive])
+  @@index([merchantId, state])
   @@map("containers")
 }
 
 model CollectionOrder {
-  id          String       @id @default(uuid()) @db.Uuid
-  merchantId  String       @map("merchant_id") @db.Uuid
-  collectorId String?      @map("collector_id") @db.Uuid
-  status      OrderStatus   @default(READY)
-  source      OrderSource   @default(MANUAL)
-  priority    Int           @default(0)
-  requestedAt DateTime      @default(now()) @map("requested_at")
-  assignedAt  DateTime?     @map("assigned_at")
-  completedAt DateTime?     @map("completed_at")
-  merchant    Merchant      @relation(fields: [merchantId], references: [id])
-  collector   Collector?    @relation(fields: [collectorId], references: [id])
+  id           String                  @id @default(uuid()) @db.Uuid
+  merchantId   String                  @map("merchant_id") @db.Uuid
+  collectorId  String?                 @map("collector_id") @db.Uuid
+  status       OrderStatus             @default(READY)
+  source       OrderSource             @default(MANUAL)
+  priority     Int                     @default(0)
+  requestedAt  DateTime                @default(now()) @map("requested_at")
+  assignedAt   DateTime?               @map("assigned_at")
+  completedAt  DateTime?               @map("completed_at")
+  cancelledAt  DateTime?               @map("cancelled_at")
+  createdAt    DateTime                @default(now()) @map("created_at")
+  updatedAt    DateTime                @updatedAt @map("updated_at")
+  deletedAt    DateTime?               @map("deleted_at")
+  merchant     Merchant                @relation(fields: [merchantId], references: [id])
+  collector    Collector?              @relation(fields: [collectorId], references: [id])
   transactions CollectionTransaction[]
 
   @@index([status, priority, requestedAt])
@@ -147,25 +174,24 @@ model CollectionOrder {
 }
 
 model CollectionTransaction {
-  id           String        @id @default(uuid()) @db.Uuid
-  clientUuid   String        @unique @map("client_uuid") @db.Uuid
-  orderId      String?       @map("order_id") @db.Uuid
-  containerId  String        @map("container_id") @db.Uuid
-  merchantId   String        @map("merchant_id") @db.Uuid
-  collectorId  String        @map("collector_id") @db.Uuid
-  actualLiters Decimal       @map("actual_liters") @db.Decimal(10, 2)
-  quality      QualityStatus
+  id           String             @id @default(uuid()) @db.Uuid
+  clientUuid   String             @unique @map("client_uuid")
+  orderId      String?            @map("order_id") @db.Uuid
+  containerId  String             @map("container_id") @db.Uuid
+  merchantId   String             @map("merchant_id") @db.Uuid
+  collectorId  String             @map("collector_id") @db.Uuid
+  actualLiters Decimal            @map("actual_liters") @db.Decimal(10, 2)
+  quality      Quality
   geoPoint     Unsupported("geography(Point, 4326)")? @map("geo_point")
-  photos       Json          @default("[]")
-  collectedAt  DateTime      @default(now()) @map("collected_at")
-  createdAt    DateTime      @default(now()) @map("created_at")
-  order        CollectionOrder? @relation(fields: [orderId], references: [id])
-  container    Container     @relation(fields: [containerId], references: [id])
-  merchant     Merchant      @relation(fields: [merchantId], references: [id])
-  collector    Collector     @relation(fields: [collectorId], references: [id])
+  photos       Json               @default("[]")
+  collectedAt  DateTime           @default(now()) @map("collected_at")
+  createdAt    DateTime           @default(now()) @map("created_at")
+  deletedAt    DateTime?          @map("deleted_at")
+  order        CollectionOrder?   @relation(fields: [orderId], references: [id])
+  container    Container          @relation(fields: [containerId], references: [id])
+  merchant     Merchant           @relation(fields: [merchantId], references: [id])
+  collector    Collector          @relation(fields: [collectorId], references: [id])
 
-  @@index([collectorId, collectedAt])
-  @@index([merchantId, collectedAt])
   @@map("collection_transactions")
 }
 
@@ -179,6 +205,7 @@ model StationDelivery {
   status         DeliveryStatus @default(RECEIVED)
   deliveredAt    DateTime       @default(now()) @map("delivered_at")
   createdAt      DateTime       @default(now()) @map("created_at")
+  deletedAt      DateTime?      @map("deleted_at")
   station        Station        @relation(fields: [stationId], references: [id])
   collector      Collector      @relation(fields: [collectorId], references: [id])
 
