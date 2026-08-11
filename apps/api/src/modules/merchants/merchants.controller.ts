@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Inject, Param, Patch, Post, Query } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import {
+  collectionListQuerySchema,
   entityStatusSchema,
   merchantListQuerySchema,
   merchantPatchSchema,
@@ -25,6 +26,12 @@ export class MerchantsController {
   @Get('me/dashboard')
   dashboard(@CurrentUser() user: AccessTokenPayload) {
     return this.service.dashboard(user);
+  }
+
+  @Roles(Role.MERCHANT)
+  @Get('me/transactions')
+  transactions(@CurrentUser() user: AccessTokenPayload, @Query() query: Record<string, unknown>) {
+    return this.service.transactions(user, collectionListQuerySchema.parse(query));
   }
 
   @Roles(Role.MERCHANT, Role.ADMIN)

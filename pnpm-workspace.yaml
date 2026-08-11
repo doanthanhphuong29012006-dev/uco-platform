@@ -1,8 +1,11 @@
 packages:
-  - apps/*
+  - apps/api
+  - apps/miniapp
   - packages/*
 allowBuilds:
   '@prisma/client': true
   '@prisma/engines': true
   esbuild: true
   prisma: true
+minimumReleaseAgeExclude:
+  - zmp-sdk@2.53.0

@@ -1,0 +1,28 @@
+{
+  "name": "@eco-oil/miniapp",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc -b && vite build",
+    "lint": "eslint \"src/**/*.{ts,tsx}\"",
+    "typecheck": "tsc --noEmit",
+    "test": "echo No miniapp tests"
+  },
+  "dependencies": {
+    "@eco-oil/shared-types": "workspace:*",
+    "@tanstack/react-query": "^5.101.4",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "zmp-sdk": "^2.53.0",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.10",
+    "@types/react-dom": "^19.1.7",
+    "@vitejs/plugin-react": "^5.1.1",
+    "typescript": "^5.8.2",
+    "vite": "^7.1.2"
+  }
+}
