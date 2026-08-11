@@ -1,12 +1,12 @@
 node_modules/
 .pnpm-store/
 dist/
+build/
 coverage/
 .turbo/
 .env
 .env.*
 !.env.example
-!.env.test
 prisma/*.db
 pnpm-debug.log*
 *.log
