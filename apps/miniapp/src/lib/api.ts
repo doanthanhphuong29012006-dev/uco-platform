@@ -10,6 +10,7 @@ import type {
   MerchantDashboardResponse,
   MerchantTransaction,
   PagedResponse,
+  SyncBatchResponse,
 } from '@eco-oil/shared-types';
 import { tokenStorage } from './storage';
 
@@ -151,4 +152,6 @@ export const api = {
   containerByQr: (code: string) => request<ContainerLookupResponse>(`/containers/by-qr/${encodeURIComponent(code)}`),
   createCollection: (payload: CollectionCreateRequest) =>
     request<CollectionTransactionResponse>('/collections', { method: 'POST', body: payload }),
+  syncBatch: (items: CollectionCreateRequest[]) =>
+    request<SyncBatchResponse>('/sync/batch', { method: 'POST', body: { items } }),
 };

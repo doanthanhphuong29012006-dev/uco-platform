@@ -7,6 +7,7 @@ import { HistoryPage } from './pages/HistoryPage';
 import { OrdersPage } from './pages/OrdersPage';
 import { CollectorFlow } from './pages/CollectorFlow';
 import { StatusView } from './components/StatusView';
+import { startOutboxSyncWorker } from './lib/outbox-sync';
 
 type Tab = 'home' | 'history' | 'orders';
 
@@ -20,6 +21,13 @@ export function App() {
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
+
+  useEffect(() => {
+    if (user?.role !== Role.COLLECTOR) {
+      return undefined;
+    }
+    return startOutboxSyncWorker();
+  }, [user?.role]);
 
   if (!hydrated) {
     return <div className="app-loading">Đang mở Eco-Oil…</div>;

@@ -174,3 +174,15 @@ export interface CollectionTransactionResponse extends CollectionCreateRequest {
   collected_at: string;
   created_at: string;
 }
+
+export interface SyncBatchResult {
+  client_uuid: string;
+  status: 'created' | 'duplicate' | 'failed';
+  id?: string;
+  error?: { code: string; message: string };
+}
+
+export interface SyncBatchResponse {
+  results: SyncBatchResult[];
+  summary: { created: number; duplicate: number; failed: number };
+}

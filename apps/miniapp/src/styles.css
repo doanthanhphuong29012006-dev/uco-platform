@@ -191,6 +191,34 @@ select, input { width: 100%; min-height: 48px; border: 1px solid #cfe0d7; border
 .summary-grid strong { font-size: 1.05rem; }
 .station-button { display: grid; gap: 2px; margin-top: 18px; background: #9ab9aa; box-shadow: none; }
 .station-button small { font-size: .7rem; font-weight: 500; }
+.collector-flow-root { min-height: 100vh; }
+.offline-banner { position: sticky; top: 0; z-index: 8; padding: 12px 16px; color: #275d49; background: #dff3e8; border-bottom: 1px solid #b9dfca; text-align: center; font-size: .84rem; font-weight: 750; }
+.collector-page-header { align-items: center; }
+.collector-header-actions { display: flex; align-items: center; gap: 7px; }
+.outbox-badge { min-height: 38px; max-width: 145px; padding: 0 10px; border: 1px solid #b9dfca; border-radius: 12px; color: var(--green); background: var(--mint); font-size: .68rem; font-weight: 800; }
+.outbox-badge-failed { color: #8d3030; border-color: #efbcbc; background: #fff0f0; }
+.start-shift-button { width: 100%; min-height: 50px; margin-bottom: 13px; border: 1px solid #a9c9b9; border-radius: 15px; color: var(--green-dark); background: white; font-weight: 800; }
+.shift-ready-note { margin: 0 0 13px; padding: 11px 13px; border-radius: 13px; color: #28623e; background: #ecf9ef; font-size: .82rem; font-weight: 700; }
+.offline-cache-banner, .offline-cache-note { margin: 0 0 13px; padding: 10px 12px; border-radius: 11px; color: #694f16; background: #fff8df; font-size: .78rem; font-weight: 700; }
+.offline-cache-note { margin-top: 10px; margin-bottom: 0; }
+.stop-number-pending, .stop-number-syncing { color: #694f16; background: #f2c75e; }
+.stop-number-synced { color: white; background: #3978a9; }
+.stop-number-failed { color: white; background: var(--danger); }
+.transaction-status { margin: 8px 0 0; font-size: .74rem; font-weight: 800; }
+.transaction-status-pending, .transaction-status-syncing { color: #8a631c; }
+.transaction-status-synced { color: #3967a1; }
+.transaction-status-failed { color: var(--danger); }
+.outbox-page { min-height: 100vh; }
+.outbox-list { display: grid; gap: 10px; }
+.outbox-row { padding: 15px; border: 1px solid var(--line); border-radius: 17px; background: white; }
+.outbox-row-top { display: flex; align-items: center; gap: 8px; }
+.outbox-row p { margin: 7px 0 0; color: var(--muted); font-size: .76rem; word-break: break-word; }
+.outbox-row .secondary-button { min-height: 42px; margin-top: 12px; }
+.outbox-dot { display: inline-block; width: 11px; height: 11px; border-radius: 50%; background: #9ab9aa; }
+.outbox-dot-pending, .outbox-dot-syncing { background: #d49b2f; }
+.outbox-dot-synced { background: #3978a9; }
+.outbox-dot-failed { background: var(--danger); }
+.outbox-error { margin-top: 10px; padding: 9px; border-radius: 10px; color: #8d3030; background: #fff0f0; font-size: .78rem; }
 
 @media (min-width: 641px) {
   .bottom-nav { border-radius: 18px 18px 0 0; }

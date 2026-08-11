@@ -118,6 +118,9 @@ importers:
       '@tanstack/react-query':
         specifier: ^5.101.4
         version: 5.101.4(react@19.2.8)
+      dexie:
+        specifier: ^4.4.4
+        version: 4.4.4
       react:
         specifier: ^19.1.1
         version: 19.2.8
@@ -140,6 +143,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^5.1.1
         version: 5.2.0(supports-color@8.1.1)(vite@7.3.6(@types/node@26.2.0)(jiti@2.7.0)(terser@5.49.2)(tsx@4.23.12))
+      fake-indexeddb:
+        specifier: ^6.2.5
+        version: 6.2.5
       typescript:
         specifier: ^5.8.2
         version: 5.9.3
@@ -1886,6 +1892,9 @@ packages:
     resolution: {integrity: sha512-TLz+x/vEXm/Y7P7wn1EJFNLxYpUD4TgMosxY6fAVJUnJMbupHBOncxyWUG9OpTaH9EBD7uFI5LfEgmMOc54DsA==}
     engines: {node: '>=8'}
 
+  dexie@4.4.4:
+    resolution: {integrity: sha512-jIwsYI8Os2hgnqc6O49YwFDKGc5v5QjGx0wPVp543ip1F53VFAKMLthV2pQosQcVTv3eAskTWYspOx195PM0FQ==}
+
   dezalgo@1.0.4:
     resolution: {integrity: sha512-rXSP0bf+5n0Qonsb+SVVfNfIsimO4HEtmnIpPHY8Q1UCzKlQrDMfdobr8nJOOsRgWCyMRqeSBQzmWUMq7zvVig==}
 
@@ -2073,6 +2082,10 @@ packages:
 
   exsolve@1.1.1:
     resolution: {integrity: sha512-9U/jZUgjnSGyntRr6y5Muu1MJcwFl6kPu7k8qLF0IMNfLqvw0NZ4nnVDq0RVoZ0RvCyumib4Ez3KYrVfilrw+g==}
+
+  fake-indexeddb@6.2.5:
+    resolution: {integrity: sha512-CGnyrvbhPlWYMngksqrSSUT1BAVP49dZocrHuK0SvtR0D5TMs5wP0o3j7jexDJW01KSadjBp1M/71o/KR3nD1w==}
+    engines: {node: '>=18'}
 
   fast-check@3.23.2:
     resolution: {integrity: sha512-h5+1OzzfCC3Ef7VbtKdcv7zsstUQwUDlYpUTvjeUsJAssPgLn7QzbboPtL5ro04Mq0rPOsMzl7q5hIbRs2wD1A==}
@@ -5501,6 +5514,8 @@ snapshots:
 
   detect-newline@3.1.0: {}
 
+  dexie@4.4.4: {}
+
   dezalgo@1.0.4:
     dependencies:
       asap: 2.0.6
@@ -5749,6 +5764,8 @@ snapshots:
       - supports-color
 
   exsolve@1.1.1: {}
+
+  fake-indexeddb@6.2.5: {}
 
   fast-check@3.23.2:
     dependencies:
