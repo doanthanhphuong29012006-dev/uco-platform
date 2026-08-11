@@ -1,4 +1,4 @@
-import { nativeStorage } from 'zmp-sdk';
+import { zaloClient } from './zalo-client';
 
 const ACCESS_TOKEN_KEY = 'eco_oil.access_token';
 const REFRESH_TOKEN_KEY = 'eco_oil.refresh_token';
@@ -20,19 +20,18 @@ class ZaloTokenStorage implements TokenStorage {
   }
 
   setTokens(accessToken: string, refreshToken: string): void {
-    nativeStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
-    nativeStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+    zaloClient.setStorage(ACCESS_TOKEN_KEY, accessToken);
+    zaloClient.setStorage(REFRESH_TOKEN_KEY, refreshToken);
   }
 
   clear(): void {
-    nativeStorage.removeItem(ACCESS_TOKEN_KEY);
-    nativeStorage.removeItem(REFRESH_TOKEN_KEY);
+    zaloClient.removeStorage(ACCESS_TOKEN_KEY);
+    zaloClient.removeStorage(REFRESH_TOKEN_KEY);
   }
 
   private read(key: string): string | null {
     try {
-      const value = nativeStorage.getItem(key);
-      return value || null;
+      return zaloClient.getStorage(key);
     } catch {
       return null;
     }

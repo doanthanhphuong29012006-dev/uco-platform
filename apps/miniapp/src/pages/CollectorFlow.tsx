@@ -42,7 +42,7 @@ export function CollectorFlow() {
   useEffect(() => {
     void startOutboxSyncWorker();
     let active = true;
-    void zaloClient.getCurrentLocation().then((point) => {
+    void zaloClient.getLocation().then((point) => {
       if (active) {
         setLocation(point);
       }
@@ -254,7 +254,7 @@ function CollectorQrScreen({ stop, onBack, onContinue }: { stop: RouteStop; onBa
     setBusy(true);
     setError(null);
     try {
-      const scannedCode = await zaloClient.scanQrCode();
+      const scannedCode = await zaloClient.scanQRCode();
       setCode(scannedCode);
       await lookup(scannedCode);
     } catch {
@@ -316,7 +316,7 @@ function CollectorEntryScreen({ stop, container, onBack, onSuccess }: { stop: Ro
     setTakingPhoto(true);
     setError(null);
     try {
-      const photo = await zaloClient.capturePhoto();
+      const photo = await zaloClient.chooseImage();
       setPhotos((current) => [...current, photo]);
     } catch {
       setError('Chưa chụp được ảnh, thử lại nhé.');
@@ -342,7 +342,7 @@ function CollectorEntryScreen({ stop, container, onBack, onSuccess }: { stop: Ro
     let currentGeo = geo;
     if (!currentGeo) {
       try {
-        currentGeo = await zaloClient.getCurrentLocation();
+          currentGeo = await zaloClient.getLocation();
       } catch {
         currentGeo = WARD_CENTER;
       }

@@ -16,6 +16,19 @@ interface AuthState {
 
 function loginErrorMessage(error: unknown, endpoint: string): string {
   const url = `${API_BASE_URL}${endpoint}`;
+  const sdkError = typeof error === 'object' && error !== null
+    ? error as { code?: unknown; api?: unknown; message?: unknown }
+    : null;
+  if (sdkError?.code === -2000) {
+    console.error('[auth] Zalo SDK error', {
+      url,
+      api: sdkError.api,
+      code: sdkError.code,
+      message: sdkError.message,
+      error,
+    });
+    return 'Zalo SDK không khả dụng ngoài app Zalo — đang dùng chế độ mô phỏng.';
+  }
   if (error instanceof ApiError) {
     console.error('[auth] HTTP login error', { url, code: error.code, details: error.details });
     return error.message;

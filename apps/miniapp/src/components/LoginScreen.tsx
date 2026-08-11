@@ -13,7 +13,7 @@ const seedAccounts = [
 
 export function LoginScreen() {
   const [selectedId, setSelectedId] = useState<string>(seedAccounts[0].zaloId);
-  const [sdkUnavailable, setSdkUnavailable] = useState(import.meta.env.DEV);
+  const [sdkUnavailable, setSdkUnavailable] = useState(zaloClient.mode === 'mock');
   const busy = useAuthStore((state) => state.busy);
   const error = useAuthStore((state) => state.error);
   const loginSeed = useAuthStore((state) => state.loginSeed);
@@ -30,7 +30,9 @@ export function LoginScreen() {
 
   async function handleSeedLogin() {
     const account = seedAccounts.find((item) => item.zaloId === selectedId) ?? seedAccounts[0];
-    await loginSeed(account.zaloId, account.phone);
+    zaloClient.setSeedAccount(account);
+    const identity = await zaloClient.login();
+    await loginSeed(identity.zaloId, identity.phone);
   }
 
   return (
