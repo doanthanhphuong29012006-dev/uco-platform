@@ -1,30 +1,31 @@
 services:
-  postgres:
+  uco-postgres:
     image: postgis/postgis:16-3.4
-    container_name: eco-oil-postgres
+    container_name: uco-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: uco
     ports:
-      - '5432:5432'
+      - '5433:5432'
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - uco_pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U postgres -d uco']
       interval: 5s
       timeout: 5s
       retries: 10
 
-  redis:
+  uco-redis:
     image: redis:7.4-alpine
-    container_name: eco-oil-redis
+    container_name: uco-redis
     restart: unless-stopped
     ports:
       - '6379:6379'
     volumes:
-      - redis_data:/data
+      - uco_redisdata:/data
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
       interval: 5s
@@ -32,5 +33,5 @@ services:
       retries: 10
 
 volumes:
-  postgres_data:
-  redis_data:
+  uco_pgdata:
+  uco_redisdata:

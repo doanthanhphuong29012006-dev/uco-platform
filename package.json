@@ -9,6 +9,7 @@
     "format:check": "prettier --check .",
     "generate": "prisma generate",
     "lint": "turbo run lint",
+    "prisma:migrate": "prisma migrate deploy",
     "prisma:validate": "prisma validate",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck"

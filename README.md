@@ -16,6 +16,7 @@ Backend-first MVP monorepo for a used cooking oil collection pilot.
 pnpm install
 Copy-Item .env.example .env
 docker compose up -d
+pnpm prisma:migrate
 pnpm generate
 pnpm dev
 ```
@@ -26,4 +27,4 @@ The API listens on `http://localhost:3000` and the health endpoint is:
 Invoke-RestMethod http://localhost:3000/health
 ```
 
-Database migrations and seed data are introduced in the next implementation step.
+PostgreSQL is exposed at `localhost:5433`; Redis is exposed at `localhost:6379`.
