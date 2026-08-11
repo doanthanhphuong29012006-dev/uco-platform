@@ -13,7 +13,7 @@ import type {
 } from '@eco-oil/shared-types';
 import { tokenStorage } from './storage';
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000/api/v1').replace(/\/$/, '');
+export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '/api/v1').replace(/\/$/, '');
 
 export class ApiError extends Error {
   readonly code: string;

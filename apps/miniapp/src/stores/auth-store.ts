@@ -1,6 +1,6 @@
 import type { AuthUser } from '@eco-oil/shared-types';
 import { create } from 'zustand';
-import { api, setUnauthorizedHandler } from '../lib/api';
+import { ApiError, API_BASE_URL, api, setUnauthorizedHandler } from '../lib/api';
 import { tokenStorage } from '../lib/storage';
 
 interface AuthState {
@@ -12,6 +12,20 @@ interface AuthState {
   loginSeed: (zaloId: string, phone: string) => Promise<void>;
   loginWithZalo: (accessToken: string) => Promise<void>;
   signOut: () => void;
+}
+
+function loginErrorMessage(error: unknown, endpoint: string): string {
+  const url = `${API_BASE_URL}${endpoint}`;
+  if (error instanceof ApiError) {
+    console.error('[auth] HTTP login error', { url, code: error.code, details: error.details });
+    return error.message;
+  }
+  if (error instanceof TypeError && /fetch|network/i.test(error.message)) {
+    console.error('[auth] Network/CORS login error', { url, error });
+    return 'Không kết nối được máy chủ. Kiểm tra API đã chạy chưa.';
+  }
+  console.error('[auth] Unexpected login error', { url, error });
+  return error instanceof Error ? error.message : 'Đăng nhập thất bại. Vui lòng thử lại.';
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -38,9 +52,8 @@ export const useAuthStore = create<AuthState>((set) => ({
       const session = await api.loginSeed(zaloId, phone);
       tokenStorage.setTokens(session.access_token, session.refresh_token);
       set({ user: session.user, busy: false });
-    } catch {
-      set({ busy: false, error: 'Đăng nhập thất bại. Vui lòng thử lại.' });
-      throw new Error('Seed login failed');
+    } catch (error) {
+      set({ busy: false, error: loginErrorMessage(error, '/auth/zalo') });
     }
   },
   loginWithZalo: async (accessToken) => {
@@ -49,9 +62,8 @@ export const useAuthStore = create<AuthState>((set) => ({
       const session = await api.loginWithZaloAccessToken(accessToken);
       tokenStorage.setTokens(session.access_token, session.refresh_token);
       set({ user: session.user, busy: false });
-    } catch {
-      set({ busy: false, error: 'Chưa thể xác thực tài khoản Zalo này.' });
-      throw new Error('Zalo login failed');
+    } catch (error) {
+      set({ busy: false, error: loginErrorMessage(error, '/auth/zalo') });
     }
   },
   signOut: () => {
