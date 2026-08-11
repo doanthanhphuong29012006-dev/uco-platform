@@ -71,6 +71,7 @@ model User {
   collector Collector?
   station   Station?
   refreshTokens RefreshToken[]
+  auditLogs AuditLog[]
 
   @@index([role])
   @@map("users")
@@ -267,11 +268,27 @@ model Alert {
   message       String?
   details       Json                 @default("{}")
   createdAt     DateTime             @default(now()) @map("created_at")
+  resolvedAt    DateTime?            @map("resolved_at")
   transaction   CollectionTransaction? @relation(fields: [transactionId], references: [id])
   stationDelivery StationDelivery?    @relation(fields: [stationDeliveryId], references: [id])
 
   @@index([type, createdAt])
   @@map("alerts")
+}
+
+model AuditLog {
+  id           String   @id @default(uuid()) @db.Uuid
+  actorUserId  String   @map("actor_user_id") @db.Uuid
+  action       String
+  entityType   String   @map("entity_type")
+  entityId     String   @map("entity_id")
+  details      Json     @default("{}")
+  createdAt    DateTime @default(now()) @map("created_at")
+  actor        User     @relation(fields: [actorUserId], references: [id])
+
+  @@index([entityType, entityId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@map("audit_logs")
 }
 
 model RefreshToken {

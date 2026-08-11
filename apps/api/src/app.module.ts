@@ -12,6 +12,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { RedisModule } from './redis/redis.module';
 import { StationDeliveriesModule } from './modules/station-deliveries/station-deliveries.module';
 import { SyncModule } from './modules/sync/sync.module';
+import { AdminModule } from './modules/admin/admin.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { SyncModule } from './modules/sync/sync.module';
     CollectionsModule,
     StationDeliveriesModule,
     SyncModule,
+    AdminModule,
     HealthModule,
   ],
 })

@@ -38,6 +38,17 @@ export enum DeliveryStatus {
   FLAGGED = 'FLAGGED',
 }
 
+export enum AlertType {
+  GEO_MISMATCH = 'GEO_MISMATCH',
+  DELIVERY_VARIANCE = 'DELIVERY_VARIANCE',
+}
+
+export enum AlertSeverity {
+  LOW = 'LOW',
+  MEDIUM = 'MEDIUM',
+  HIGH = 'HIGH',
+}
+
 export type UserRole = Role;
 export type QualityStatus = Quality;
 

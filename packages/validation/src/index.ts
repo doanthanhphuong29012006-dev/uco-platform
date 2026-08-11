@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ContainerState, EntityStatus, OrderStatus, Quality } from '@eco-oil/shared-types';
+import { AlertType, ContainerState, EntityStatus, OrderStatus, Quality } from '@eco-oil/shared-types';
 
 export const uuidSchema = z.string().uuid();
 export const phoneSchema = z.string().min(8).max(20);
@@ -185,3 +185,26 @@ export const stationRecommendSchema = z.object({
   liters: z.coerce.number().finite().positive().max(100000),
 });
 export type StationRecommendInput = z.infer<typeof stationRecommendSchema>;
+
+const dateRangeRefinement = (value: { from?: Date; to?: Date }, context: z.RefinementCtx) => {
+  if (value.from && value.to && value.from > value.to) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['to'], message: 'to must be on or after from' });
+  }
+};
+
+export const adminOverviewQuerySchema = z.object({
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+}).superRefine(dateRangeRefinement);
+export type AdminOverviewQueryInput = z.infer<typeof adminOverviewQuerySchema>;
+
+export const adminReconciliationQuerySchema = z.object({
+  date: z.coerce.date(),
+});
+export type AdminReconciliationQueryInput = z.infer<typeof adminReconciliationQuerySchema>;
+
+export const adminAlertListQuerySchema = paginationSchema.extend({
+  type: z.nativeEnum(AlertType).optional(),
+  resolved: z.coerce.boolean().optional(),
+});
+export type AdminAlertListQueryInput = z.infer<typeof adminAlertListQuerySchema>;
