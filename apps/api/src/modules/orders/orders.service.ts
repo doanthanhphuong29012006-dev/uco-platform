@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { ContainerState, EntityStatus, MerchantApprovalStatus, OrderStatus, OrderSource } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import type { OrderListQueryInput, OrderReadyInput, RouteQueryInput } from '@eco-oil/validation';
@@ -60,6 +60,13 @@ export class OrdersService {
 
     const capacityL = Number(container.capacityLiters ?? 0);
     const expectedLiters = input.expected_liters ?? capacityL;
+    if (expectedLiters <= 0 || expectedLiters > capacityL) {
+      throw new BadRequestException({
+        code: 'EXPECTED_LITERS_EXCEEDS_CAPACITY',
+        message: `Số lít dự kiến phải lớn hơn 0 và không vượt quá dung tích can ${capacityL} lít`,
+        details: { capacity_l: capacityL, expected_liters: expectedLiters },
+      });
+    }
     const daysSinceLastCollection = merchant.lastCollectedAt ? Math.max(0, (Date.now() - merchant.lastCollectedAt.getTime()) / DAY_MS) : 14;
     const priority = calculatePriority({ expectedLiters, capacityL, daysSinceLastCollection });
     const order = await this.prisma.collectionOrder.create({

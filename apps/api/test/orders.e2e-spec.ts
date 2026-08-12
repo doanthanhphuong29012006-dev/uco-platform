@@ -49,6 +49,30 @@ describe('Orders and collector routes (e2e)', () => {
     await app.close();
   });
 
+  it('rejects expected liters above the assigned container capacity', async () => {
+    const prisma = app.get(PrismaService);
+    await prisma.collectionOrder.updateMany({
+      where: { containerId: containerOneId, status: { in: ['READY', 'ASSIGNED'] } },
+      data: { status: 'CANCELLED', cancelledAt: new Date() },
+    });
+    const merchantToken = await login('zalo_merchant_01', '0900000001');
+    const tooMuch = await request(app.getHttpServer())
+      .post('/api/v1/orders/ready')
+      .set('Authorization', `Bearer ${merchantToken}`)
+      .send({ container_id: containerOneId, expected_liters: 36 })
+      .expect(400);
+    expect(tooMuch.body.code).toBe('EXPECTED_LITERS_EXCEEDS_CAPACITY');
+    expect(tooMuch.body.message).toContain('30');
+
+    const valid = await request(app.getHttpServer())
+      .post('/api/v1/orders/ready')
+      .set('Authorization', `Bearer ${merchantToken}`)
+      .send({ container_id: containerOneId, expected_liters: 30 })
+      .expect(201);
+    expect(valid.body.expected_liters).toBe(30);
+    await prisma.collectionOrder.update({ where: { id: valid.body.id as string }, data: { status: 'CANCELLED', cancelledAt: new Date() } });
+  });
+
   it('creates a READY order and blocks a duplicate for the same container', async () => {
     const merchantToken = await login('zalo_merchant_01', '0900000001');
     const created = await request(app.getHttpServer())

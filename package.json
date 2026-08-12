@@ -12,6 +12,7 @@
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset --force",
     "db:seed": "prisma db seed",
+    "db:cleanup-invalid-orders": "tsx scripts/cleanup-invalid-orders.ts",
     "prisma:migrate": "prisma migrate deploy",
     "prisma:validate": "prisma validate",
     "dev:all": "turbo run dev --parallel",
