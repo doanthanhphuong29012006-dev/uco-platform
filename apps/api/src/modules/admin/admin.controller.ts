@@ -72,6 +72,12 @@ export class AdminController {
   }
 
   @Roles(Role.ADMIN)
+  @Get('wards')
+  wards() {
+    return this.service.listWards();
+  }
+
+  @Roles(Role.ADMIN)
   @Get('containers/:id')
   container(@Param('id') id: string) {
     return this.service.getContainer(id);

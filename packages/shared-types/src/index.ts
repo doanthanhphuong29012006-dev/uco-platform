@@ -185,6 +185,12 @@ export interface AdminContainerSummary {
   merchant: { id: string; name: string; address: string | null } | null;
 }
 
+export interface AdminWardSummary {
+  id: string;
+  code: string;
+  name: string;
+}
+
 export interface CollectionCreateRequest {
   client_uuid: string;
   order_id: string;

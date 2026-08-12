@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { ContainerState, EntityStatus } from '@prisma/client';
 import type { ContainerAssignInput, ContainerCreateInput, ContainerListQueryInput, EntityStatusInput } from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
+import { buildContainerQrCode, containerQrPrefix } from './qr-code';
 
 @Injectable()
 export class ContainersService {
@@ -82,13 +83,13 @@ export class ContainersService {
   }
 
   private async nextQrCode(wardCode: string): Promise<string> {
-    const prefix = `UCO-${wardCode}-`;
+    const prefix = containerQrPrefix(wardCode);
     const rows = await this.prisma.container.findMany({ where: { qrCode: { startsWith: prefix } }, select: { qrCode: true } });
     const max = rows.reduce((highest, row) => {
       const suffix = Number(row.qrCode.slice(prefix.length));
       return Number.isInteger(suffix) && suffix > highest ? suffix : highest;
     }, 0);
-    return `${prefix}${String(max + 1).padStart(4, '0')}`;
+    return buildContainerQrCode(wardCode, max + 1);
   }
 
   private async requireMerchant(id: string) {

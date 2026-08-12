@@ -17,6 +17,7 @@ import type {
   ContainerAssignInput,
 } from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
+import { buildContainerQrCode, containerQrPrefix, normalizeWardCode } from '../containers/qr-code';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -566,6 +567,11 @@ export class AdminService {
     return { data: rows.map((row) => this.serializeAdminContainer(row)), meta: { page: query.page, limit: query.limit, total } };
   }
 
+  async listWards() {
+    const wards = await this.prisma.ward.findMany({ where: { deletedAt: null }, orderBy: { code: 'asc' } });
+    return wards.map((ward) => ({ id: ward.id, code: normalizeWardCode(ward.code), name: ward.name }));
+  }
+
   async getContainer(id: string) {
     const row = await this.prisma.container.findUnique({ where: { id }, include: { merchant: true } });
     if (!row) throw new NotFoundException('Container not found');
@@ -573,8 +579,8 @@ export class AdminService {
   }
 
   async createContainer(input: AdminContainerCreateInput, actorUserId: string) {
-    const ward = await this.prisma.ward.findUnique({ where: { code: input.ward_code } });
-    if (!ward) throw new NotFoundException('Ward not found');
+    const ward = await this.findWard(input.ward_id, input.ward_code);
+    if (!ward) throw new NotFoundException({ code: 'WARD_NOT_FOUND', message: 'Không tìm thấy phường đã chọn', details: null });
     const qrCode = input.qr_code ?? await this.nextAdminQrCode(ward.code);
     const duplicate = await this.prisma.container.findUnique({ where: { qrCode } });
     if (duplicate) throw new ConflictException({ code: 'QR_CODE_ALREADY_EXISTS', message: 'Mã QR đã tồn tại', details: { qr_code: qrCode } });
@@ -621,13 +627,21 @@ export class AdminService {
   }
 
   private async nextAdminQrCode(wardCode: string) {
-    const prefix = `ECO-UCO-${wardCode}-`;
+    const prefix = containerQrPrefix(wardCode);
     const rows = await this.prisma.container.findMany({ where: { qrCode: { startsWith: prefix } }, select: { qrCode: true } });
     const max = rows.reduce((highest, row) => {
       const suffix = Number(row.qrCode.slice(prefix.length));
       return Number.isInteger(suffix) && suffix > highest ? suffix : highest;
     }, 0);
-    return `${prefix}${String(max + 1).padStart(4, '0')}`;
+    return buildContainerQrCode(wardCode, max + 1);
+  }
+
+  private async findWard(wardId?: string, wardCode?: string) {
+    if (wardId) return this.prisma.ward.findUnique({ where: { id: wardId } });
+    if (!wardCode) return null;
+    const normalized = normalizeWardCode(wardCode);
+    const wards = await this.prisma.ward.findMany({ where: { deletedAt: null } });
+    return wards.find((ward) => normalizeWardCode(ward.code) === normalized) ?? null;
   }
 
   private serializeAdminContainer(row: { id: string; qrCode: string; state: string; status: string; capacityLiters: Prisma.Decimal | null; merchant: { id: string; businessName: string; address: string | null } | null }) {

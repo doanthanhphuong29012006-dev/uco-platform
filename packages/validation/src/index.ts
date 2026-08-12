@@ -123,10 +123,11 @@ export const containerAssignSchema = z.object({
 export type ContainerAssignInput = z.infer<typeof containerAssignSchema>;
 
 export const adminContainerCreateSchema = z.object({
-  ward_code: z.string().trim().min(1).max(30),
+  ward_id: uuidSchema.optional(),
+  ward_code: z.string().trim().min(1).max(30).optional(),
   qr_code: z.string().trim().min(1).max(100).optional(),
   capacity_liters: z.number().finite().positive().max(100000),
-});
+}).refine((value) => Boolean(value.ward_id || value.ward_code), { message: 'ward_id hoặc ward_code là bắt buộc', path: ['ward_id'] });
 export type AdminContainerCreateInput = z.infer<typeof adminContainerCreateSchema>;
 
 export const adminContainerListQuerySchema = paginationSchema.extend({
