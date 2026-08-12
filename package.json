@@ -14,6 +14,7 @@
     "db:seed": "prisma db seed",
     "prisma:migrate": "prisma migrate deploy",
     "prisma:validate": "prisma validate",
+    "dev:all": "turbo run dev --parallel",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck"
   },
