@@ -7,6 +7,7 @@ import type {
   AdminOverviewResponse,
   AdminReconciliationResponse,
   AdminStationSummary,
+  AdminContainerSummary,
   AuthUser,
   PagedResponse,
 } from '@eco-oil/shared-types';
@@ -53,4 +54,8 @@ export const api = {
   rejectMerchant: (id: string, reason: string) => client.request(`/admin/merchants/${id}/reject`, { method: 'POST', body: { reason } }),
   createCollector: (body: { name: string; phone: string; zalo_id: string; vehicle_type: string; max_capacity_l: number; ward_ids: string[] }) => client.request('/admin/collectors', { method: 'POST', body }),
   updateCollector: (id: string, body: Record<string, unknown>) => client.request(`/admin/collectors/${id}`, { method: 'PATCH', body }),
+  containers: (params: { state?: string; merchant_id?: string; unassigned?: boolean } = {}) => client.request<PagedResponse<AdminContainerSummary>>(`/admin/containers${query({ page: 1, limit: 100, ...params })}`),
+  createContainer: (body: { ward_code: string; capacity_liters: number; qr_code?: string }) => client.request<AdminContainerSummary>('/admin/containers', { method: 'POST', body }),
+  assignContainer: (id: string, merchant_id: string) => client.request<AdminContainerSummary>(`/admin/containers/${id}/assign`, { method: 'POST', body: { merchant_id } }),
+  unassignContainer: (id: string) => client.request<AdminContainerSummary>(`/admin/containers/${id}/unassign`, { method: 'POST' }),
 };

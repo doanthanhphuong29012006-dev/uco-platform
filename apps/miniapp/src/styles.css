@@ -55,6 +55,9 @@ select, input { width: 100%; min-height: 48px; border: 1px solid #cfe0d7; border
 .section-heading h2 { margin: 0; font-size: 1.2rem; }
 .section-heading span { color: var(--muted); font-size: .82rem; }
 .container-list, .history-list, .orders-list { display: grid; gap: 10px; }
+.empty-container-state { border: 1px dashed #9ac9b1; border-radius: 18px; background: #f2fbf5; padding: 22px; color: #27553c; text-align: center; }
+.empty-container-state strong, .empty-container-state p, .empty-container-state small { display: block; }
+.empty-container-state p { margin: 8px 0; color: #547364; }
 .container-card, .order-card, .history-row, .stat-card { border: 1px solid var(--line); border-radius: 17px; background: white; }
 .container-card { display: flex; gap: 12px; padding: 14px; }
 .container-icon { flex: 0 0 38px; display: grid; place-items: center; height: 38px; border-radius: 12px; color: var(--green); background: var(--mint); }

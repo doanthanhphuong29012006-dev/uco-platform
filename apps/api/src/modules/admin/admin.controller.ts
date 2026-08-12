@@ -10,6 +10,9 @@ import {
   adminCollectorCreateSchema,
   adminCollectorPatchSchema,
   merchantRejectSchema,
+  adminContainerCreateSchema,
+  adminContainerListQuerySchema,
+  containerAssignSchema,
 } from '@eco-oil/validation';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -60,6 +63,36 @@ export class AdminController {
   @Post('merchants/:id/reject')
   rejectMerchant(@Param('id') id: string, @CurrentUser() user: AccessTokenPayload, @Body() body: unknown) {
     return this.service.rejectMerchant(id, user.sub, merchantRejectSchema.parse(body));
+  }
+
+  @Roles(Role.ADMIN)
+  @Get('containers')
+  containers(@Query() query: Record<string, unknown>) {
+    return this.service.listContainers(adminContainerListQuerySchema.parse(query));
+  }
+
+  @Roles(Role.ADMIN)
+  @Get('containers/:id')
+  container(@Param('id') id: string) {
+    return this.service.getContainer(id);
+  }
+
+  @Roles(Role.ADMIN)
+  @Post('containers')
+  createContainer(@Body() body: unknown, @CurrentUser() user: AccessTokenPayload) {
+    return this.service.createContainer(adminContainerCreateSchema.parse(body), user.sub);
+  }
+
+  @Roles(Role.ADMIN)
+  @Post('containers/:id/assign')
+  assignContainer(@Param('id') id: string, @Body() body: unknown, @CurrentUser() user: AccessTokenPayload) {
+    return this.service.assignContainer(id, containerAssignSchema.parse(body), user.sub);
+  }
+
+  @Roles(Role.ADMIN)
+  @Post('containers/:id/unassign')
+  unassignContainer(@Param('id') id: string, @CurrentUser() user: AccessTokenPayload) {
+    return this.service.unassignContainer(id, user.sub);
   }
 
   @Roles(Role.ADMIN)

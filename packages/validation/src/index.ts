@@ -122,6 +122,20 @@ export const containerAssignSchema = z.object({
 });
 export type ContainerAssignInput = z.infer<typeof containerAssignSchema>;
 
+export const adminContainerCreateSchema = z.object({
+  ward_code: z.string().trim().min(1).max(30),
+  qr_code: z.string().trim().min(1).max(100).optional(),
+  capacity_liters: z.number().finite().positive().max(100000),
+});
+export type AdminContainerCreateInput = z.infer<typeof adminContainerCreateSchema>;
+
+export const adminContainerListQuerySchema = paginationSchema.extend({
+  state: z.nativeEnum(ContainerState).optional(),
+  merchant_id: uuidSchema.optional(),
+  unassigned: z.coerce.boolean().optional(),
+});
+export type AdminContainerListQueryInput = z.infer<typeof adminContainerListQuerySchema>;
+
 export const orderReadySchema = z.object({
   container_id: uuidSchema.optional(),
   expected_liters: z.number().finite().positive().max(100000).optional(),

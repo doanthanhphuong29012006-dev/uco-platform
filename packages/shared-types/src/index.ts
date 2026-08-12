@@ -176,6 +176,15 @@ export interface ContainerLookupResponse {
   merchant: { id: string; name: string; address: string | null; lat?: number; lng?: number };
 }
 
+export interface AdminContainerSummary {
+  id: string;
+  qr_code: string;
+  state: ContainerState;
+  status: EntityStatus;
+  capacity_liters: number | null;
+  merchant: { id: string; name: string; address: string | null } | null;
+}
+
 export interface CollectionCreateRequest {
   client_uuid: string;
   order_id: string;
@@ -270,6 +279,8 @@ export interface AdminMerchantSummary {
   rejection_reason: string | null;
   business_type: string | null;
   phone: string | null;
+  ward_code: string | null;
+  ward_name: string | null;
   avg_daily_liters: number | null;
   last_collected_at: string | null;
   anomaly: boolean;

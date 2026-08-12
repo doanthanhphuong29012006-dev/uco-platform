@@ -1,4 +1,5 @@
 'use client';
+
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, type ReactNode } from 'react';
@@ -7,9 +8,13 @@ import { useAuth } from '../lib/auth';
 import { api } from '../lib/api';
 import { isAdminUser } from '../lib/dashboard-utils';
 import { Skeleton } from './ui';
-const links = [['/', 'Tổng quan'], ['/reconciliation', 'Đối soát'], ['/alerts', 'Cảnh báo'], ['/stations', 'Trạm'], ['/merchants', 'Quán'], ['/approvals', 'Duyệt quán'], ['/collectors', 'Người thu gom']] as const;
+
+const links = [['/', 'Tổng quan'], ['/reconciliation', 'Đối soát'], ['/alerts', 'Cảnh báo'], ['/stations', 'Trạm'], ['/merchants', 'Quán'], ['/containers', 'Quản lý can'], ['/approvals', 'Duyệt quán'], ['/collectors', 'Người thu gom']] as const;
+
 export function AdminShell({ children }: { children: ReactNode }) {
-  const { user, loading, signOut } = useAuth(); const router = useRouter(); const pathname = usePathname();
+  const { user, loading, signOut } = useAuth();
+  const router = useRouter();
+  const pathname = usePathname();
   const pending = useQuery({ queryKey: ['pending-merchants-count'], queryFn: () => api.merchants({ status: 'PENDING' }), enabled: Boolean(user) });
   useEffect(() => { if (!loading && !isAdminUser(user)) router.replace('/login'); }, [loading, router, user]);
   if (loading || !user || user.role !== 'ADMIN') return <main className="p-8"><Skeleton className="h-10 w-64" /><Skeleton className="mt-6 h-40 w-full" /></main>;

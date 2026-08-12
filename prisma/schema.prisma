@@ -189,7 +189,7 @@ model Station {
 
 model Container {
   id             String             @id @default(uuid()) @db.Uuid
-  merchantId     String             @map("merchant_id") @db.Uuid
+  merchantId     String?            @map("merchant_id") @db.Uuid
   qrCode         String             @unique @map("qr_code")
   state          ContainerState     @default(AT_MERCHANT)
   status         EntityStatus       @default(ACTIVE)
@@ -199,7 +199,7 @@ model Container {
   createdAt      DateTime           @default(now()) @map("created_at")
   updatedAt      DateTime           @updatedAt @map("updated_at")
   deletedAt      DateTime?          @map("deleted_at")
-  merchant       Merchant           @relation(fields: [merchantId], references: [id])
+  merchant       Merchant?          @relation(fields: [merchantId], references: [id])
   transactions   CollectionTransaction[]
   orders         CollectionOrder[]
 

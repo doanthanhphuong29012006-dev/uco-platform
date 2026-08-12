@@ -25,6 +25,9 @@ export class OrdersService {
       });
     }
 
+    const assignedContainerCount = await this.prisma.container.count({
+      where: { merchantId: merchant.id, status: EntityStatus.ACTIVE },
+    });
     const container = input.container_id
       ? await this.prisma.container.findUnique({ where: { id: input.container_id } })
       : await this.prisma.container.findFirst({
@@ -34,8 +37,8 @@ export class OrdersService {
     if (!container || container.status === EntityStatus.INACTIVE || container.merchantId !== merchant.id || container.state !== ContainerState.AT_MERCHANT) {
       if (!input.container_id || !container) {
         throw new UnprocessableEntityException({
-          code: 'NO_CONTAINER_AVAILABLE',
-          message: 'No container available for collection',
+          code: assignedContainerCount === 0 ? 'NO_CONTAINER_ASSIGNED' : 'NO_CONTAINER_AVAILABLE',
+          message: assignedContainerCount === 0 ? 'No container has been assigned to this merchant' : 'No container available for collection',
           details: null,
         });
       }

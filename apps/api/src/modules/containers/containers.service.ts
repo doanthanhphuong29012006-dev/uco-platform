@@ -31,7 +31,10 @@ export class ContainersService {
   }
 
   async assign(id: string, input: ContainerAssignInput) {
-    await this.getRequired(id);
+    const existing = await this.getRequired(id);
+    if (existing.merchantId && existing.merchantId !== input.merchant_id) {
+      throw new ConflictException({ code: 'CONTAINER_ALREADY_ASSIGNED', message: 'Container is already assigned to another merchant', details: { merchant_id: existing.merchantId } });
+    }
     await this.requireMerchant(input.merchant_id);
     const row = await this.prisma.container.update({
       where: { id },
@@ -53,7 +56,7 @@ export class ContainersService {
 
   async byQr(code: string) {
     const row = await this.prisma.container.findUnique({ where: { qrCode: code }, include: { merchant: true } });
-    if (!row || row.status === EntityStatus.INACTIVE) {
+    if (!row || row.status === EntityStatus.INACTIVE || !row.merchant) {
       throw new NotFoundException('Container not found');
     }
     return this.serialize(row, true);
@@ -104,24 +107,24 @@ export class ContainersService {
     return row;
   }
 
-  private serialize(row: { id: string; qrCode: string; state: ContainerState; status: EntityStatus; capacityLiters: Prisma.Decimal | null; merchant: { id: string; businessName: string; address: string | null; wardId: string } }, includeLocation = false) {
+  private serialize(row: { id: string; qrCode: string; state: ContainerState; status: EntityStatus; capacityLiters: Prisma.Decimal | null; merchant: { id: string; businessName: string; address: string | null; wardId: string } | null }, includeLocation = false) {
     return this.serializeAsync(row, includeLocation);
   }
 
-  private async serializeAsync(row: { id: string; qrCode: string; state: ContainerState; status: EntityStatus; capacityLiters: Prisma.Decimal | null; merchant: { id: string; businessName: string; address: string | null; wardId: string } }, includeLocation: boolean) {
-    const point = includeLocation ? await this.prisma.getGeographyPoint('merchants', row.merchant.id) : null;
+  private async serializeAsync(row: { id: string; qrCode: string; state: ContainerState; status: EntityStatus; capacityLiters: Prisma.Decimal | null; merchant: { id: string; businessName: string; address: string | null; wardId: string } | null }, includeLocation: boolean) {
+    const point = includeLocation && row.merchant ? await this.prisma.getGeographyPoint('merchants', row.merchant.id) : null;
     return {
       id: row.id,
       qr_code: row.qrCode,
       state: row.state,
       status: row.status,
       capacity_liters: row.capacityLiters === null ? null : Number(row.capacityLiters),
-      merchant: {
+      merchant: row.merchant ? {
         id: row.merchant.id,
         name: row.merchant.businessName,
         address: row.merchant.address,
         ...(point ? { lat: point.lat, lng: point.lng } : {}),
-      },
+      } : null,
     };
   }
 }

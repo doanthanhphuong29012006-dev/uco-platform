@@ -12,6 +12,9 @@ import type {
   AdminCollectorCreateInput,
   AdminCollectorPatchInput,
   MerchantRejectInput,
+  AdminContainerCreateInput,
+  AdminContainerListQueryInput,
+  ContainerAssignInput,
 } from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -317,12 +320,14 @@ export class AdminService {
       rejection_reason: string | null;
       business_type: string | null;
       phone: string | null;
+      ward_code: string | null;
+      ward_name: string | null;
       avg_daily_liters: number | null;
       last_collected_at: Date | null;
       anomaly: boolean;
       total: number;
     }>>`
-      SELECT m."id", m."business_name" AS name, m."address", u."phone",
+      SELECT m."id", m."business_name" AS name, m."address", u."phone", w."code" AS ward_code, w."name" AS ward_name,
         ST_Y(m."location"::geometry)::float8 AS lat,
         ST_X(m."location"::geometry)::float8 AS lng,
         nearest.distance_m::float8 AS distance_m,
@@ -339,6 +344,7 @@ export class AdminService {
         COUNT(*) OVER()::int AS total
       FROM "merchants" m
       JOIN "users" u ON u."id" = m."user_id"
+      JOIN "wards" w ON w."id" = m."ward_id"
       LEFT JOIN LATERAL (
         SELECT ST_Distance(m."location", s."location") AS distance_m
         FROM "stations" s
@@ -372,6 +378,8 @@ export class AdminService {
         rejection_reason: row.rejection_reason,
         business_type: row.business_type,
         phone: row.phone,
+        ward_code: row.ward_code,
+        ward_name: row.ward_name,
         avg_daily_liters: row.avg_daily_liters === null ? null : Number(row.avg_daily_liters),
         last_collected_at: row.last_collected_at,
         anomaly: row.anomaly,
@@ -536,6 +544,101 @@ export class AdminService {
       return row;
     });
     return this.merchantProfile(updated.id);
+  }
+
+  async listContainers(query: AdminContainerListQueryInput) {
+    const where: Prisma.ContainerWhereInput = {
+      ...(query.state ? { state: query.state } : {}),
+      ...(query.merchant_id ? { merchantId: query.merchant_id } : {}),
+      ...(query.unassigned ? { merchantId: null } : {}),
+      ...(query.include_inactive ? {} : { status: EntityStatus.ACTIVE }),
+    };
+    const [rows, total] = await Promise.all([
+      this.prisma.container.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (query.page - 1) * query.limit,
+        take: query.limit,
+        include: { merchant: true },
+      }),
+      this.prisma.container.count({ where }),
+    ]);
+    return { data: rows.map((row) => this.serializeAdminContainer(row)), meta: { page: query.page, limit: query.limit, total } };
+  }
+
+  async getContainer(id: string) {
+    const row = await this.prisma.container.findUnique({ where: { id }, include: { merchant: true } });
+    if (!row) throw new NotFoundException('Container not found');
+    return this.serializeAdminContainer(row);
+  }
+
+  async createContainer(input: AdminContainerCreateInput, actorUserId: string) {
+    const ward = await this.prisma.ward.findUnique({ where: { code: input.ward_code } });
+    if (!ward) throw new NotFoundException('Ward not found');
+    const qrCode = input.qr_code ?? await this.nextAdminQrCode(ward.code);
+    const duplicate = await this.prisma.container.findUnique({ where: { qrCode } });
+    if (duplicate) throw new ConflictException({ code: 'QR_CODE_ALREADY_EXISTS', message: 'Mã QR đã tồn tại', details: { qr_code: qrCode } });
+    const row = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.container.create({
+        data: { qrCode, capacityLiters: input.capacity_liters, state: 'AT_MERCHANT', merchantId: null },
+        include: { merchant: true },
+      });
+      await tx.auditLog.create({
+        data: { actorUserId, action: 'CREATE_CONTAINER', entityType: 'Container', entityId: created.id, details: { qr_code: qrCode, ward_code: ward.code, capacity_liters: input.capacity_liters } },
+      });
+      return created;
+    });
+    return this.serializeAdminContainer(row);
+  }
+
+  async assignContainer(id: string, input: ContainerAssignInput, actorUserId: string) {
+    const [container, merchant] = await Promise.all([
+      this.prisma.container.findUnique({ where: { id }, include: { merchant: true } }),
+      this.prisma.merchant.findUnique({ where: { id: input.merchant_id } }),
+    ]);
+    if (!container) throw new NotFoundException('Container not found');
+    if (!merchant || merchant.status === EntityStatus.INACTIVE) throw new NotFoundException('Merchant not found');
+    if (container.merchantId && container.merchantId !== merchant.id) {
+      throw new ConflictException({ code: 'CONTAINER_ALREADY_ASSIGNED', message: 'Can đang thuộc quán khác', details: { merchant_id: container.merchantId } });
+    }
+    const row = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.container.update({ where: { id }, data: { merchantId: merchant.id, state: 'AT_MERCHANT', status: 'ACTIVE', isActive: true, deletedAt: null }, include: { merchant: true } });
+      await tx.auditLog.create({ data: { actorUserId, action: 'ASSIGN_CONTAINER', entityType: 'Container', entityId: id, details: { merchant_id: merchant.id } } });
+      return updated;
+    });
+    return this.serializeAdminContainer(row);
+  }
+
+  async unassignContainer(id: string, actorUserId: string) {
+    const container = await this.prisma.container.findUnique({ where: { id }, include: { merchant: true } });
+    if (!container) throw new NotFoundException('Container not found');
+    const row = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.container.update({ where: { id }, data: { merchantId: null, state: 'AT_MERCHANT' }, include: { merchant: true } });
+      await tx.auditLog.create({ data: { actorUserId, action: 'UNASSIGN_CONTAINER', entityType: 'Container', entityId: id, details: { previous_merchant_id: container.merchantId } } });
+      return updated;
+    });
+    return this.serializeAdminContainer(row);
+  }
+
+  private async nextAdminQrCode(wardCode: string) {
+    const prefix = `ECO-UCO-${wardCode}-`;
+    const rows = await this.prisma.container.findMany({ where: { qrCode: { startsWith: prefix } }, select: { qrCode: true } });
+    const max = rows.reduce((highest, row) => {
+      const suffix = Number(row.qrCode.slice(prefix.length));
+      return Number.isInteger(suffix) && suffix > highest ? suffix : highest;
+    }, 0);
+    return `${prefix}${String(max + 1).padStart(4, '0')}`;
+  }
+
+  private serializeAdminContainer(row: { id: string; qrCode: string; state: string; status: string; capacityLiters: Prisma.Decimal | null; merchant: { id: string; businessName: string; address: string | null } | null }) {
+    return {
+      id: row.id,
+      qr_code: row.qrCode,
+      state: row.state,
+      status: row.status,
+      capacity_liters: row.capacityLiters === null ? null : Number(row.capacityLiters),
+      merchant: row.merchant ? { id: row.merchant.id, name: row.merchant.businessName, address: row.merchant.address } : null,
+    };
   }
 
   async createCollector(input: AdminCollectorCreateInput) {
