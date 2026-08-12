@@ -1,6 +1,13 @@
 import { Controller, Get, Inject, Param, Patch, Query } from '@nestjs/common';
 import { Role } from '@prisma/client';
-import { adminAlertListQuerySchema, adminOverviewQuerySchema, adminReconciliationQuerySchema } from '@eco-oil/validation';
+import {
+  adminAlertListQuerySchema,
+  adminCollectorListQuerySchema,
+  adminMerchantListQuerySchema,
+  adminOverviewQuerySchema,
+  adminReconciliationQuerySchema,
+  adminStationListQuerySchema,
+} from '@eco-oil/validation';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import type { AccessTokenPayload } from '../auth/auth.types';
@@ -26,6 +33,30 @@ export class AdminController {
   @Get('alerts')
   alerts(@Query() query: Record<string, unknown>) {
     return this.service.listAlerts(adminAlertListQuerySchema.parse(query));
+  }
+
+  @Roles(Role.ADMIN)
+  @Get('stations')
+  stations(@Query() query: Record<string, unknown>) {
+    return this.service.listStations(adminStationListQuerySchema.parse(query));
+  }
+
+  @Roles(Role.ADMIN)
+  @Get('merchants')
+  merchants(@Query() query: Record<string, unknown>) {
+    return this.service.listMerchants(adminMerchantListQuerySchema.parse(query));
+  }
+
+  @Roles(Role.ADMIN)
+  @Get('collectors')
+  collectors(@Query() query: Record<string, unknown>) {
+    return this.service.listCollectors(adminCollectorListQuerySchema.parse(query));
+  }
+
+  @Roles(Role.ADMIN)
+  @Get('collectors/:id/performance')
+  collectorPerformance(@Param('id') id: string) {
+    return this.service.collectorPerformance(id);
   }
 
   @Roles(Role.ADMIN)

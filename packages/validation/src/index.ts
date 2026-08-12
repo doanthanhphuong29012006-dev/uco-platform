@@ -210,3 +210,15 @@ export const adminAlertListQuerySchema = paginationSchema.extend({
   resolved: z.coerce.boolean().optional(),
 });
 export type AdminAlertListQueryInput = z.infer<typeof adminAlertListQuerySchema>;
+
+export const adminMerchantListQuerySchema = merchantListQuerySchema.extend({
+  search: z.string().trim().max(120).optional(),
+  anomaly: z.coerce.boolean().optional(),
+});
+export type AdminMerchantListQueryInput = z.infer<typeof adminMerchantListQuerySchema>;
+
+export const adminCollectorListQuerySchema = personListQuerySchema;
+export type AdminCollectorListQueryInput = z.infer<typeof adminCollectorListQuerySchema>;
+
+export const adminStationListQuerySchema = personListQuerySchema;
+export type AdminStationListQueryInput = z.infer<typeof adminStationListQuerySchema>;

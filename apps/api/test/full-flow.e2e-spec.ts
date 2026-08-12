@@ -35,6 +35,15 @@ describe('Full merchant-to-station working shift (e2e)', () => {
     app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
     await app.init();
     prisma = app.get(PrismaService);
+
+    // Keep this end-to-end scenario isolated from other suites sharing uco_test.
+    await prisma.alert.deleteMany();
+    await prisma.collectionTransaction.deleteMany();
+    await prisma.stationDelivery.deleteMany();
+    await prisma.auditLog.deleteMany();
+    await prisma.collectionOrder.deleteMany();
+    await prisma.station.updateMany({ data: { currentVolumeLiters: 0 } });
+
     collectorToken = await login('zalo_collector_01', '0910000001');
 
     await prisma.collectionOrder.updateMany({

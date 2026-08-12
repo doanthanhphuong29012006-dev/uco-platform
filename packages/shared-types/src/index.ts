@@ -219,3 +219,108 @@ export interface StationDeliveryResponse extends StationDeliveryCreateRequest {
   status: DeliveryStatus;
   created_at: string;
 }
+
+export interface AdminRecentTransaction {
+  id: string;
+  merchant_name: string;
+  collector_name: string | null;
+  actual_liters: number;
+  quality: Quality;
+  collected_at: string;
+}
+
+export interface AdminStationSummary {
+  id: string;
+  name: string;
+  address: string | null;
+  current_volume_l: number;
+  capacity_l: number;
+  fill_pct: number;
+}
+
+export interface AdminMerchantSummary {
+  id: string;
+  name: string;
+  address: string | null;
+  lat: number | null;
+  lng: number | null;
+  distance_m: number | null;
+  status: EntityStatus;
+  avg_daily_liters: number | null;
+  last_collected_at: string | null;
+  anomaly: boolean;
+}
+
+export interface AdminOverviewResponse {
+  period: { from: string; to: string };
+  totals: { liters: number; transactions: number; active_merchants: number; active_collectors: number };
+  orders: { ready: number; assigned: number; collected: number; cancelled: number };
+  containers: { at_merchant: number; in_transit: number; at_station: number };
+  stations: AdminStationSummary[];
+  alerts_open: number;
+  daily_liters: Array<{ date: string; liters: number }>;
+  recent_transactions: AdminRecentTransaction[];
+}
+
+export interface AdminReconciliationTransaction {
+  id: string;
+  merchant_name: string;
+  liters: number;
+  collected_at: string;
+}
+
+export interface AdminReconciliationCollector {
+  collector_id: string;
+  name: string;
+  collected_l: number;
+  delivered_l: number;
+  variance_l: number;
+  status: 'OK' | 'FLAGGED';
+  transactions: AdminReconciliationTransaction[];
+}
+
+export interface AdminReconciliationResponse {
+  date: string;
+  collected_liters: number;
+  delivered_liters: number;
+  variance_l: number;
+  variance_pct: number;
+  by_collector: AdminReconciliationCollector[];
+  undelivered_transactions: Array<{
+    id: string;
+    merchant_name: string;
+    liters: number;
+    collected_at: string;
+  }>;
+}
+
+export interface AdminAlert {
+  id: string;
+  type: AlertType;
+  severity: AlertSeverity | null;
+  message: string | null;
+  details: unknown;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+export interface AdminCollectorSummary {
+  id: string;
+  display_name: string;
+  status: EntityStatus;
+  is_active: boolean;
+  last_seen_at: string | null;
+  ward: { id: string; code: string; name: string };
+  user: { id: string; name: string | null; phone: string | null };
+}
+
+export interface AdminCollectorPerformance {
+  collector_id: string;
+  display_name: string;
+  liters_7d: number;
+  collections_7d: number;
+  delivered_liters_7d: number;
+  variance_l: number;
+  variance_pct: number;
+  status: 'OK' | 'FLAGGED';
+}

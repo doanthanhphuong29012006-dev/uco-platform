@@ -2,9 +2,12 @@ import { ConflictException, Inject, Injectable, NotFoundException } from '@nestj
 import { ConfigService } from '@nestjs/config';
 import type { Prisma } from '@prisma/client';
 import type {
+  AdminCollectorListQueryInput,
+  AdminMerchantListQueryInput,
   AdminAlertListQueryInput,
   AdminOverviewQueryInput,
   AdminReconciliationQueryInput,
+  AdminStationListQueryInput,
 } from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -25,6 +28,7 @@ type OverviewRow = {
   alerts_open: number;
   stations: unknown;
   daily_liters: unknown;
+  recent_transactions: unknown;
 };
 
 type ReconciliationRow = {
@@ -98,6 +102,27 @@ export class AdminService {
         ) ORDER BY s."name"), '[]'::json) AS stations
         FROM "stations" s
         WHERE s."status" = 'ACTIVE' AND s."deleted_at" IS NULL
+      ),
+      recent_rows AS (
+        SELECT COALESCE(json_agg(json_build_object(
+          'id', recent."id",
+          'merchant_name', recent."merchant_name",
+          'collector_name', recent."collector_name",
+          'actual_liters', recent."actual_liters",
+          'quality', recent."quality",
+          'collected_at', recent."collected_at"
+        ) ORDER BY recent."collected_at" DESC), '[]'::json) AS recent_transactions
+        FROM (
+          SELECT ct."id", m."business_name" AS "merchant_name", u."name" AS "collector_name",
+            ct."actual_liters"::float8 AS "actual_liters", ct."quality"::text AS "quality", ct."collected_at"
+          FROM "collection_transactions" ct
+          JOIN "merchants" m ON m."id" = ct."merchant_id"
+          LEFT JOIN "collectors" co ON co."id" = ct."collector_id"
+          LEFT JOIN "users" u ON u."id" = co."user_id"
+          WHERE ct."deleted_at" IS NULL
+          ORDER BY ct."collected_at" DESC
+          LIMIT 10
+        ) recent
       )
       SELECT
         COALESCE((SELECT SUM("actual_liters")::float8 FROM period_transactions), 0)::float8 AS liters,
@@ -108,8 +133,9 @@ export class AdminService {
         cc.at_merchant, cc.in_transit, cc.at_station,
         (SELECT COUNT(*)::int FROM "alerts" a WHERE a."resolved_at" IS NULL) AS alerts_open,
         sr.stations,
-        COALESCE((SELECT json_agg(json_build_object('date', to_char(day, 'YYYY-MM-DD'), 'liters', liters) ORDER BY day) FROM daily), '[]'::json) AS daily_liters
-      FROM order_counts oc CROSS JOIN container_counts cc CROSS JOIN station_rows sr
+        COALESCE((SELECT json_agg(json_build_object('date', to_char(day, 'YYYY-MM-DD'), 'liters', liters) ORDER BY day) FROM daily), '[]'::json) AS daily_liters,
+        rr.recent_transactions
+      FROM order_counts oc CROSS JOIN container_counts cc CROSS JOIN station_rows sr CROSS JOIN recent_rows rr
     `;
     const row = rows[0];
     return {
@@ -134,6 +160,7 @@ export class AdminService {
       stations: row?.stations ?? [],
       alerts_open: Number(row?.alerts_open ?? 0),
       daily_liters: row?.daily_liters ?? [],
+      recent_transactions: row?.recent_transactions ?? [],
     };
   }
 
@@ -143,9 +170,16 @@ export class AdminService {
     const threshold = Number(this.config.get<number | string>('DELIVERY_VARIANCE_THRESHOLD_PCT', 0.02));
     const rows = await this.prisma.$queryRaw<ReconciliationRow[]>`
       WITH collected AS (
-        SELECT ct."collector_id", c."display_name" AS name, SUM(ct."actual_liters")::float8 AS collected_liters
+        SELECT ct."collector_id", c."display_name" AS name, SUM(ct."actual_liters")::float8 AS collected_liters,
+          COALESCE(json_agg(json_build_object(
+            'id', ct."id",
+            'merchant_name', m."business_name",
+            'liters', ct."actual_liters"::float8,
+            'collected_at', ct."collected_at"
+          ) ORDER BY ct."collected_at"), '[]'::json) AS transactions
         FROM "collection_transactions" ct
         JOIN "collectors" c ON c."id" = ct."collector_id"
+        JOIN "merchants" m ON m."id" = ct."merchant_id"
         WHERE ct."deleted_at" IS NULL AND ct."collected_at" >= ${day} AND ct."collected_at" < ${nextDay}
         GROUP BY ct."collector_id", c."display_name"
       ),
@@ -160,7 +194,8 @@ export class AdminService {
         SELECT COALESCE(c."collector_id", d."collector_id") AS collector_id,
           COALESCE(c.name, d.name) AS name,
           COALESCE(c.collected_liters, 0)::float8 AS collected_liters,
-          COALESCE(d.delivered_liters, 0)::float8 AS delivered_liters
+          COALESCE(d.delivered_liters, 0)::float8 AS delivered_liters,
+          COALESCE(c.transactions, '[]'::json) AS transactions
         FROM collected c FULL OUTER JOIN delivered d ON d."collector_id" = c."collector_id"
       ),
       undelivered AS (
@@ -186,6 +221,7 @@ export class AdminService {
           'collected_l', collected_liters,
           'delivered_l', delivered_liters,
           'variance_l', collected_liters - delivered_liters,
+          'transactions', transactions,
           'status', CASE WHEN ABS((collected_liters - delivered_liters) / NULLIF(collected_liters, 0)) > ${threshold} THEN 'FLAGGED' ELSE 'OK' END
         ) ORDER BY name) FROM collector_rows), '[]'::json) AS by_collector,
         (SELECT items FROM undelivered) AS undelivered_transactions
@@ -227,6 +263,169 @@ export class AdminService {
     return {
       data: rows.map((row) => this.serializeAlert(row)),
       meta: { page: query.page, limit: query.limit, total: Number(rows[0]?.total ?? 0) },
+    };
+  }
+
+  async listStations(query: AdminStationListQueryInput) {
+    const where: Prisma.StationWhereInput = {
+      ...(query.ward_id ? { wardId: query.ward_id } : {}),
+      ...(query.status ? { status: query.status } : query.include_inactive ? {} : { status: 'ACTIVE' }),
+    };
+    const [rows, total] = await Promise.all([
+      this.prisma.station.findMany({
+        where,
+        orderBy: { name: 'asc' },
+        skip: (query.page - 1) * query.limit,
+        take: query.limit,
+        include: { ward: true },
+      }),
+      this.prisma.station.count({ where }),
+    ]);
+    const points = await this.prisma.getGeographyPoints('stations', rows.map((row) => row.id));
+    const pointMap = new Map(points.map((point) => [point.id, point]));
+    return {
+      data: rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        address: row.address,
+        lat: pointMap.get(row.id)?.lat ?? null,
+        lng: pointMap.get(row.id)?.lng ?? null,
+        capacity_l: Number(row.capacityLiters),
+        current_volume_l: Number(row.currentVolumeLiters),
+        fill_pct: Number(row.capacityLiters) > 0 ? (Number(row.currentVolumeLiters) / Number(row.capacityLiters)) * 100 : 0,
+        status: row.status,
+        ward: { id: row.ward.id, code: row.ward.code, name: row.ward.name },
+      })),
+      meta: { page: query.page, limit: query.limit, total },
+    };
+  }
+
+  async listMerchants(query: AdminMerchantListQueryInput) {
+    const rows = await this.prisma.$queryRaw<Array<{
+      id: string;
+      name: string;
+      address: string | null;
+      lat: number | null;
+      lng: number | null;
+      distance_m: number | null;
+      status: string;
+      avg_daily_liters: number | null;
+      last_collected_at: Date | null;
+      anomaly: boolean;
+      total: number;
+    }>>`
+      SELECT m."id", m."business_name" AS name, m."address",
+        ST_Y(m."location"::geometry)::float8 AS lat,
+        ST_X(m."location"::geometry)::float8 AS lng,
+        nearest.distance_m::float8 AS distance_m,
+        m."status"::text AS status,
+        m."avg_daily_liters"::float8 AS avg_daily_liters,
+        m."last_collected_at",
+        EXISTS (
+          SELECT 1 FROM "collection_transactions" ct
+          WHERE ct."merchant_id" = m."id" AND ct."quality" = 'FLAG' AND ct."deleted_at" IS NULL
+        ) AS anomaly,
+        COUNT(*) OVER()::int AS total
+      FROM "merchants" m
+      LEFT JOIN LATERAL (
+        SELECT ST_Distance(m."location", s."location") AS distance_m
+        FROM "stations" s
+        WHERE s."status" = 'ACTIVE' AND s."deleted_at" IS NULL
+          AND m."location" IS NOT NULL AND s."location" IS NOT NULL
+        ORDER BY distance_m ASC
+        LIMIT 1
+      ) nearest ON true
+      WHERE m."deleted_at" IS NULL
+        AND (${query.ward_id ?? null}::uuid IS NULL OR m."ward_id" = ${query.ward_id ?? null}::uuid)
+        AND (${query.status ?? null}::text IS NULL OR m."status"::text = ${query.status ?? null})
+        AND (${query.include_inactive}::boolean OR m."status" = 'ACTIVE')
+        AND (${query.search ?? null}::text IS NULL OR m."business_name" ILIKE '%' || ${query.search ?? null} || '%')
+        AND (${query.anomaly ?? null}::boolean IS NULL OR EXISTS (
+          SELECT 1 FROM "collection_transactions" ct2
+          WHERE ct2."merchant_id" = m."id" AND ct2."quality" = 'FLAG' AND ct2."deleted_at" IS NULL
+        ) = ${query.anomaly ?? null})
+      ORDER BY m."business_name" ASC
+      LIMIT ${query.limit} OFFSET ${(query.page - 1) * query.limit}
+    `;
+    return {
+      data: rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        address: row.address,
+        lat: row.lat === null ? null : Number(row.lat),
+        lng: row.lng === null ? null : Number(row.lng),
+        distance_m: row.distance_m === null ? null : Number(row.distance_m),
+        status: row.status,
+        avg_daily_liters: row.avg_daily_liters === null ? null : Number(row.avg_daily_liters),
+        last_collected_at: row.last_collected_at,
+        anomaly: row.anomaly,
+      })),
+      meta: { page: query.page, limit: query.limit, total: Number(rows[0]?.total ?? 0) },
+    };
+  }
+
+  async listCollectors(query: AdminCollectorListQueryInput) {
+    const where: Prisma.CollectorWhereInput = {
+      ...(query.ward_id ? { wardId: query.ward_id } : {}),
+      ...(query.status ? { status: query.status } : query.include_inactive ? {} : { status: 'ACTIVE' }),
+    };
+    const [rows, total] = await Promise.all([
+      this.prisma.collector.findMany({
+        where,
+        orderBy: { displayName: 'asc' },
+        skip: (query.page - 1) * query.limit,
+        take: query.limit,
+        include: { ward: true, user: true },
+      }),
+      this.prisma.collector.count({ where }),
+    ]);
+    return {
+      data: rows.map((row) => ({
+        id: row.id,
+        display_name: row.displayName,
+        status: row.status,
+        is_active: row.isActive,
+        last_seen_at: row.lastSeenAt,
+        ward: { id: row.ward.id, code: row.ward.code, name: row.ward.name },
+        user: { id: row.user.id, name: row.user.name, phone: row.user.phone },
+      })),
+      meta: { page: query.page, limit: query.limit, total },
+    };
+  }
+
+  async collectorPerformance(id: string) {
+    const collector = await this.prisma.collector.findUnique({ where: { id }, select: { id: true, displayName: true } });
+    if (!collector) {
+      throw new NotFoundException('Collector not found');
+    }
+    const threshold = Number(this.config.get<number | string>('DELIVERY_VARIANCE_THRESHOLD_PCT', 0.02));
+    const rows = await this.prisma.$queryRaw<Array<{
+      liters_7d: number;
+      collections_7d: number;
+      delivered_liters_7d: number;
+    }>>`
+      WITH bounds AS (SELECT NOW() - interval '7 days' AS from_at)
+      SELECT
+        COALESCE((SELECT SUM(ct."actual_liters")::float8 FROM "collection_transactions" ct, bounds b
+          WHERE ct."collector_id" = ${id}::uuid AND ct."deleted_at" IS NULL AND ct."collected_at" >= b.from_at), 0)::float8 AS liters_7d,
+        COALESCE((SELECT COUNT(*)::int FROM "collection_transactions" ct, bounds b
+          WHERE ct."collector_id" = ${id}::uuid AND ct."deleted_at" IS NULL AND ct."collected_at" >= b.from_at), 0)::int AS collections_7d,
+        COALESCE((SELECT SUM(sd."actual_liters")::float8 FROM "station_deliveries" sd, bounds b
+          WHERE sd."collector_id" = ${id}::uuid AND sd."deleted_at" IS NULL AND sd."delivered_at" >= b.from_at), 0)::float8 AS delivered_liters_7d
+    `;
+    const row = rows[0] ?? { liters_7d: 0, collections_7d: 0, delivered_liters_7d: 0 };
+    const liters = Number(row.liters_7d);
+    const delivered = Number(row.delivered_liters_7d);
+    const variance = liters - delivered;
+    return {
+      collector_id: collector.id,
+      display_name: collector.displayName,
+      liters_7d: liters,
+      collections_7d: Number(row.collections_7d),
+      delivered_liters_7d: delivered,
+      variance_l: variance,
+      variance_pct: liters === 0 ? 0 : variance / liters,
+      status: liters === 0 || Math.abs(variance / liters) <= threshold ? 'OK' : 'FLAGGED',
     };
   }
 
