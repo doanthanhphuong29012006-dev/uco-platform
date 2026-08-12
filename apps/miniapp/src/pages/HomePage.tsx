@@ -14,9 +14,9 @@ export function HomePage() {
   const dashboard = useQuery({ queryKey: ['merchant-dashboard'], queryFn: api.dashboard });
   const createOrder = useMutation({
     mutationFn: (liters: number | undefined) => api.createReadyOrder(liters),
-    onSuccess: async () => {
+    onSuccess: async (order) => {
       setSheetOpen(false);
-      setNotice('Đã báo, đang chờ thu gom');
+      setNotice(order.collector_available === false ? 'Đơn đã ghi nhận, khu vực chưa có người thu gom phụ trách' : 'Đã báo, đang chờ thu gom');
       await queryClient.invalidateQueries({ queryKey: ['merchant-dashboard'] });
       await queryClient.invalidateQueries({ queryKey: ['merchant-orders'] });
     },

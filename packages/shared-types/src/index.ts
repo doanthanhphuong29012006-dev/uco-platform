@@ -136,6 +136,7 @@ export interface CollectionOrderResponse {
   container_id: string | null;
   container_code: string | null;
   expected_liters: number | null;
+    collector_available?: boolean;
   priority: number;
   status: OrderStatus;
   source: OrderSource;

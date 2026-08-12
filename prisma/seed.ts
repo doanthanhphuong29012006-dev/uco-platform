@@ -11,6 +11,10 @@ const wardId = '10000000-0000-4000-8000-000000000001';
 const hanoiWardId = '10000000-0000-4000-8000-000000000002';
 const stationId = '30000000-0000-4000-8000-000000000001';
 const stationUserId = '40000000-0000-4000-8000-000000000001';
+const hanoiCollectorId = '50000000-0000-4000-8000-000000000003';
+const hanoiCollectorUserId = '40000000-0000-4000-8000-000000000203';
+const hanoiStationId = '30000000-0000-4000-8000-000000000002';
+const hanoiStationUserId = '40000000-0000-4000-8000-000000000002';
 
 const merchantSeeds = [
   {
@@ -275,6 +279,44 @@ async function main(): Promise<void> {
   }
 
   await upsertUser({
+    id: hanoiCollectorUserId,
+    zaloId: 'zalo_collector_03',
+    phone: '0910000003',
+    name: 'Collector 03',
+    role: Role.COLLECTOR,
+  });
+  await prisma.collector.upsert({
+    where: { id: hanoiCollectorId },
+    update: {
+      userId: hanoiCollectorUserId,
+      wardId: hanoiWardId,
+      displayName: 'Lê Văn Thu Gom 3',
+      vehicleType: 'Xe tải nhỏ',
+      maxCapacityLiters: 100,
+      status: 'ACTIVE',
+      isActive: true,
+      deletedAt: null,
+    },
+    create: {
+      id: hanoiCollectorId,
+      userId: hanoiCollectorUserId,
+      wardId: hanoiWardId,
+      displayName: 'Lê Văn Thu Gom 3',
+      vehicleType: 'Xe tải nhỏ',
+      maxCapacityLiters: 100,
+      status: 'ACTIVE',
+    },
+  });
+  const optionalMolaWard = await prisma.ward.findUnique({ where: { code: 'ML-HN' }, select: { id: true } });
+  for (const assignedWardId of [hanoiWardId, optionalMolaWard?.id].filter((id): id is string => Boolean(id))) {
+    await prisma.collectorWard.upsert({
+      where: { collectorId_wardId: { collectorId: hanoiCollectorId, wardId: assignedWardId } },
+      update: {},
+      create: { collectorId: hanoiCollectorId, wardId: assignedWardId },
+    });
+  }
+
+  await upsertUser({
     id: stationUserId,
     zaloId: 'zalo_station_01',
     phone: '0920000001',
@@ -304,6 +346,37 @@ async function main(): Promise<void> {
     },
   });
   await setGeography('stations', stationId, 10.7818, 106.6851);
+
+  await upsertUser({
+    id: hanoiStationUserId,
+    zaloId: 'zalo_station_02',
+    phone: '0920000002',
+    name: 'Station Hà Nội',
+    role: Role.STATION,
+  });
+  await prisma.station.upsert({
+    where: { id: hanoiStationId },
+    update: {
+      userId: hanoiStationUserId,
+      wardId: hanoiWardId,
+      name: 'Trạm Eco-Oil Hàng Bạc',
+      address: '12 Hàng Bạc, Hoàn Kiếm, Hà Nội',
+      capacityLiters: 1000,
+      status: 'ACTIVE',
+      isActive: true,
+      deletedAt: null,
+    },
+    create: {
+      id: hanoiStationId,
+      userId: hanoiStationUserId,
+      wardId: hanoiWardId,
+      name: 'Trạm Eco-Oil Hàng Bạc',
+      address: '12 Hàng Bạc, Hoàn Kiếm, Hà Nội',
+      capacityLiters: 1000,
+      status: 'ACTIVE',
+    },
+  });
+  await setGeography('stations', hanoiStationId, 21.0333, 105.85);
 
   for (const container of containerSeeds) {
     await prisma.container.upsert({

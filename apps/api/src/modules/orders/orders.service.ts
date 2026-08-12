@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
-import { ContainerState, EntityStatus, MerchantApprovalStatus, OrderStatus, OrderSource } from '@prisma/client';
+import { AlertSeverity, AlertType, ContainerState, EntityStatus, MerchantApprovalStatus, OrderStatus, OrderSource } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import type { OrderListQueryInput, OrderReadyInput, RouteQueryInput } from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -69,19 +69,39 @@ export class OrdersService {
     }
     const daysSinceLastCollection = merchant.lastCollectedAt ? Math.max(0, (Date.now() - merchant.lastCollectedAt.getTime()) / DAY_MS) : 14;
     const priority = calculatePriority({ expectedLiters, capacityL, daysSinceLastCollection });
-    const order = await this.prisma.collectionOrder.create({
-      data: {
-        merchantId: merchant.id,
-        containerId: container.id,
-        expectedLiters,
-        note: input.note,
-        priority: Math.round(priority),
-        status: OrderStatus.READY,
-        source: OrderSource.MANUAL,
-      },
-      include: { container: true, merchant: true },
+    const result = await this.prisma.$transaction(async (tx) => {
+      const order = await tx.collectionOrder.create({
+        data: {
+          merchantId: merchant.id,
+          containerId: container.id,
+          expectedLiters,
+          note: input.note,
+          priority: Math.round(priority),
+          status: OrderStatus.READY,
+          source: OrderSource.MANUAL,
+        },
+        include: { container: true, merchant: true },
+      });
+      const collector = await tx.collectorWard.findFirst({
+        where: {
+          wardId: merchant.wardId,
+          collector: { status: EntityStatus.ACTIVE, isActive: true, deletedAt: null },
+        },
+        select: { collectorId: true },
+      });
+      if (!collector) {
+        await tx.alert.create({
+          data: {
+            type: AlertType.NO_COLLECTOR_IN_WARD,
+            severity: AlertSeverity.HIGH,
+            message: 'Đơn đã ghi nhận nhưng khu vực chưa có người thu gom phụ trách',
+            details: { order_id: order.id, merchant_id: merchant.id, ward_id: merchant.wardId },
+          },
+        });
+      }
+      return { order, collectorAvailable: Boolean(collector) };
     });
-    return this.serialize(order);
+    return { ...this.serialize(result.order), collector_available: result.collectorAvailable };
   }
 
   async listMine(user: AccessTokenPayload, query: OrderListQueryInput) {
