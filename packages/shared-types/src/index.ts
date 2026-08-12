@@ -87,6 +87,15 @@ export interface AuthUser {
   merchantRejectionReason: string | null;
 }
 
+export interface DevAccount {
+  id: string;
+  zalo_id: string;
+  phone: string | null;
+  name: string | null;
+  role: Role;
+  wards: Array<{ code: string; name: string; district: string; city: string }>;
+}
+
 export interface MerchantRegistrationRequest {
   zalo_id: string;
   name: string;

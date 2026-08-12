@@ -2,6 +2,7 @@ import type {
   ApiErrorBody,
   AdminWardSummary,
   AuthUser,
+  DevAccount,
   CollectionCreateRequest,
   CollectionOrderResponse,
   CollectionTransactionResponse,
@@ -127,6 +128,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 }
 
 export const api = {
+  devAccounts: () => request<DevAccount[]>('/auth/dev-accounts', { retry: false }),
   registerMerchant: (payload: MerchantRegistrationRequest) =>
     request<{ status: string; merchant: unknown }>('/merchants/register', { method: 'POST', body: payload, retry: false }),
   registrationWards: () => request<AdminWardSummary[]>('/merchants/register/wards', { retry: false }),
@@ -144,6 +146,7 @@ export const api = {
       body: { zalo_id: accessToken, phone: 'zmp-user' },
       retry: false,
     }),
+  logout: (refreshToken: string) => request<{ success: true }>('/auth/logout', { method: 'POST', body: { refresh_token: refreshToken }, retry: false }),
   me: () => request<AuthUser>('/auth/me'),
   dashboard: () => request<MerchantDashboardResponse>('/merchants/me/dashboard'),
   createReadyOrder: (expectedLiters?: number) =>

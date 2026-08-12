@@ -115,6 +115,7 @@ select, input { width: 100%; min-height: 48px; border: 1px solid #cfe0d7; border
 .brand-header { display: flex; align-items: center; gap: 9px; min-height: 52px; padding: 10px 18px; border-bottom: 1px solid var(--line); background: var(--cream); color: var(--green-dark); }
 .brand-header img { width: 28px; height: 28px; object-fit: contain; }
 .brand-header strong { font-size: .95rem; }
+.header-signout { margin-left: auto; min-height: 38px; padding: 0 12px; border: 1px solid #b9dfca; border-radius: 10px; color: var(--green-dark); background: white; font-weight: 800; }
 .login-logo { width: 112px; height: 112px; margin: 0 auto 10px; }
 .approval-page { display: grid; place-items: center; min-height: 100vh; padding: 28px 22px; text-align: center; }
 .approval-page .approval-logo { width: 86px; height: 86px; margin-bottom: 18px; }

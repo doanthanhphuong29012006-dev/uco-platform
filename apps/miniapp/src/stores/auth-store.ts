@@ -11,7 +11,7 @@ interface AuthState {
   hydrate: () => Promise<void>;
   loginSeed: (zaloId: string, phone: string) => Promise<void>;
   loginWithZalo: (accessToken: string) => Promise<void>;
-  signOut: () => void;
+  signOut: () => Promise<void>;
 }
 
 function loginErrorMessage(error: unknown, endpoint: string): string {
@@ -79,9 +79,17 @@ export const useAuthStore = create<AuthState>((set) => ({
       set({ busy: false, error: loginErrorMessage(error, '/auth/zalo') });
     }
   },
-  signOut: () => {
+  signOut: async () => {
+    const refreshToken = tokenStorage.getRefreshToken();
+    if (refreshToken) {
+      try {
+        await api.logout(refreshToken);
+      } catch {
+        // Local logout must still complete when the API is offline.
+      }
+    }
     tokenStorage.clear();
-    set({ user: null, error: null });
+    set({ user: null, busy: false, error: null, hydrated: true });
   },
 }));
 

@@ -18,6 +18,12 @@ export class AuthController {
   }
 
   @Public()
+  @Get('dev-accounts')
+  devAccounts() {
+    return this.authService.devAccounts();
+  }
+
+  @Public()
   @Post('refresh')
   refresh(@Body() body: unknown) {
     const input = refreshTokenSchema.parse(body);

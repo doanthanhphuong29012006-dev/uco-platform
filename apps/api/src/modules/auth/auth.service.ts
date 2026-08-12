@@ -1,4 +1,4 @@
-import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Role } from '@prisma/client';
@@ -62,6 +62,30 @@ export class AuthService {
     }
 
     return this.issueTokens(user.id);
+  }
+
+  async devAccounts() {
+    if (this.config.get<string>('ZALO_AUTH_MODE', 'mock') !== 'mock') {
+      throw new NotFoundException('Dev accounts are only available in mock mode');
+    }
+    const users = await this.prisma.user.findMany({
+      where: { deletedAt: null },
+      orderBy: [{ role: 'asc' }, { name: 'asc' }, { zaloId: 'asc' }],
+      include: {
+        merchant: { include: { ward: { select: { code: true, name: true, district: true, city: true } } } },
+        collector: { include: { collectorWards: { include: { ward: { select: { code: true, name: true, district: true, city: true } } } } } },
+        station: { include: { ward: { select: { code: true, name: true, district: true, city: true } } } },
+      },
+    });
+    return users.map((user) => ({
+      id: user.id,
+      zalo_id: user.zaloId,
+      phone: user.phone,
+      name: user.collector?.displayName ?? user.name,
+      role: user.role,
+      wards: user.collector?.collectorWards.map((item) => item.ward)
+        ?? (user.merchant?.ward ? [user.merchant.ward] : user.station?.ward ? [user.station.ward] : []),
+    }));
   }
 
   async refresh(rawRefreshToken: string): Promise<{
