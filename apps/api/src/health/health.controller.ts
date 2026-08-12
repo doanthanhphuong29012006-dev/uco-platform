@@ -16,15 +16,15 @@ export class HealthController {
     status: 'ok' | 'error';
     service: string;
     db: 'ok' | 'error';
-    redis: 'ok' | 'error';
+    redis: 'ok' | 'disabled' | 'error';
   }> {
     const [dbResult, redisResult] = await Promise.allSettled([
       this.prisma.$queryRaw`SELECT 1`,
       this.redis.ping(),
     ]);
     const db = dbResult.status === 'fulfilled' ? 'ok' : 'error';
-    const redis = redisResult.status === 'fulfilled' && redisResult.value === 'PONG' ? 'ok' : 'error';
-    const status = db === 'ok' && redis === 'ok' ? 'ok' : 'error';
+    const redis = redisResult.status === 'fulfilled' && redisResult.value === 'PONG' ? 'ok' : redisResult.status === 'fulfilled' && redisResult.value === 'DISABLED' ? 'disabled' : 'error';
+    const status = db === 'ok' && redis !== 'error' ? 'ok' : 'error';
 
     if (status === 'error') {
       throw new ServiceUnavailableException({

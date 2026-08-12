@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Inject, Post } from '@nestjs/common';
 import { Role } from '@prisma/client';
-import { refreshTokenSchema, zaloAuthSchema } from '@eco-oil/validation';
+import { adminLoginSchema, refreshTokenSchema, zaloAuthSchema } from '@eco-oil/validation';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { Public } from './decorators/public.decorator';
@@ -15,6 +15,12 @@ export class AuthController {
   @Post('zalo')
   login(@Body() body: unknown) {
     return this.authService.login(zaloAuthSchema.parse(body));
+  }
+
+  @Public()
+  @Post('admin/login')
+  adminLogin(@Body() body: unknown) {
+    return this.authService.adminLogin(adminLoginSchema.parse(body));
   }
 
   @Public()

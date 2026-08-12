@@ -4,6 +4,9 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 
 async function bootstrap(): Promise<void> {
+  if (Object.prototype.hasOwnProperty.call(process.env, 'JWT_SECRET') && !process.env.JWT_SECRET?.trim()) {
+    throw new Error('JWT_SECRET is required and cannot be empty');
+  }
   const app = await NestFactory.create(AppModule);
   app.setGlobalPrefix('api/v1', { exclude: ['health'] });
   app.useGlobalPipes(
@@ -14,7 +17,7 @@ async function bootstrap(): Promise<void> {
   );
 
   const config = app.get(ConfigService);
-  const corsOrigins = (config.get<string>('CORS_ORIGINS') ?? 'http://localhost:5173,http://127.0.0.1:5173')
+  const corsOrigins = (config.get<string>('CORS_ORIGINS') ?? '')
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean);
@@ -25,7 +28,7 @@ async function bootstrap(): Promise<void> {
     allowedHeaders: ['Content-Type', 'Authorization'],
     exposedHeaders: ['X-Idempotent-Replay'],
   });
-  const port = config.get<number>('PORT', 3000);
+  const port = Number(config.get<string>('PORT') ?? '3000');
   await app.listen(port, '0.0.0.0');
 }
 

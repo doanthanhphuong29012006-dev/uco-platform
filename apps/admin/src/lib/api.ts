@@ -16,7 +16,7 @@ import { browserTokenStorage } from './storage';
 
 export { ApiError };
 
-export const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3000/api/v1').replace(/\/$/, '');
+export const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? '/api/v1').replace(/\/$/, '');
 
 const client = createApiClient({
   baseUrl: API_BASE_URL,
@@ -39,6 +39,8 @@ export const api = {
       body: { zalo_id: zaloId, phone },
       retry: false,
     }),
+  adminLogin: (zaloId: string, phone: string, password: string) =>
+    client.request<{ access_token: string; refresh_token: string; user: AuthUser }>('/auth/admin/login', { method: 'POST', body: { zalo_id: zaloId, phone, password }, retry: false }),
   me: () => client.request<AuthUser>('/auth/me'),
   logout: (refreshToken: string) => client.request('/auth/logout', { method: 'POST', body: { refresh_token: refreshToken } }),
   overview: (from?: string, to?: string) => client.request<AdminOverviewResponse>(`/admin/overview${query({ from, to })}`),

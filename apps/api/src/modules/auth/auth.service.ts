@@ -1,10 +1,10 @@
-import { Inject, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Role } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import type { ZaloAuthInput } from '@eco-oil/validation';
+import type { AdminLoginInput, ZaloAuthInput } from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   ACCESS_TOKEN_TTL_SECONDS,
@@ -41,6 +41,10 @@ export class AuthService {
     const phone = input.phone || verified.phone;
     let user = await this.prisma.user.findUnique({ where: { zaloId } });
 
+    if (this.isDemoMode() && this.isMockMode() && user?.role === Role.ADMIN) {
+      throw new ForbiddenException({ code: 'ADMIN_LOGIN_REQUIRES_PASSWORD', message: 'Tài khoản quản trị phải đăng nhập bằng mật khẩu', details: null });
+    }
+
     if (!user) {
       user = await this.prisma.user.create({
         data: {
@@ -64,6 +68,21 @@ export class AuthService {
     return this.issueTokens(user.id);
   }
 
+  async adminLogin(input: AdminLoginInput) {
+    const configuredPassword = this.config.get<string>('ADMIN_PASSWORD')?.trim();
+    if (!configuredPassword) {
+      throw new UnauthorizedException({ code: 'ADMIN_PASSWORD_NOT_CONFIGURED', message: 'ADMIN_PASSWORD chưa được cấu hình', details: null });
+    }
+    if (input.password !== configuredPassword) {
+      throw new UnauthorizedException({ code: 'INVALID_ADMIN_CREDENTIALS', message: 'Sai tài khoản hoặc mật khẩu quản trị', details: null });
+    }
+    const user = await this.prisma.user.findUnique({ where: { zaloId: input.zalo_id } });
+    if (!user || user.role !== Role.ADMIN || user.deletedAt) {
+      throw new UnauthorizedException({ code: 'INVALID_ADMIN_CREDENTIALS', message: 'Sai tài khoản hoặc mật khẩu quản trị', details: null });
+    }
+    return this.issueTokens(user.id);
+  }
+
   async devAccounts() {
     if (this.config.get<string>('ZALO_AUTH_MODE', 'mock') !== 'mock') {
       throw new NotFoundException('Dev accounts are only available in mock mode');
@@ -78,6 +97,7 @@ export class AuthService {
       },
     });
     return users.filter((user) => {
+      if (this.isDemoMode() && user.role !== Role.MERCHANT && user.role !== Role.COLLECTOR) return false;
       if (user.merchant) return user.merchant.status === 'ACTIVE' && user.merchant.isActive && user.merchant.deletedAt === null;
       if (user.collector) return user.collector.status === 'ACTIVE' && user.collector.isActive && user.collector.deletedAt === null;
       if (user.station) return user.station.status === 'ACTIVE' && user.station.isActive && user.station.deletedAt === null;
@@ -217,5 +237,13 @@ export class AuthService {
 
   private hashToken(token: string): string {
     return createHash('sha256').update(token).digest('hex');
+  }
+
+  private isDemoMode(): boolean {
+    return this.config.get<string>('DEMO_MODE', 'false').toLowerCase() === 'true';
+  }
+
+  private isMockMode(): boolean {
+    return this.config.get<string>('ZALO_AUTH_MODE', 'mock') === 'mock';
   }
 }

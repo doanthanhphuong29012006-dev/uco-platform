@@ -17,9 +17,13 @@ import { RealZaloAuthProvider } from './providers/real-zalo-auth.provider';
     JwtModule.registerAsync({
       global: true,
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        secret: config.getOrThrow<string>('JWT_SECRET'),
-      }),
+      useFactory: (config: ConfigService) => {
+        const secret = config.get<string>('JWT_SECRET')?.trim();
+        if (!secret) throw new Error('JWT_SECRET is required and cannot be empty');
+        return {
+          secret,
+        };
+      },
     }),
   ],
   controllers: [AuthController],
