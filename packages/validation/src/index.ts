@@ -137,6 +137,32 @@ export const adminContainerListQuerySchema = paginationSchema.extend({
 });
 export type AdminContainerListQueryInput = z.infer<typeof adminContainerListQuerySchema>;
 
+const wardCodeSchema = z.string().trim().min(1).max(30).regex(/^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/, 'Mã phường chỉ được gồm chữ, số và dấu gạch ngang').transform((value) => value.toUpperCase());
+const adminWardBaseSchema = z.object({
+  code: wardCodeSchema,
+  name: z.string().trim().min(1).max(200),
+  district: z.string().trim().min(1).max(200),
+  city: z.string().trim().min(1).max(200),
+  center_lat: coordinateSchema.min(-90).max(90).optional(),
+  center_lng: coordinateSchema.min(-180).max(180).optional(),
+});
+export const adminWardCreateSchema = adminWardBaseSchema.superRefine((value, context) => {
+  if (value.center_lat !== undefined && value.center_lng === undefined) context.addIssue({ code: z.ZodIssueCode.custom, path: ['center_lng'], message: 'Cần nhập kinh độ cùng vĩ độ' });
+  if (value.center_lng !== undefined && value.center_lat === undefined) context.addIssue({ code: z.ZodIssueCode.custom, path: ['center_lat'], message: 'Cần nhập vĩ độ cùng kinh độ' });
+});
+export type AdminWardCreateInput = z.infer<typeof adminWardCreateSchema>;
+
+export const adminWardPatchSchema = adminWardBaseSchema.partial().extend({
+  status: z.nativeEnum(EntityStatus).optional(),
+  is_active: z.boolean().optional(),
+});
+export type AdminWardPatchInput = z.infer<typeof adminWardPatchSchema>;
+
+export const adminWardListQuerySchema = z.object({
+  include_inactive: z.coerce.boolean().default(true),
+});
+export type AdminWardListQueryInput = z.infer<typeof adminWardListQuerySchema>;
+
 export const orderReadySchema = z.object({
   container_id: uuidSchema.optional(),
   expected_liters: z.number().finite().positive().max(100000).optional(),

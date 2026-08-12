@@ -1,5 +1,9 @@
 export function normalizeWardCode(code: string): string {
-  return code.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+  return code.trim().replace(/\s+/g, '-').toUpperCase();
+}
+
+export function wardLookupKey(code: string): string {
+  return normalizeWardCode(code).replace(/[^A-Z0-9]/g, '');
 }
 
 export function containerQrPrefix(wardCode: string): string {
@@ -7,5 +11,5 @@ export function containerQrPrefix(wardCode: string): string {
 }
 
 export function buildContainerQrCode(wardCode: string, sequence: number): string {
-  return `${containerQrPrefix(wardCode)}${String(sequence).padStart(4, '0')}`;
+  return `${containerQrPrefix(wardCode)}${String(sequence).padStart(3, '0')}`;
 }

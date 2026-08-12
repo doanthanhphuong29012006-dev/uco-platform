@@ -72,6 +72,28 @@ export class MerchantsService {
     return { status: MerchantApprovalStatus.PENDING, merchant: await this.findOne(merchant.id) };
   }
 
+  async registrationWards() {
+    const wards = await this.prisma.ward.findMany({
+      where: { deletedAt: null, status: EntityStatus.ACTIVE, isActive: true },
+      orderBy: { code: 'asc' },
+      select: { id: true, code: true, name: true, district: true, city: true, centerLat: true, centerLng: true, status: true, isActive: true },
+    });
+    return wards.map((ward) => ({
+      id: ward.id,
+      code: ward.code.trim().replace(/\s+/g, '-').toUpperCase(),
+      name: ward.name,
+      district: ward.district,
+      city: ward.city,
+      center_lat: ward.centerLat,
+      center_lng: ward.centerLng,
+      status: ward.status,
+      is_active: ward.isActive,
+      merchant_count: 0,
+      container_count: 0,
+      collector_count: 0,
+    }));
+  }
+
   async me(user: AccessTokenPayload) {
     const merchant = await this.prisma.merchant.findUnique({ where: { userId: user.sub } });
     if (!merchant) {
@@ -261,7 +283,7 @@ export class MerchantsService {
 
   private async requireWard(id: string): Promise<void> {
     const ward = await this.prisma.ward.findUnique({ where: { id } });
-    if (!ward || ward.deletedAt) {
+    if (!ward || ward.deletedAt || ward.status !== EntityStatus.ACTIVE || !ward.isActive) {
       throw new NotFoundException('Ward not found');
     }
   }

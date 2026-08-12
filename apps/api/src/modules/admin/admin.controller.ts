@@ -13,6 +13,9 @@ import {
   adminContainerCreateSchema,
   adminContainerListQuerySchema,
   containerAssignSchema,
+  adminWardCreateSchema,
+  adminWardPatchSchema,
+  adminWardListQuerySchema,
 } from '@eco-oil/validation';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -73,8 +76,20 @@ export class AdminController {
 
   @Roles(Role.ADMIN)
   @Get('wards')
-  wards() {
-    return this.service.listWards();
+  wards(@Query() query: Record<string, unknown>) {
+    return this.service.listWards(adminWardListQuerySchema.parse(query));
+  }
+
+  @Roles(Role.ADMIN)
+  @Post('wards')
+  createWard(@Body() body: unknown, @CurrentUser() user: AccessTokenPayload) {
+    return this.service.createWard(adminWardCreateSchema.parse(body), user.sub);
+  }
+
+  @Roles(Role.ADMIN)
+  @Patch('wards/:id')
+  updateWard(@Param('id') id: string, @Body() body: unknown, @CurrentUser() user: AccessTokenPayload) {
+    return this.service.updateWard(id, adminWardPatchSchema.parse(body), user.sub);
   }
 
   @Roles(Role.ADMIN)

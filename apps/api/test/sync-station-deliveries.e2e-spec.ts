@@ -12,13 +12,13 @@ const collectorUserId = '40000000-0000-4000-8000-000000000201';
 const collectorId = '50000000-0000-4000-8000-000000000001';
 const stationId = '30000000-0000-4000-8000-000000000001';
 const containers = [
-  { id: '60000000-0000-4000-8000-000000000001', merchant: 'zalo_merchant_01', phone: '0900000001', code: 'ECO-UCO-Q3P7-001', lat: 10.78255, lng: 106.68475 },
-  { id: '60000000-0000-4000-8000-000000000002', merchant: 'zalo_merchant_01', phone: '0900000001', code: 'ECO-UCO-Q3P7-002', lat: 10.78255, lng: 106.68475 },
-  { id: '60000000-0000-4000-8000-000000000003', merchant: 'zalo_merchant_02', phone: '0900000002', code: 'ECO-UCO-Q3P7-003', lat: 10.78195, lng: 106.68535 },
-  { id: '60000000-0000-4000-8000-000000000004', merchant: 'zalo_merchant_02', phone: '0900000002', code: 'ECO-UCO-Q3P7-004', lat: 10.78195, lng: 106.68535 },
-  { id: '60000000-0000-4000-8000-000000000005', merchant: 'zalo_merchant_03', phone: '0900000003', code: 'ECO-UCO-Q3P7-005', lat: 10.78305, lng: 106.68615 },
-  { id: '60000000-0000-4000-8000-000000000006', merchant: 'zalo_merchant_03', phone: '0900000003', code: 'ECO-UCO-Q3P7-006', lat: 10.78305, lng: 106.68615 },
-  { id: '60000000-0000-4000-8000-000000000007', merchant: 'zalo_merchant_04', phone: '0900000004', code: 'ECO-UCO-Q3P7-007', lat: 10.78095, lng: 106.68425 },
+  { id: '60000000-0000-4000-8000-000000000001', merchant: 'zalo_merchant_01', phone: '0900000001', code: 'ECO-UCO-Q3-P7-001', lat: 10.78255, lng: 106.68475 },
+  { id: '60000000-0000-4000-8000-000000000002', merchant: 'zalo_merchant_01', phone: '0900000001', code: 'ECO-UCO-Q3-P7-002', lat: 10.78255, lng: 106.68475 },
+  { id: '60000000-0000-4000-8000-000000000003', merchant: 'zalo_merchant_02', phone: '0900000002', code: 'ECO-UCO-Q3-P7-003', lat: 10.78195, lng: 106.68535 },
+  { id: '60000000-0000-4000-8000-000000000004', merchant: 'zalo_merchant_02', phone: '0900000002', code: 'ECO-UCO-Q3-P7-004', lat: 10.78195, lng: 106.68535 },
+  { id: '60000000-0000-4000-8000-000000000005', merchant: 'zalo_merchant_03', phone: '0900000003', code: 'ECO-UCO-Q3-P7-005', lat: 10.78305, lng: 106.68615 },
+  { id: '60000000-0000-4000-8000-000000000006', merchant: 'zalo_merchant_03', phone: '0900000003', code: 'ECO-UCO-Q3-P7-006', lat: 10.78305, lng: 106.68615 },
+  { id: '60000000-0000-4000-8000-000000000007', merchant: 'zalo_merchant_04', phone: '0900000004', code: 'ECO-UCO-Q3-P7-007', lat: 10.78095, lng: 106.68425 },
 ];
 
 describe('Sync batch and station delivery reconciliation (e2e)', () => {

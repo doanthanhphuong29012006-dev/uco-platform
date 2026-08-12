@@ -8,6 +8,7 @@ import {
 const prisma = new PrismaClient();
 
 const wardId = '10000000-0000-4000-8000-000000000001';
+const hanoiWardId = '10000000-0000-4000-8000-000000000002';
 const stationId = '30000000-0000-4000-8000-000000000001';
 const stationUserId = '40000000-0000-4000-8000-000000000001';
 
@@ -103,7 +104,8 @@ const containerSeeds = merchantSeeds.flatMap((merchant, merchantIndex) => {
   return Array.from({ length: count }, (_, index) => ({
     id: `60000000-0000-4000-8000-${String(merchantIndex * 2 + index + 1).padStart(12, '0')}`,
     merchantId: merchant.id,
-    qrCode: `ECO-UCO-Q3P7-${String(merchantIndex * 2 + index + 1).padStart(3, '0')}`,
+    wardId,
+    qrCode: `ECO-UCO-Q3-P7-${String(merchantIndex * 2 + index + 1).padStart(3, '0')}`,
   }));
 });
 
@@ -143,18 +145,48 @@ async function main(): Promise<void> {
     update: {
       code: 'Q3-P7',
       name: 'Phường 7, Quận 3',
+      district: 'Quận 3',
       city: 'Ho Chi Minh City',
       centerLat: 10.7818,
       centerLng: 106.6851,
       deletedAt: null,
+      status: 'ACTIVE',
+      isActive: true,
     },
     create: {
       id: wardId,
       code: 'Q3-P7',
       name: 'Phường 7, Quận 3',
+      district: 'Quận 3',
       city: 'Ho Chi Minh City',
       centerLat: 10.7818,
       centerLng: 106.6851,
+    },
+  });
+
+  await prisma.ward.upsert({
+    where: { id: hanoiWardId },
+    update: {
+      code: 'HB-HK',
+      name: 'Phường Hàng Bạc',
+      district: 'Quận Hoàn Kiếm',
+      city: 'Hà Nội',
+      centerLat: 21.0333,
+      centerLng: 105.85,
+      status: 'ACTIVE',
+      isActive: true,
+      deletedAt: null,
+    },
+    create: {
+      id: hanoiWardId,
+      code: 'HB-HK',
+      name: 'Phường Hàng Bạc',
+      district: 'Quận Hoàn Kiếm',
+      city: 'Hà Nội',
+      centerLat: 21.0333,
+      centerLng: 105.85,
+      status: 'ACTIVE',
+      isActive: true,
     },
   });
 
@@ -278,6 +310,7 @@ async function main(): Promise<void> {
       where: { id: container.id },
       update: {
         merchantId: container.merchantId,
+        wardId: container.wardId,
         qrCode: container.qrCode,
         state: ContainerState.AT_MERCHANT,
         status: 'ACTIVE',
@@ -288,6 +321,7 @@ async function main(): Promise<void> {
       create: {
         id: container.id,
         merchantId: container.merchantId,
+        wardId: container.wardId,
         qrCode: container.qrCode,
         state: ContainerState.AT_MERCHANT,
         status: 'ACTIVE',

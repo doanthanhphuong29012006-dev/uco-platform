@@ -1,5 +1,6 @@
 import type {
   ApiErrorBody,
+  AdminWardSummary,
   AuthUser,
   CollectionCreateRequest,
   CollectionOrderResponse,
@@ -128,6 +129,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 export const api = {
   registerMerchant: (payload: MerchantRegistrationRequest) =>
     request<{ status: string; merchant: unknown }>('/merchants/register', { method: 'POST', body: payload, retry: false }),
+  registrationWards: () => request<AdminWardSummary[]>('/merchants/register/wards', { retry: false }),
   updateMerchant: (id: string, payload: Partial<MerchantRegistrationRequest>) =>
     request<unknown>(`/merchants/${id}`, { method: 'PATCH', body: payload }),
   loginSeed: (zaloId: string, phone: string) =>

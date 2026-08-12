@@ -3,7 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { ContainerState, EntityStatus } from '@prisma/client';
 import type { ContainerAssignInput, ContainerCreateInput, ContainerListQueryInput, EntityStatusInput } from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
-import { buildContainerQrCode, containerQrPrefix } from './qr-code';
+import { buildContainerQrCode, containerQrPrefix, wardLookupKey } from './qr-code';
 
 @Injectable()
 export class ContainersService {
@@ -15,13 +15,14 @@ export class ContainersService {
     if (!ward) {
       throw new NotFoundException('Merchant ward not found');
     }
-    if (input.ward_code && input.ward_code !== ward.code) {
+    if (input.ward_code && wardLookupKey(input.ward_code) !== wardLookupKey(ward.code)) {
       throw new ConflictException('ward_code does not match merchant ward');
     }
     const qrCode = input.qr_code ?? (await this.nextQrCode(ward.code));
     const row = await this.prisma.container.create({
       data: {
         merchantId: merchant.id,
+        wardId: merchant.wardId,
         qrCode,
         state: input.state ?? ContainerState.AT_MERCHANT,
         capacityLiters: input.capacity_liters,
@@ -36,10 +37,10 @@ export class ContainersService {
     if (existing.merchantId && existing.merchantId !== input.merchant_id) {
       throw new ConflictException({ code: 'CONTAINER_ALREADY_ASSIGNED', message: 'Container is already assigned to another merchant', details: { merchant_id: existing.merchantId } });
     }
-    await this.requireMerchant(input.merchant_id);
+    const merchant = await this.requireMerchant(input.merchant_id);
     const row = await this.prisma.container.update({
       where: { id },
-      data: { merchantId: input.merchant_id, state: ContainerState.AT_MERCHANT },
+      data: { merchantId: input.merchant_id, wardId: merchant.wardId, state: ContainerState.AT_MERCHANT },
       include: { merchant: true },
     });
     return this.serialize(row);

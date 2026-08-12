@@ -12,7 +12,7 @@ const wardId = '10000000-0000-4000-8000-000000000001';
 const testStationUserId = randomUUID();
 const testStationZaloId = `zalo_station_test_${testStationUserId.slice(0, 8)}`;
 const testStationPhone = `092${Date.now().toString().slice(-7)}`;
-const seededContainerQr = 'ECO-UCO-Q3P7-001';
+const seededContainerQr = 'ECO-UCO-Q3-P7-001';
 
 describe('Core CRUD and PostGIS (e2e)', () => {
   let app: INestApplication;
@@ -89,7 +89,7 @@ describe('Core CRUD and PostGIS (e2e)', () => {
     expect(found.body).toMatchObject({ qr_code: seededContainerQr, state: 'AT_MERCHANT', merchant: { id: expect.any(String) } });
 
     const missing = await request(app.getHttpServer())
-      .get('/api/v1/containers/by-qr/ECO-UCO-Q3P7-MISSING')
+      .get('/api/v1/containers/by-qr/ECO-UCO-Q3-P7-MISSING')
       .set('Authorization', `Bearer ${collectorToken}`)
       .expect(404);
     expect(missing.body).toEqual({ code: 'NOT_FOUND', message: 'Container not found', details: null });

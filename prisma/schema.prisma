@@ -87,16 +87,23 @@ model Ward {
   id         String      @id @default(uuid()) @db.Uuid
   code       String      @unique
   name       String
+  district   String      @default("")
   city       String      @default("Ho Chi Minh City")
   centerLat  Float?      @map("center_lat")
   centerLng  Float?      @map("center_lng")
+  status     EntityStatus @default(ACTIVE)
+  isActive   Boolean     @default(true) @map("is_active")
+  boundary   Unsupported("geometry(MultiPolygon, 4326)")?
   createdAt  DateTime    @default(now()) @map("created_at")
   updatedAt  DateTime    @updatedAt @map("updated_at")
   deletedAt  DateTime?   @map("deleted_at")
   merchants  Merchant[]
   collectors Collector[]
   stations   Station[]
+  containers Container[]
   collectorWards CollectorWard[]
+
+  @@index([status, isActive])
 
   @@map("wards")
 }
@@ -190,6 +197,7 @@ model Station {
 model Container {
   id             String             @id @default(uuid()) @db.Uuid
   merchantId     String?            @map("merchant_id") @db.Uuid
+  wardId         String?            @map("ward_id") @db.Uuid
   qrCode         String             @unique @map("qr_code")
   state          ContainerState     @default(AT_MERCHANT)
   status         EntityStatus       @default(ACTIVE)
@@ -200,10 +208,12 @@ model Container {
   updatedAt      DateTime           @updatedAt @map("updated_at")
   deletedAt      DateTime?          @map("deleted_at")
   merchant       Merchant?          @relation(fields: [merchantId], references: [id])
+  ward           Ward?              @relation(fields: [wardId], references: [id])
   transactions   CollectionTransaction[]
   orders         CollectionOrder[]
 
   @@index([merchantId, state])
+  @@index([wardId, state])
   @@map("containers")
 }
 

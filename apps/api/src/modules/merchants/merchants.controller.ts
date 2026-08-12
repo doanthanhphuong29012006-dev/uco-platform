@@ -23,6 +23,12 @@ export class MerchantsController {
     return this.service.registerPublic(merchantPublicRegisterSchema.parse(body));
   }
 
+  @Public()
+  @Get('register/wards')
+  registrationWards() {
+    return this.service.registrationWards();
+  }
+
   @Roles(Role.MERCHANT, Role.ADMIN)
   @Get('me/dashboard')
   dashboard(@CurrentUser() user: AccessTokenPayload) {

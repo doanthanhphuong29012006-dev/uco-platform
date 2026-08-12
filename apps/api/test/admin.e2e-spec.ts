@@ -56,7 +56,7 @@ describe('Admin KPIs, reconciliation and access control (e2e)', () => {
       .send({
         client_uuid: randomUUID(),
         order_id: order.body.id,
-        container_code: 'ECO-UCO-Q3P7-007',
+        container_code: 'ECO-UCO-Q3-P7-007',
         actual_liters: 10,
         quality: 'PASS',
         geo: { lat: 10.78095, lng: 106.68425 },

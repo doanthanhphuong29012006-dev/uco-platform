@@ -189,6 +189,15 @@ export interface AdminWardSummary {
   id: string;
   code: string;
   name: string;
+  district: string;
+  city: string;
+  center_lat: number | null;
+  center_lng: number | null;
+  status: EntityStatus;
+  is_active: boolean;
+  merchant_count: number;
+  container_count: number;
+  collector_count: number;
 }
 
 export interface CollectionCreateRequest {

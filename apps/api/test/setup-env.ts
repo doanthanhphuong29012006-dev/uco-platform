@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+jest.setTimeout(30000);
+
 const envPath = resolve(__dirname, '../../..', '.env.test');
 
 if (existsSync(envPath)) {

@@ -9,9 +9,9 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 const fixtures = [
-  { zaloId: 'zalo_merchant_01', phone: '0900000001', containerId: '60000000-0000-4000-8000-000000000001', code: 'ECO-UCO-Q3P7-001', lat: 10.78255, lng: 106.68475, expected: 10 },
-  { zaloId: 'zalo_merchant_02', phone: '0900000002', containerId: '60000000-0000-4000-8000-000000000003', code: 'ECO-UCO-Q3P7-003', lat: 10.78195, lng: 106.68535, expected: 12 },
-  { zaloId: 'zalo_merchant_03', phone: '0900000003', containerId: '60000000-0000-4000-8000-000000000005', code: 'ECO-UCO-Q3P7-005', lat: 10.78305, lng: 106.68615, expected: 8 },
+  { zaloId: 'zalo_merchant_01', phone: '0900000001', containerId: '60000000-0000-4000-8000-000000000001', code: 'ECO-UCO-Q3-P7-001', lat: 10.78255, lng: 106.68475, expected: 10 },
+  { zaloId: 'zalo_merchant_02', phone: '0900000002', containerId: '60000000-0000-4000-8000-000000000003', code: 'ECO-UCO-Q3-P7-003', lat: 10.78195, lng: 106.68535, expected: 12 },
+  { zaloId: 'zalo_merchant_03', phone: '0900000003', containerId: '60000000-0000-4000-8000-000000000005', code: 'ECO-UCO-Q3-P7-005', lat: 10.78305, lng: 106.68615, expected: 8 },
 ] as const;
 
 describe('Full merchant-to-station working shift (e2e)', () => {

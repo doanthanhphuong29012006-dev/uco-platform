@@ -15,9 +15,12 @@ import type {
   AdminContainerCreateInput,
   AdminContainerListQueryInput,
   ContainerAssignInput,
+  AdminWardCreateInput,
+  AdminWardPatchInput,
+  AdminWardListQueryInput,
 } from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
-import { buildContainerQrCode, containerQrPrefix, normalizeWardCode } from '../containers/qr-code';
+import { buildContainerQrCode, containerQrPrefix, normalizeWardCode, wardLookupKey } from '../containers/qr-code';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -567,9 +570,90 @@ export class AdminService {
     return { data: rows.map((row) => this.serializeAdminContainer(row)), meta: { page: query.page, limit: query.limit, total } };
   }
 
-  async listWards() {
-    const wards = await this.prisma.ward.findMany({ where: { deletedAt: null }, orderBy: { code: 'asc' } });
-    return wards.map((ward) => ({ id: ward.id, code: normalizeWardCode(ward.code), name: ward.name }));
+  async listWards(query: AdminWardListQueryInput = { include_inactive: true }) {
+    const rows = await this.prisma.$queryRaw<Array<{
+      id: string; code: string; name: string; district: string; city: string;
+      center_lat: number | null; center_lng: number | null; status: string; is_active: boolean;
+      merchant_count: number; container_count: number; collector_count: number;
+    }>>`
+      SELECT w."id", w."code", w."name", w."district", w."city",
+        w."center_lat", w."center_lng", w."status"::text AS "status", w."is_active",
+        (SELECT COUNT(*)::int FROM "merchants" m WHERE m."ward_id" = w."id" AND m."status" = 'ACTIVE' AND m."deleted_at" IS NULL) AS "merchant_count",
+        (SELECT COUNT(*)::int FROM "containers" c WHERE c."ward_id" = w."id" AND c."status" = 'ACTIVE' AND c."deleted_at" IS NULL) AS "container_count",
+        (SELECT COUNT(*)::int FROM "collectors" c WHERE c."ward_id" = w."id" AND c."status" = 'ACTIVE' AND c."deleted_at" IS NULL) AS "collector_count"
+      FROM "wards" w
+      WHERE w."deleted_at" IS NULL
+        AND (${query.include_inactive}::boolean OR (w."status" = 'ACTIVE' AND w."is_active" = true))
+      ORDER BY w."code" ASC
+    `;
+    return rows.map((row) => ({
+      id: row.id,
+      code: normalizeWardCode(row.code),
+      name: row.name,
+      district: row.district,
+      city: row.city,
+      center_lat: row.center_lat === null ? null : Number(row.center_lat),
+      center_lng: row.center_lng === null ? null : Number(row.center_lng),
+      status: row.status as EntityStatus,
+      is_active: row.is_active,
+      merchant_count: Number(row.merchant_count),
+      container_count: Number(row.container_count),
+      collector_count: Number(row.collector_count),
+    }));
+  }
+
+  async createWard(input: AdminWardCreateInput, actorUserId: string) {
+    const existing = await this.prisma.ward.findUnique({ where: { code: input.code } });
+    if (existing && existing.deletedAt === null) {
+      throw new ConflictException({ code: 'WARD_CODE_ALREADY_EXISTS', message: 'Mã phường đã tồn tại', details: { code: input.code } });
+    }
+    const ward = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.ward.create({
+        data: {
+          code: input.code,
+          name: input.name,
+          district: input.district,
+          city: input.city,
+          centerLat: input.center_lat,
+          centerLng: input.center_lng,
+          status: EntityStatus.ACTIVE,
+          isActive: true,
+        },
+      });
+      await tx.auditLog.create({ data: { actorUserId, action: 'CREATE_WARD', entityType: 'Ward', entityId: created.id, details: { code: created.code } } });
+      return created;
+    });
+    return (await this.listWards({ include_inactive: true })).find((item) => item.id === ward.id);
+  }
+
+  async updateWard(id: string, input: AdminWardPatchInput, actorUserId: string) {
+    const existing = await this.prisma.ward.findUnique({ where: { id } });
+    if (!existing || existing.deletedAt) throw new NotFoundException('Ward not found');
+    const disabling = input.status === EntityStatus.INACTIVE || input.is_active === false;
+    if (disabling) {
+      const activeMerchants = await this.prisma.merchant.count({ where: { wardId: id, status: EntityStatus.ACTIVE, deletedAt: null } });
+      if (activeMerchants > 0) {
+        throw new ConflictException({ code: 'WARD_HAS_ACTIVE_MERCHANTS', message: 'Không thể tắt phường vì còn quán đang hoạt động', details: { active_merchants: activeMerchants } });
+      }
+    }
+    if (input.code && input.code !== existing.code) {
+      const duplicate = await this.prisma.ward.findUnique({ where: { code: input.code } });
+      if (duplicate && duplicate.id !== id && duplicate.deletedAt === null) throw new ConflictException({ code: 'WARD_CODE_ALREADY_EXISTS', message: 'Mã phường đã tồn tại', details: { code: input.code } });
+    }
+    await this.prisma.$transaction(async (tx) => {
+      await tx.ward.update({ where: { id }, data: {
+        ...(input.code !== undefined ? { code: input.code } : {}),
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.district !== undefined ? { district: input.district } : {}),
+        ...(input.city !== undefined ? { city: input.city } : {}),
+        ...(input.center_lat !== undefined ? { centerLat: input.center_lat } : {}),
+        ...(input.center_lng !== undefined ? { centerLng: input.center_lng } : {}),
+        ...(input.status !== undefined ? { status: input.status, isActive: input.status === EntityStatus.ACTIVE, deletedAt: input.status === EntityStatus.INACTIVE ? new Date() : null } : {}),
+        ...(input.is_active !== undefined && input.status === undefined ? { isActive: input.is_active, status: input.is_active ? EntityStatus.ACTIVE : EntityStatus.INACTIVE, deletedAt: input.is_active ? null : new Date() } : {}),
+      } });
+      await tx.auditLog.create({ data: { actorUserId, action: 'UPDATE_WARD', entityType: 'Ward', entityId: id, details: input } });
+    });
+    return (await this.listWards({ include_inactive: true })).find((item) => item.id === id);
   }
 
   async getContainer(id: string) {
@@ -586,7 +670,7 @@ export class AdminService {
     if (duplicate) throw new ConflictException({ code: 'QR_CODE_ALREADY_EXISTS', message: 'Mã QR đã tồn tại', details: { qr_code: qrCode } });
     const row = await this.prisma.$transaction(async (tx) => {
       const created = await tx.container.create({
-        data: { qrCode, capacityLiters: input.capacity_liters, state: 'AT_MERCHANT', merchantId: null },
+      data: { qrCode, capacityLiters: input.capacity_liters, state: 'AT_MERCHANT', merchantId: null, wardId: ward.id },
         include: { merchant: true },
       });
       await tx.auditLog.create({
@@ -637,11 +721,11 @@ export class AdminService {
   }
 
   private async findWard(wardId?: string, wardCode?: string) {
-    if (wardId) return this.prisma.ward.findUnique({ where: { id: wardId } });
+    if (wardId) return this.prisma.ward.findFirst({ where: { id: wardId, deletedAt: null, status: EntityStatus.ACTIVE, isActive: true } });
     if (!wardCode) return null;
     const normalized = normalizeWardCode(wardCode);
-    const wards = await this.prisma.ward.findMany({ where: { deletedAt: null } });
-    return wards.find((ward) => normalizeWardCode(ward.code) === normalized) ?? null;
+    const wards = await this.prisma.ward.findMany({ where: { deletedAt: null, status: EntityStatus.ACTIVE, isActive: true } });
+    return wards.find((ward) => wardLookupKey(ward.code) === wardLookupKey(normalized)) ?? null;
   }
 
   private serializeAdminContainer(row: { id: string; qrCode: string; state: string; status: string; capacityLiters: Prisma.Decimal | null; merchant: { id: string; businessName: string; address: string | null } | null }) {

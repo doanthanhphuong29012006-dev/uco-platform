@@ -78,7 +78,7 @@ describe('Collections idempotency and geo validation (e2e)', () => {
     const payload = {
       client_uuid: clientUuid,
       order_id: order.body.id,
-      container_code: 'ECO-UCO-Q3P7-007',
+      container_code: 'ECO-UCO-Q3-P7-007',
       actual_liters: 18.5,
       quality: 'PASS',
       geo: { lat: 10.78095, lng: 106.68425 },
@@ -121,7 +121,7 @@ describe('Collections idempotency and geo validation (e2e)', () => {
     const payload = {
       client_uuid: clientUuid,
       order_id: order.body.id,
-      container_code: 'ECO-UCO-Q3P7-009',
+      container_code: 'ECO-UCO-Q3-P7-009',
       actual_liters: 18,
       quality: 'PASS',
       geo: { lat: 10.78155, lng: 106.68375 },
@@ -149,7 +149,7 @@ describe('Collections idempotency and geo validation (e2e)', () => {
       .send({
         client_uuid: randomUUID(),
         order_id: order.body.id,
-        container_code: 'ECO-UCO-Q3P7-002',
+        container_code: 'ECO-UCO-Q3-P7-002',
         actual_liters: 999,
         quality: 'PASS',
         geo: { lat: 10.78255, lng: 106.68475 },
@@ -169,7 +169,7 @@ describe('Collections idempotency and geo validation (e2e)', () => {
       .send({
         client_uuid: randomUUID(),
         order_id: order.body.id,
-        container_code: 'ECO-UCO-Q3P7-004',
+        container_code: 'ECO-UCO-Q3-P7-004',
         actual_liters: 18,
         quality: 'PASS',
         geo: { lat: 10.828, lng: 106.7009 },

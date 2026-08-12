@@ -56,7 +56,7 @@ describe('Container provisioning and merchant empty state (e2e)', () => {
     const admin = await login('zalo_admin_01', '0990000001');
     const created = await request(app.getHttpServer()).post('/api/v1/admin/containers').set('Authorization', `Bearer ${admin.body.access_token}`).send({ ward_code: 'Q3-P7', capacity_liters: 30 }).expect(201);
     containerId = created.body.id as string;
-    expect(created.body.qr_code).toMatch(/^ECO-UCO-Q3P7-\d{4}$/);
+    expect(created.body.qr_code).toMatch(/^ECO-UCO-Q3-P7-\d{3}$/);
     expect(created.body.merchant).toBeNull();
     await request(app.getHttpServer()).post(`/api/v1/admin/containers/${containerId}/assign`).set('Authorization', `Bearer ${admin.body.access_token}`).send({ merchant_id: merchantId }).expect(201);
     const merchant = await login(zaloId, phone);

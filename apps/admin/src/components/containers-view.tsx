@@ -25,7 +25,7 @@ export function ContainersView() {
   const [assignTarget, setAssignTarget] = useState<Record<string, string>>({});
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const containers = useQuery({ queryKey: ['admin-containers', state, unassigned], queryFn: () => api.containers({ state: state || undefined, unassigned: unassigned || undefined }) });
-  const wards = useQuery({ queryKey: ['admin-wards'], queryFn: api.wards });
+  const wards = useQuery({ queryKey: ['admin-wards-active'], queryFn: () => api.wards(false) });
   const merchants = useQuery({ queryKey: ['all-merchants-for-containers'], queryFn: () => api.merchants({}) });
   const create = useMutation({ mutationFn: () => api.createContainer({ ward_id: wardId, capacity_liters: Number(capacity) }), onSuccess: () => { setShowCreate(false); void queryClient.invalidateQueries({ queryKey: ['admin-containers'] }); } });
   const assign = useMutation({ mutationFn: ({ id, merchantId }: { id: string; merchantId: string }) => api.assignContainer(id, merchantId), onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['admin-containers'] }); } });
