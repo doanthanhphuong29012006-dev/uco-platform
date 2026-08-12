@@ -70,7 +70,7 @@ export type MerchantListQueryInput = z.infer<typeof merchantListQuerySchema>;
 export const adminPersonCreateSchema = z.object({
   user_id: uuidSchema,
   display_name: z.string().trim().min(1).max(200),
-  ward_id: uuidSchema,
+  ward_ids: z.array(uuidSchema).min(1).max(50),
 });
 export type AdminPersonCreateInput = z.infer<typeof adminPersonCreateSchema>;
 

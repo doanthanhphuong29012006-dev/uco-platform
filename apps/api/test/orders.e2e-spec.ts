@@ -12,6 +12,11 @@ const containerThreeId = '60000000-0000-4000-8000-000000000005';
 const merchantOneId = '20000000-0000-4000-8000-000000000001';
 const merchantTwoId = '20000000-0000-4000-8000-000000000002';
 const merchantThreeId = '20000000-0000-4000-8000-000000000003';
+const multiWardId = '10000000-0000-4000-8000-000000000099';
+const multiWardUserId = '40000000-0000-4000-8000-000000000099';
+const multiWardMerchantId = '20000000-0000-4000-8000-000000000099';
+const multiWardContainerId = '60000000-0000-4000-8000-000000000099';
+const collectorOneId = '50000000-0000-4000-8000-000000000001';
 
 describe('Orders and collector routes (e2e)', () => {
   let app: INestApplication;
@@ -134,5 +139,72 @@ describe('Orders and collector routes (e2e)', () => {
       .set('Authorization', `Bearer ${merchantOneToken}`)
       .expect(403);
     expect(forbiddenCancel.body).toEqual({ code: 'FORBIDDEN', message: 'Order ownership required', details: null });
+  });
+
+  it('returns READY stops from every ward assigned through collector_wards', async () => {
+    const prisma = app.get(PrismaService);
+    await prisma.collectionOrder.updateMany({
+      where: { status: { in: ['READY', 'ASSIGNED'] } },
+      data: { status: 'CANCELLED', cancelledAt: new Date() },
+    });
+    await prisma.ward.upsert({
+      where: { id: multiWardId },
+      update: { code: 'TEST-MULTI', status: 'ACTIVE', isActive: true, deletedAt: null },
+      create: {
+        id: multiWardId,
+        code: 'TEST-MULTI',
+        name: 'Phường kiểm thử đa địa bàn',
+        district: 'Quận kiểm thử',
+        city: 'Hà Nội',
+        centerLat: 21.0333,
+        centerLng: 105.85,
+      },
+    });
+    await prisma.collectorWard.upsert({
+      where: { collectorId_wardId: { collectorId: collectorOneId, wardId: multiWardId } },
+      update: {},
+      create: { collectorId: collectorOneId, wardId: multiWardId },
+    });
+    await prisma.user.upsert({
+      where: { id: multiWardUserId },
+      update: { role: 'MERCHANT', name: 'Merchant đa phường', phone: '0900000099' },
+      create: { id: multiWardUserId, zaloId: 'zalo_test_multi_ward', phone: '0900000099', name: 'Merchant đa phường', role: 'MERCHANT' },
+    });
+    await prisma.merchant.upsert({
+      where: { id: multiWardMerchantId },
+      update: { wardId: multiWardId, status: 'ACTIVE', approvalStatus: 'APPROVED', deletedAt: null },
+      create: { id: multiWardMerchantId, userId: multiWardUserId, wardId: multiWardId, businessName: 'Quán kiểm thử đa phường', status: 'ACTIVE', approvalStatus: 'APPROVED' },
+    });
+    await prisma.container.upsert({
+      where: { id: multiWardContainerId },
+      update: { merchantId: multiWardMerchantId, wardId: multiWardId, state: 'AT_MERCHANT', status: 'ACTIVE', capacityLiters: 30, deletedAt: null },
+      create: { id: multiWardContainerId, merchantId: multiWardMerchantId, wardId: multiWardId, qrCode: 'ECO-UCO-TEST-MULTI-099', state: 'AT_MERCHANT', status: 'ACTIVE', capacityLiters: 30 },
+    });
+    await prisma.collectionOrder.createMany({
+      data: [
+        { merchantId: merchantOneId, containerId: containerOneId, expectedLiters: 5, priority: 80, status: 'READY', source: 'MANUAL' },
+        { merchantId: multiWardMerchantId, containerId: multiWardContainerId, expectedLiters: 5, priority: 70, status: 'READY', source: 'MANUAL' },
+      ],
+    });
+
+    const collectorToken = await login('zalo_collector_01', '0910000001');
+    const route = await request(app.getHttpServer())
+      .get('/api/v1/routes/current?lat=21.0333&lng=105.8500')
+      .set('Authorization', `Bearer ${collectorToken}`)
+      .expect(200);
+
+    expect(route.body.stops).toHaveLength(2);
+    expect(route.body.stops.map((stop: { container_code: string }) => stop.container_code).sort()).toEqual([
+      'ECO-UCO-Q3-P7-001',
+      'ECO-UCO-TEST-MULTI-099',
+    ].sort());
+
+    await prisma.collectionOrder.updateMany({
+      where: { merchantId: { in: [merchantOneId, multiWardMerchantId] }, status: 'READY' },
+      data: { status: 'CANCELLED', cancelledAt: new Date() },
+    });
+    await prisma.container.update({ where: { id: multiWardContainerId }, data: { status: 'INACTIVE', isActive: false, deletedAt: new Date() } });
+    await prisma.merchant.update({ where: { id: multiWardMerchantId }, data: { status: 'INACTIVE', isActive: false, deletedAt: new Date() } });
+    await prisma.ward.update({ where: { id: multiWardId }, data: { status: 'INACTIVE', isActive: false, deletedAt: new Date() } });
   });
 });

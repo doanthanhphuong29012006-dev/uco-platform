@@ -99,7 +99,6 @@ model Ward {
   updatedAt  DateTime    @updatedAt @map("updated_at")
   deletedAt  DateTime?   @map("deleted_at")
   merchants  Merchant[]
-  collectors Collector[]
   stations   Station[]
   containers Container[]
   collectorWards CollectorWard[]
@@ -139,7 +138,6 @@ model Merchant {
 model Collector {
   id           String                  @id @default(uuid()) @db.Uuid
   userId       String                  @unique @map("user_id") @db.Uuid
-  wardId       String                  @map("ward_id") @db.Uuid
   displayName  String                  @map("display_name")
   vehicleType  String?                 @map("vehicle_type")
   maxCapacityLiters Decimal             @default(100) @map("max_capacity_l") @db.Decimal(10, 2)
@@ -150,13 +148,11 @@ model Collector {
   updatedAt    DateTime                @updatedAt @map("updated_at")
   deletedAt    DateTime?               @map("deleted_at")
   user         User                    @relation(fields: [userId], references: [id])
-  ward         Ward                    @relation(fields: [wardId], references: [id])
   orders       CollectionOrder[]
   transactions CollectionTransaction[]
   deliveries   StationDelivery[]
   collectorWards CollectorWard[]
 
-  @@index([wardId, isActive])
   @@map("collectors")
 }
 

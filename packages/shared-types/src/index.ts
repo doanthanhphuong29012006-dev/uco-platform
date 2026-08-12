@@ -370,7 +370,7 @@ export interface AdminCollectorSummary {
   status: EntityStatus;
   is_active: boolean;
   last_seen_at: string | null;
-  ward: { id: string; code: string; name: string };
+  wards: Array<{ id: string; code: string; name: string }>;
   user: { id: string; name: string | null; phone: string | null };
   vehicle_type?: string | null;
   max_capacity_l?: number;

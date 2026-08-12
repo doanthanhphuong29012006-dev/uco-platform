@@ -52,7 +52,10 @@ export class CollectionsService {
 
   async processOne(user: AccessTokenPayload, input: CollectionCreateInput, synced: boolean): Promise<{ data: ReturnType<CollectionsService['serialize']>; replayed: boolean }> {
     const result: { row: CollectionRow | null; replayed: boolean } = await this.prisma.$transaction(async (tx) => {
-      const collector = await tx.collector.findUnique({ where: { userId: user.sub } });
+      const collector = await tx.collector.findUnique({
+        where: { userId: user.sub },
+        include: { collectorWards: { select: { wardId: true } } },
+      });
       if (!collector || collector.status === EntityStatus.INACTIVE) {
         throw new NotFoundException('Collector profile not found');
       }
@@ -69,7 +72,7 @@ export class CollectionsService {
         });
       }
       const originalOrderStatus = order.status;
-      if (order.merchant.wardId !== collector.wardId) {
+      if (!collector.collectorWards.some((item) => item.wardId === order.merchant.wardId)) {
         throw new ForbiddenException('Order is outside collector ward');
       }
       if (originalOrderStatus !== OrderStatus.READY && originalOrderStatus !== OrderStatus.ASSIGNED && originalOrderStatus !== OrderStatus.COLLECTED) {

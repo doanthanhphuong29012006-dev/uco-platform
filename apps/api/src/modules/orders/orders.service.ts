@@ -147,14 +147,19 @@ export class OrdersService {
   }
 
   async currentRoute(user: AccessTokenPayload, query: RouteQueryInput) {
-    const collector = await this.prisma.collector.findUnique({ where: { userId: user.sub }, include: { ward: true } });
+    const collector = await this.prisma.collector.findUnique({
+      where: { userId: user.sub },
+      include: { collectorWards: { include: { ward: true }, orderBy: { createdAt: 'asc' } } },
+    });
     if (!collector || collector.status === EntityStatus.INACTIVE) {
       throw new NotFoundException('Collector profile not found');
     }
-    const originLat = query.lat ?? collector.ward.centerLat ?? 0;
-    const originLng = query.lng ?? collector.ward.centerLng ?? 0;
+    const originWard = collector.collectorWards[0]?.ward;
+    const originLat = query.lat ?? originWard?.centerLat ?? 0;
+    const originLng = query.lng ?? originWard?.centerLng ?? 0;
     const maxCapacity = Number(collector.maxCapacityLiters);
-    const rows = await this.prisma.findReadyOrdersForRoute([collector.wardId], originLat, originLng);
+    const wardIds = collector.collectorWards.map((item) => item.wardId);
+    const rows = await this.prisma.findReadyOrdersForRoute(wardIds, originLat, originLng);
     const stops: Array<{
       seq: number;
       order_id: string;

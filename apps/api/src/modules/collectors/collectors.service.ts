@@ -15,14 +15,14 @@ export class CollectorsService {
 
   async create(input: AdminPersonCreateInput) {
     await this.requireUser(input.user_id, Role.COLLECTOR);
-    await this.requireWard(input.ward_id);
+    await this.requireWards(input.ward_ids);
     const existing = await this.prisma.collector.findUnique({ where: { userId: input.user_id } });
     if (existing) {
       throw new ConflictException('Collector profile already exists');
     }
     const row = await this.prisma.collector.create({
-      data: { userId: input.user_id, wardId: input.ward_id, displayName: input.display_name },
-      include: { user: true, ward: true },
+      data: { userId: input.user_id, displayName: input.display_name, collectorWards: { create: input.ward_ids.map((wardId) => ({ wardId })) } },
+      include: { user: true, collectorWards: { include: { ward: true } } },
     });
     return this.serialize(row);
   }
@@ -32,18 +32,23 @@ export class CollectorsService {
     if (input.user_id) {
       await this.requireUser(input.user_id, Role.COLLECTOR);
     }
-    if (input.ward_id) {
-      await this.requireWard(input.ward_id);
+    if (input.ward_ids) {
+      await this.requireWards(input.ward_ids);
     }
     const row = await this.prisma.collector.update({
       where: { id },
       data: {
         ...(input.user_id ? { userId: input.user_id } : {}),
-        ...(input.ward_id ? { wardId: input.ward_id } : {}),
         ...(input.display_name ? { displayName: input.display_name } : {}),
       },
-      include: { user: true, ward: true },
+      include: { user: true, collectorWards: { include: { ward: true } } },
     });
+    if (input.ward_ids) {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.collectorWard.deleteMany({ where: { collectorId: id } });
+        await tx.collectorWard.createMany({ data: input.ward_ids!.map((wardId) => ({ collectorId: id, wardId })) });
+      });
+    }
     return this.serialize(row);
   }
 
@@ -52,14 +57,14 @@ export class CollectorsService {
     const row = await this.prisma.collector.update({
       where: { id },
       data: { status: input.status, isActive: input.status === EntityStatus.ACTIVE, deletedAt: input.status === EntityStatus.INACTIVE ? new Date() : null },
-      include: { user: true, ward: true },
+      include: { user: true, collectorWards: { include: { ward: true } } },
     });
     return this.serialize(row);
   }
 
   async list(query: PersonListQueryInput) {
     const where: Prisma.CollectorWhereInput = {
-      ...(query.ward_id ? { wardId: query.ward_id } : {}),
+      ...(query.ward_id ? { collectorWards: { some: { wardId: query.ward_id } } } : {}),
       ...(query.status ? { status: query.status } : query.include_inactive ? {} : { status: EntityStatus.ACTIVE }),
     };
     const [rows, total] = await Promise.all([
@@ -68,7 +73,7 @@ export class CollectorsService {
         orderBy: { createdAt: 'asc' },
         skip: (query.page - 1) * query.limit,
         take: query.limit,
-        include: { user: true, ward: true },
+        include: { user: true, collectorWards: { include: { ward: true } } },
       }),
       this.prisma.collector.count({ where }),
     ]);
@@ -86,15 +91,15 @@ export class CollectorsService {
     }
   }
 
-  private async requireWard(id: string): Promise<void> {
-    const ward = await this.prisma.ward.findUnique({ where: { id } });
-    if (!ward || ward.deletedAt) {
+  private async requireWards(ids: string[]): Promise<void> {
+    const wards = await this.prisma.ward.findMany({ where: { id: { in: ids }, deletedAt: null } });
+    if (wards.length !== ids.length) {
       throw new NotFoundException('Ward not found');
     }
   }
 
   private async getRequired(id: string) {
-    const row = await this.prisma.collector.findUnique({ where: { id }, include: { user: true, ward: true } });
+    const row = await this.prisma.collector.findUnique({ where: { id }, include: { user: true, collectorWards: { include: { ward: true } } } });
     if (!row) {
       throw new NotFoundException('Collector not found');
     }
@@ -105,12 +110,12 @@ export class CollectorsService {
     return {
       id: row.id,
       user_id: row.userId,
-      ward_id: row.wardId,
       display_name: row.displayName,
       status: row.status,
       is_active: row.isActive,
       last_seen_at: row.lastSeenAt,
-      ward: { id: row.ward.id, code: row.ward.code, name: row.ward.name },
+      wards: row.collectorWards.map((item) => ({ id: item.ward.id, code: item.ward.code, name: item.ward.name })),
+      ward_ids: row.collectorWards.map((item) => item.wardId),
       user: { id: row.user.id, name: row.user.name, phone: row.user.phone },
     };
   }

@@ -394,7 +394,7 @@ export class AdminService {
 
   async listCollectors(query: AdminCollectorListQueryInput) {
     const where: Prisma.CollectorWhereInput = {
-      ...(query.ward_id ? { wardId: query.ward_id } : {}),
+      ...(query.ward_id ? { collectorWards: { some: { wardId: query.ward_id } } } : {}),
       ...(query.status ? { status: query.status } : query.include_inactive ? {} : { status: 'ACTIVE' }),
     };
     const [rows, total] = await Promise.all([
@@ -403,7 +403,7 @@ export class AdminService {
         orderBy: { displayName: 'asc' },
         skip: (query.page - 1) * query.limit,
         take: query.limit,
-        include: { ward: true, user: true },
+        include: { user: true, collectorWards: { include: { ward: true }, orderBy: { createdAt: 'asc' } } },
       }),
       this.prisma.collector.count({ where }),
     ]);
@@ -414,11 +414,11 @@ export class AdminService {
         status: row.status,
         is_active: row.isActive,
         last_seen_at: row.lastSeenAt,
-        ward: { id: row.ward.id, code: row.ward.code, name: row.ward.name },
+        wards: row.collectorWards.map((item) => ({ id: item.ward.id, code: item.ward.code, name: item.ward.name })),
         user: { id: row.user.id, name: row.user.name, phone: row.user.phone },
         vehicle_type: row.vehicleType,
         max_capacity_l: Number(row.maxCapacityLiters),
-        ward_ids: [],
+        ward_ids: row.collectorWards.map((item) => item.wardId),
       })),
       meta: { page: query.page, limit: query.limit, total },
     };
@@ -580,7 +580,7 @@ export class AdminService {
         w."center_lat", w."center_lng", w."status"::text AS "status", w."is_active",
         (SELECT COUNT(*)::int FROM "merchants" m WHERE m."ward_id" = w."id" AND m."status" = 'ACTIVE' AND m."deleted_at" IS NULL) AS "merchant_count",
         (SELECT COUNT(*)::int FROM "containers" c WHERE c."ward_id" = w."id" AND c."status" = 'ACTIVE' AND c."deleted_at" IS NULL) AS "container_count",
-        (SELECT COUNT(*)::int FROM "collectors" c WHERE c."ward_id" = w."id" AND c."status" = 'ACTIVE' AND c."deleted_at" IS NULL) AS "collector_count"
+        (SELECT COUNT(DISTINCT c."id")::int FROM "collectors" c JOIN "collector_wards" cw ON cw."collector_id" = c."id" WHERE cw."ward_id" = w."id" AND c."status" = 'ACTIVE' AND c."deleted_at" IS NULL) AS "collector_count"
       FROM "wards" w
       WHERE w."deleted_at" IS NULL
         AND (${query.include_inactive}::boolean OR (w."status" = 'ACTIVE' AND w."is_active" = true))
@@ -752,7 +752,6 @@ export class AdminService {
       const row = await tx.collector.create({
         data: {
           userId: user.id,
-          wardId: input.ward_ids[0],
           displayName: input.name,
           vehicleType: input.vehicle_type,
           maxCapacityLiters: input.max_capacity_l,
@@ -779,7 +778,6 @@ export class AdminService {
           ...(input.vehicle_type !== undefined ? { vehicleType: input.vehicle_type } : {}),
           ...(input.max_capacity_l !== undefined ? { maxCapacityLiters: input.max_capacity_l } : {}),
           ...(input.status !== undefined ? { status: input.status, isActive: input.status === EntityStatus.ACTIVE, deletedAt: input.status === EntityStatus.INACTIVE ? new Date() : null } : {}),
-          ...(input.ward_ids?.[0] ? { wardId: input.ward_ids[0] } : {}),
         },
       });
       if (input.name !== undefined || input.phone !== undefined) {
@@ -800,9 +798,9 @@ export class AdminService {
   }
 
   private async collectorProfile(id: string) {
-    const row = await this.prisma.collector.findUnique({ where: { id }, include: { user: true, ward: true, collectorWards: true } });
+    const row = await this.prisma.collector.findUnique({ where: { id }, include: { user: true, collectorWards: { include: { ward: true }, orderBy: { createdAt: 'asc' } } } });
     if (!row) throw new NotFoundException('Collector not found');
-    return { id: row.id, display_name: row.displayName, vehicle_type: row.vehicleType, max_capacity_l: Number(row.maxCapacityLiters), status: row.status, is_active: row.isActive, ward: { id: row.ward.id, code: row.ward.code, name: row.ward.name }, ward_ids: row.collectorWards.map((item) => item.wardId), user: { id: row.user.id, name: row.user.name, phone: row.user.phone } };
+    return { id: row.id, display_name: row.displayName, vehicle_type: row.vehicleType, max_capacity_l: Number(row.maxCapacityLiters), status: row.status, is_active: row.isActive, wards: row.collectorWards.map((item) => ({ id: item.ward.id, code: item.ward.code, name: item.ward.name })), ward_ids: row.collectorWards.map((item) => item.wardId), user: { id: row.user.id, name: row.user.name, phone: row.user.phone } };
   }
 
   private period(fromInput?: Date, toInput?: Date) {

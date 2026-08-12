@@ -214,7 +214,6 @@ async function main(): Promise<void> {
       where: { id: merchant.id },
       update: {
         userId: merchant.userId,
-        wardId,
       businessName: merchant.businessName,
       businessType: 'Quán ăn',
         address: merchant.address,
@@ -228,7 +227,6 @@ async function main(): Promise<void> {
       create: {
         id: merchant.id,
         userId: merchant.userId,
-        wardId,
       businessName: merchant.businessName,
       businessType: 'Quán ăn',
         address: merchant.address,
@@ -289,7 +287,6 @@ async function main(): Promise<void> {
     where: { id: hanoiCollectorId },
     update: {
       userId: hanoiCollectorUserId,
-      wardId: hanoiWardId,
       displayName: 'Lê Văn Thu Gom 3',
       vehicleType: 'Xe tải nhỏ',
       maxCapacityLiters: 100,
@@ -300,7 +297,6 @@ async function main(): Promise<void> {
     create: {
       id: hanoiCollectorId,
       userId: hanoiCollectorUserId,
-      wardId: hanoiWardId,
       displayName: 'Lê Văn Thu Gom 3',
       vehicleType: 'Xe tải nhỏ',
       maxCapacityLiters: 100,
