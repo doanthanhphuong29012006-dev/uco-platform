@@ -19,6 +19,8 @@ export const refreshTokenSchema = z.object({
 export type RefreshTokenInput = z.infer<typeof refreshTokenSchema>;
 
 const coordinateSchema = z.number().finite();
+const vietnamLatitudeSchema = coordinateSchema.min(8, 'Vĩ độ phải nằm trong lãnh thổ Việt Nam').max(24, 'Vĩ độ phải nằm trong lãnh thổ Việt Nam');
+const vietnamLongitudeSchema = coordinateSchema.min(102, 'Kinh độ phải nằm trong lãnh thổ Việt Nam').max(110, 'Kinh độ phải nằm trong lãnh thổ Việt Nam');
 
 export const merchantRegisterSchema = z.object({
   zalo_id: z.string().trim().min(1).max(120).optional(),
@@ -26,8 +28,8 @@ export const merchantRegisterSchema = z.object({
   address: z.string().trim().min(1).max(500),
   phone: phoneSchema.optional(),
   business_type: z.string().trim().min(1).max(120).optional(),
-  lat: coordinateSchema.min(-90).max(90),
-  lng: coordinateSchema.min(-180).max(180),
+  lat: vietnamLatitudeSchema,
+  lng: vietnamLongitudeSchema,
   ward_id: uuidSchema,
   avg_daily_liters: z.number().finite().nonnegative().max(100000).optional(),
 });
@@ -39,6 +41,15 @@ export const merchantPublicRegisterSchema = merchantRegisterSchema.extend({
   business_type: z.string().trim().min(1).max(120),
 });
 export type MerchantPublicRegisterInput = z.infer<typeof merchantPublicRegisterSchema>;
+
+export const merchantApprovalSchema = z.object({
+  lat: vietnamLatitudeSchema.optional(),
+  lng: vietnamLongitudeSchema.optional(),
+}).superRefine((value, context) => {
+  if (value.lat !== undefined && value.lng === undefined) context.addIssue({ code: z.ZodIssueCode.custom, path: ['lng'], message: 'Kinh độ là bắt buộc khi nhập vĩ độ' });
+  if (value.lng !== undefined && value.lat === undefined) context.addIssue({ code: z.ZodIssueCode.custom, path: ['lat'], message: 'Vĩ độ là bắt buộc khi nhập kinh độ' });
+});
+export type MerchantApprovalInput = z.infer<typeof merchantApprovalSchema>;
 
 export const merchantPatchSchema = merchantRegisterSchema.partial().superRefine((value, context) => {
   if (value.lat !== undefined && value.lng === undefined) {

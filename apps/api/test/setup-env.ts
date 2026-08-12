@@ -17,6 +17,7 @@ if (existsSync(envPath)) {
     }
     const key = trimmed.slice(0, separator).trim();
     const value = trimmed.slice(separator + 1).trim();
-    process.env[key] ??= value;
+    // Tests must never inherit the developer database URL. This file is loaded by Jest before app modules.
+    process.env[key] = value;
   }
 }

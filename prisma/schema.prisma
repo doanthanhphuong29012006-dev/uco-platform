@@ -57,6 +57,7 @@ enum AlertType {
   GEO_MISMATCH
   DELIVERY_VARIANCE
   NO_COLLECTOR_IN_WARD
+  WARD_LOCATION_MISMATCH
 }
 
 enum AlertSeverity {

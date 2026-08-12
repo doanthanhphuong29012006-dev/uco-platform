@@ -30,6 +30,7 @@ describe('Container provisioning and merchant empty state (e2e)', () => {
     const registered = await request(app.getHttpServer()).post('/api/v1/merchants/register').send({ zalo_id: zaloId, name: 'Quán test cấp can', address: '1 Nguyễn Huệ', phone, business_type: 'QUAN_AN', lat: 10.7769, lng: 106.7009, ward_id: wardId }).expect(201);
     merchantId = registered.body.merchant.id as string;
     userId = registered.body.merchant.user_id as string;
+    await prisma.$executeRaw`UPDATE "merchants" SET "location" = ST_SetSRID(ST_MakePoint(106.685, 10.782), 4326)::geography WHERE "id" = ${merchantId}::uuid`;
     const admin = await login('zalo_admin_01', '0990000001');
     await request(app.getHttpServer()).post(`/api/v1/admin/merchants/${merchantId}/approve`).set('Authorization', `Bearer ${admin.body.access_token}`).expect(201);
   });

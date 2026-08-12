@@ -47,6 +47,7 @@ export enum DeliveryStatus {
 export enum AlertType {
   GEO_MISMATCH = 'GEO_MISMATCH',
   DELIVERY_VARIANCE = 'DELIVERY_VARIANCE',
+  WARD_LOCATION_MISMATCH = 'WARD_LOCATION_MISMATCH',
 }
 
 export enum AlertSeverity {

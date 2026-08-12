@@ -16,6 +16,7 @@ import {
   adminWardCreateSchema,
   adminWardPatchSchema,
   adminWardListQuerySchema,
+  merchantApprovalSchema,
 } from '@eco-oil/validation';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -58,8 +59,8 @@ export class AdminController {
 
   @Roles(Role.ADMIN)
   @Post('merchants/:id/approve')
-  approveMerchant(@Param('id') id: string, @CurrentUser() user: AccessTokenPayload) {
-    return this.service.approveMerchant(id, user.sub);
+  approveMerchant(@Param('id') id: string, @CurrentUser() user: AccessTokenPayload, @Body() body: unknown) {
+    return this.service.approveMerchant(id, user.sub, merchantApprovalSchema.parse(body ?? {}));
   }
 
   @Roles(Role.ADMIN)

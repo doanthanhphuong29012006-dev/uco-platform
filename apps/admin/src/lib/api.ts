@@ -51,7 +51,7 @@ export const api = {
     client.request<PagedResponse<AdminMerchantSummary>>(`/admin/merchants${query({ page: 1, limit: 100, ...params })}`),
   collectors: () => client.request<PagedResponse<AdminCollectorSummary>>('/admin/collectors?page=1&limit=100'),
   collectorPerformance: (id: string) => client.request<AdminCollectorPerformance>(`/admin/collectors/${id}/performance`),
-  approveMerchant: (id: string) => client.request(`/admin/merchants/${id}/approve`, { method: 'POST' }),
+  approveMerchant: (id: string, body: { lat: number; lng: number }) => client.request(`/admin/merchants/${id}/approve`, { method: 'POST', body }),
   rejectMerchant: (id: string, reason: string) => client.request(`/admin/merchants/${id}/reject`, { method: 'POST', body: { reason } }),
   createCollector: (body: { name: string; phone: string; zalo_id: string; vehicle_type: string; max_capacity_l: number; ward_ids: string[] }) => client.request('/admin/collectors', { method: 'POST', body }),
   updateCollector: (id: string, body: Record<string, unknown>) => client.request(`/admin/collectors/${id}`, { method: 'PATCH', body }),

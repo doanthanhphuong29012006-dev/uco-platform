@@ -1,6 +1,6 @@
-import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { EntityStatus, MerchantApprovalStatus, Role } from '@prisma/client';
+import { AlertSeverity, AlertType, EntityStatus, MerchantApprovalStatus, Role } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import type {
   AdminCollectorListQueryInput,
@@ -18,6 +18,7 @@ import type {
   AdminWardCreateInput,
   AdminWardPatchInput,
   AdminWardListQueryInput,
+  MerchantApprovalInput,
 } from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
 import { buildContainerQrCode, containerQrPrefix, normalizeWardCode, wardLookupKey } from '../containers/qr-code';
@@ -518,20 +519,57 @@ export class AdminService {
     };
   }
 
-  async approveMerchant(id: string, actorUserId: string) {
-    const merchant = await this.prisma.merchant.findUnique({ where: { id } });
+  async approveMerchant(id: string, actorUserId: string, input: MerchantApprovalInput = {}) {
+    const merchant = await this.prisma.merchant.findUnique({ where: { id }, include: { ward: true } });
     if (!merchant) throw new NotFoundException('Merchant not found');
+    const storedPoint = await this.prisma.getGeographyPoint('merchants', id);
+    const lat = input.lat ?? storedPoint?.lat;
+    const lng = input.lng ?? storedPoint?.lng;
+    if (lat === undefined || lng === undefined || lat === null || lng === null) {
+      throw new BadRequestException({ code: 'MERCHANT_LOCATION_REQUIRED', message: 'Cần nhập tọa độ thực của quán trước khi duyệt', details: { lat, lng } });
+    }
+    if (this.isKnownDefaultLocation(lat, lng)) {
+      throw new BadRequestException({ code: 'MERCHANT_LOCATION_REQUIRED', message: 'Tọa độ hiện tại là tọa độ mặc định, cần thay bằng vị trí thực của quán', details: { lat, lng } });
+    }
     const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`
+        UPDATE "merchants"
+        SET "location" = ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography
+        WHERE "id" = ${id}::uuid
+      `;
       const row = await tx.merchant.update({
         where: { id },
         data: { approvalStatus: MerchantApprovalStatus.APPROVED, rejectionReason: null },
       });
+      if (merchant.ward.centerLat !== null && merchant.ward.centerLng !== null) {
+        const distanceRows = await tx.$queryRaw<Array<{ distance_m: number }>>`
+          SELECT ST_Distance(
+            ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography,
+            ST_SetSRID(ST_MakePoint(${merchant.ward.centerLng}, ${merchant.ward.centerLat}), 4326)::geography
+          ) AS distance_m
+        `;
+        const distanceM = Number(distanceRows[0]?.distance_m ?? 0);
+        if (distanceM > 20000) {
+          await tx.alert.create({
+            data: {
+              type: AlertType.WARD_LOCATION_MISMATCH,
+              severity: AlertSeverity.HIGH,
+              message: 'Tọa độ quán cách xa tâm phường được gán hơn 20 km',
+              details: { merchant_id: id, ward_id: merchant.wardId, distance_m: distanceM, threshold_m: 20000 },
+            },
+          });
+        }
+      }
       await tx.auditLog.create({
         data: { actorUserId, action: 'APPROVE_MERCHANT', entityType: 'Merchant', entityId: id, details: {} },
       });
       return row;
     });
     return this.merchantProfile(updated.id);
+  }
+
+  private isKnownDefaultLocation(lat: number, lng: number) {
+    return Math.abs(lat - 10.7769) < 0.000001 && Math.abs(lng - 106.7009) < 0.000001;
   }
 
   async rejectMerchant(id: string, actorUserId: string, input: MerchantRejectInput) {

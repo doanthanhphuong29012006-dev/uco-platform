@@ -77,7 +77,12 @@ export class AuthService {
         station: { include: { ward: { select: { code: true, name: true, district: true, city: true } } } },
       },
     });
-    return users.map((user) => ({
+    return users.filter((user) => {
+      if (user.merchant) return user.merchant.status === 'ACTIVE' && user.merchant.isActive && user.merchant.deletedAt === null;
+      if (user.collector) return user.collector.status === 'ACTIVE' && user.collector.isActive && user.collector.deletedAt === null;
+      if (user.station) return user.station.status === 'ACTIVE' && user.station.isActive && user.station.deletedAt === null;
+      return true;
+    }).map((user) => ({
       id: user.id,
       zalo_id: user.zaloId,
       phone: user.phone,
