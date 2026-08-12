@@ -6,7 +6,7 @@ import { KpiCards } from './components/kpi-cards';
 import { calculateVariancePct, isAdminUser } from './lib/dashboard-utils';
 
 const user = (role: Role): AuthUser => ({
-  id: 'user-1', zalo_id: 'zalo-test', phone: '0900000000', name: 'Test', role, merchantId: null, collectorId: null,
+  id: 'user-1', zalo_id: 'zalo-test', phone: '0900000000', name: 'Test', role, merchantId: null, collectorId: null, merchantApprovalStatus: null, merchantRejectionReason: null,
 });
 
 test('guard từ chối tài khoản không phải ADMIN', () => {

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { api } from '../lib/api';
 import { zaloClient } from '../lib/zalo-client';
 import { useAuthStore } from '../stores/auth-store';
 
@@ -18,6 +19,9 @@ export function LoginScreen() {
   const error = useAuthStore((state) => state.error);
   const loginSeed = useAuthStore((state) => state.loginSeed);
   const loginWithZalo = useAuthStore((state) => state.loginWithZalo);
+  const [registering, setRegistering] = useState(false);
+  const [registerError, setRegisterError] = useState<string | null>(null);
+  const [registerForm, setRegisterForm] = useState({ zalo_id: 'zalo_merchant_new_01', name: '', address: '', phone: '', business_type: 'Quán ăn', lat: 10.7818, lng: 106.6851 });
 
   async function handleZaloLogin() {
     try {
@@ -35,9 +39,20 @@ export function LoginScreen() {
     await loginSeed(identity.zaloId, identity.phone);
   }
 
+  async function handleRegister() {
+    setRegisterError(null);
+    try {
+      const point = await zaloClient.getLocation();
+      await api.registerMerchant({ ...registerForm, lat: point.lat, lng: point.lng, ward_id: '10000000-0000-4000-8000-000000000001' });
+      await loginSeed(registerForm.zalo_id, registerForm.phone);
+    } catch (error) {
+      setRegisterError(error instanceof Error ? error.message : 'Đăng ký thất bại. Vui lòng kiểm tra lại thông tin.');
+    }
+  }
+
   return (
     <main className="login-page">
-      <div className="brand-mark">E</div>
+      <img className="login-logo" src="/logo.svg" alt="Eco-Oil" />
       <p className="eyebrow">ECO-OIL</p>
       <h1>Thu gom dầu dễ dàng</h1>
       <p className="lead">Đăng nhập để báo can sẵn sàng và theo dõi lịch sử thu gom của quán.</p>
@@ -61,6 +76,8 @@ export function LoginScreen() {
         </section>
       ) : null}
       {error ? <p className="error-text">{error}</p> : null}
+      <button className="text-button" onClick={() => setRegistering(!registering)}>{registering ? 'Quay lại đăng nhập' : 'Đăng ký quán mới'}</button>
+      {registering && <section className="dev-login-card approval-form"><p className="section-label">Đăng ký quán</p><label>Mã Zalo (bản thử nghiệm)<input value={registerForm.zalo_id} onChange={(e) => setRegisterForm({ ...registerForm, zalo_id: e.target.value })} /></label><label>Tên quán<input value={registerForm.name} onChange={(e) => setRegisterForm({ ...registerForm, name: e.target.value })} /></label><label>Địa chỉ<input value={registerForm.address} onChange={(e) => setRegisterForm({ ...registerForm, address: e.target.value })} /></label><label>Số điện thoại<input value={registerForm.phone} onChange={(e) => setRegisterForm({ ...registerForm, phone: e.target.value })} /></label><label>Loại hình<input value={registerForm.business_type} onChange={(e) => setRegisterForm({ ...registerForm, business_type: e.target.value })} /></label><button className="primary-button" onClick={() => void handleRegister()} disabled={busy}>Gửi hồ sơ đăng ký</button>{registerError && <p className="error-text">{registerError}</p>}</section>}
     </main>
   );
 }

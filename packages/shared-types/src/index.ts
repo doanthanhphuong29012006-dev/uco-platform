@@ -10,6 +10,12 @@ export enum EntityStatus {
   INACTIVE = 'INACTIVE',
 }
 
+export enum MerchantApprovalStatus {
+  PENDING = 'PENDING',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+}
+
 export enum ContainerState {
   AT_MERCHANT = 'AT_MERCHANT',
   IN_TRANSIT = 'IN_TRANSIT',
@@ -77,6 +83,20 @@ export interface AuthUser {
   role: Role;
   merchantId: string | null;
   collectorId: string | null;
+  merchantApprovalStatus: MerchantApprovalStatus | null;
+  merchantRejectionReason: string | null;
+}
+
+export interface MerchantRegistrationRequest {
+  zalo_id: string;
+  name: string;
+  address: string;
+  phone: string;
+  business_type: string;
+  lat: number;
+  lng: number;
+  ward_id: string;
+  avg_daily_liters?: number;
 }
 
 export interface MerchantContainerSummary {
@@ -246,6 +266,10 @@ export interface AdminMerchantSummary {
   lng: number | null;
   distance_m: number | null;
   status: EntityStatus;
+  approval_status: MerchantApprovalStatus;
+  rejection_reason: string | null;
+  business_type: string | null;
+  phone: string | null;
   avg_daily_liters: number | null;
   last_collected_at: string | null;
   anomaly: boolean;
@@ -312,6 +336,9 @@ export interface AdminCollectorSummary {
   last_seen_at: string | null;
   ward: { id: string; code: string; name: string };
   user: { id: string; name: string | null; phone: string | null };
+  vehicle_type?: string | null;
+  max_capacity_l?: number;
+  ward_ids?: string[];
 }
 
 export interface AdminCollectorPerformance {

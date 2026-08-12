@@ -1,4 +1,5 @@
 import type { Role } from '@prisma/client';
+import type { MerchantApprovalStatus } from '@prisma/client';
 import type { Request } from 'express';
 
 export interface AccessTokenPayload {
@@ -20,4 +21,6 @@ export interface AuthUserResponse {
   role: Role;
   merchantId: string | null;
   collectorId: string | null;
+  merchantApprovalStatus: MerchantApprovalStatus | null;
+  merchantRejectionReason: string | null;
 }

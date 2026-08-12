@@ -1,5 +1,6 @@
 import {
   ContainerState,
+  MerchantApprovalStatus,
   PrismaClient,
   Role,
 } from '@prisma/client';
@@ -178,11 +179,13 @@ async function main(): Promise<void> {
       update: {
         userId: merchant.userId,
         wardId,
-        businessName: merchant.businessName,
+      businessName: merchant.businessName,
+      businessType: 'Quán ăn',
         address: merchant.address,
         avgDailyLiters: merchant.avgDailyLiters,
         lastCollectedAt: new Date(Date.now() - merchant.lastCollectedDaysAgo * 24 * 60 * 60 * 1000),
         status: 'ACTIVE',
+        approvalStatus: MerchantApprovalStatus.APPROVED,
         isActive: true,
         deletedAt: null,
       },
@@ -190,11 +193,13 @@ async function main(): Promise<void> {
         id: merchant.id,
         userId: merchant.userId,
         wardId,
-        businessName: merchant.businessName,
+      businessName: merchant.businessName,
+      businessType: 'Quán ăn',
         address: merchant.address,
         avgDailyLiters: merchant.avgDailyLiters,
         lastCollectedAt: new Date(Date.now() - merchant.lastCollectedDaysAgo * 24 * 60 * 60 * 1000),
         status: 'ACTIVE',
+        approvalStatus: MerchantApprovalStatus.APPROVED,
       },
     });
     await setGeography('merchants', merchant.id, merchant.lat, merchant.lng);
@@ -214,6 +219,7 @@ async function main(): Promise<void> {
         userId: collector.userId,
         wardId,
         displayName: collector.displayName,
+        vehicleType: 'Xe máy có thùng chứa',
         maxCapacityLiters: 100,
         status: 'ACTIVE',
         isActive: true,
@@ -224,9 +230,15 @@ async function main(): Promise<void> {
         userId: collector.userId,
         wardId,
         displayName: collector.displayName,
+        vehicleType: 'Xe máy có thùng chứa',
         maxCapacityLiters: 100,
         status: 'ACTIVE',
       },
+    });
+    await prisma.collectorWard.upsert({
+      where: { collectorId_wardId: { collectorId: collector.id, wardId } },
+      update: {},
+      create: { collectorId: collector.id, wardId },
     });
   }
 

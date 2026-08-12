@@ -1,5 +1,6 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { EntityStatus, MerchantApprovalStatus, Role } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import type {
   AdminCollectorListQueryInput,
@@ -8,6 +9,9 @@ import type {
   AdminOverviewQueryInput,
   AdminReconciliationQueryInput,
   AdminStationListQueryInput,
+  AdminCollectorCreateInput,
+  AdminCollectorPatchInput,
+  MerchantRejectInput,
 } from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -309,16 +313,23 @@ export class AdminService {
       lng: number | null;
       distance_m: number | null;
       status: string;
+      approval_status: string;
+      rejection_reason: string | null;
+      business_type: string | null;
+      phone: string | null;
       avg_daily_liters: number | null;
       last_collected_at: Date | null;
       anomaly: boolean;
       total: number;
     }>>`
-      SELECT m."id", m."business_name" AS name, m."address",
+      SELECT m."id", m."business_name" AS name, m."address", u."phone",
         ST_Y(m."location"::geometry)::float8 AS lat,
         ST_X(m."location"::geometry)::float8 AS lng,
         nearest.distance_m::float8 AS distance_m,
         m."status"::text AS status,
+        m."approval_status"::text AS approval_status,
+        m."rejection_reason",
+        m."business_type",
         m."avg_daily_liters"::float8 AS avg_daily_liters,
         m."last_collected_at",
         EXISTS (
@@ -327,6 +338,7 @@ export class AdminService {
         ) AS anomaly,
         COUNT(*) OVER()::int AS total
       FROM "merchants" m
+      JOIN "users" u ON u."id" = m."user_id"
       LEFT JOIN LATERAL (
         SELECT ST_Distance(m."location", s."location") AS distance_m
         FROM "stations" s
@@ -337,7 +349,7 @@ export class AdminService {
       ) nearest ON true
       WHERE m."deleted_at" IS NULL
         AND (${query.ward_id ?? null}::uuid IS NULL OR m."ward_id" = ${query.ward_id ?? null}::uuid)
-        AND (${query.status ?? null}::text IS NULL OR m."status"::text = ${query.status ?? null})
+        AND (${query.status ?? null}::text IS NULL OR m."approval_status"::text = ${query.status ?? null})
         AND (${query.include_inactive}::boolean OR m."status" = 'ACTIVE')
         AND (${query.search ?? null}::text IS NULL OR m."business_name" ILIKE '%' || ${query.search ?? null} || '%')
         AND (${query.anomaly ?? null}::boolean IS NULL OR EXISTS (
@@ -356,6 +368,10 @@ export class AdminService {
         lng: row.lng === null ? null : Number(row.lng),
         distance_m: row.distance_m === null ? null : Number(row.distance_m),
         status: row.status,
+        approval_status: row.approval_status as MerchantApprovalStatus,
+        rejection_reason: row.rejection_reason,
+        business_type: row.business_type,
+        phone: row.phone,
         avg_daily_liters: row.avg_daily_liters === null ? null : Number(row.avg_daily_liters),
         last_collected_at: row.last_collected_at,
         anomaly: row.anomaly,
@@ -388,6 +404,9 @@ export class AdminService {
         last_seen_at: row.lastSeenAt,
         ward: { id: row.ward.id, code: row.ward.code, name: row.ward.name },
         user: { id: row.user.id, name: row.user.name, phone: row.user.phone },
+        vehicle_type: row.vehicleType,
+        max_capacity_l: Number(row.maxCapacityLiters),
+        ward_ids: [],
       })),
       meta: { page: query.page, limit: query.limit, total },
     };
@@ -485,6 +504,104 @@ export class AdminService {
       last_collected_at: row.last_collected_at,
       flagged_count: Number(row.flagged_count),
     };
+  }
+
+  async approveMerchant(id: string, actorUserId: string) {
+    const merchant = await this.prisma.merchant.findUnique({ where: { id } });
+    if (!merchant) throw new NotFoundException('Merchant not found');
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.merchant.update({
+        where: { id },
+        data: { approvalStatus: MerchantApprovalStatus.APPROVED, rejectionReason: null },
+      });
+      await tx.auditLog.create({
+        data: { actorUserId, action: 'APPROVE_MERCHANT', entityType: 'Merchant', entityId: id, details: {} },
+      });
+      return row;
+    });
+    return this.merchantProfile(updated.id);
+  }
+
+  async rejectMerchant(id: string, actorUserId: string, input: MerchantRejectInput) {
+    const merchant = await this.prisma.merchant.findUnique({ where: { id } });
+    if (!merchant) throw new NotFoundException('Merchant not found');
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.merchant.update({
+        where: { id },
+        data: { approvalStatus: MerchantApprovalStatus.REJECTED, rejectionReason: input.reason },
+      });
+      await tx.auditLog.create({
+        data: { actorUserId, action: 'REJECT_MERCHANT', entityType: 'Merchant', entityId: id, details: { reason: input.reason } },
+      });
+      return row;
+    });
+    return this.merchantProfile(updated.id);
+  }
+
+  async createCollector(input: AdminCollectorCreateInput) {
+    const [existingZalo, existingPhone, wards] = await Promise.all([
+      this.prisma.user.findUnique({ where: { zaloId: input.zalo_id } }),
+      this.prisma.user.findUnique({ where: { phone: input.phone } }),
+      this.prisma.ward.findMany({ where: { id: { in: input.ward_ids }, deletedAt: null } }),
+    ]);
+    if (existingZalo || existingPhone) throw new ConflictException({ code: 'COLLECTOR_ALREADY_EXISTS', message: 'Tài khoản người thu gom đã tồn tại', details: null });
+    if (wards.length !== input.ward_ids.length) throw new NotFoundException('Ward not found');
+    const collector = await this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({ data: { zaloId: input.zalo_id, phone: input.phone, name: input.name, role: Role.COLLECTOR } });
+      const row = await tx.collector.create({
+        data: {
+          userId: user.id,
+          wardId: input.ward_ids[0],
+          displayName: input.name,
+          vehicleType: input.vehicle_type,
+          maxCapacityLiters: input.max_capacity_l,
+          collectorWards: { create: input.ward_ids.map((wardId) => ({ wardId })) },
+        },
+      });
+      return row;
+    });
+    return this.collectorProfile(collector.id);
+  }
+
+  async updateCollector(id: string, input: AdminCollectorPatchInput) {
+    const collector = await this.prisma.collector.findUnique({ where: { id } });
+    if (!collector) throw new NotFoundException('Collector not found');
+    if (input.ward_ids) {
+      const wards = await this.prisma.ward.findMany({ where: { id: { in: input.ward_ids }, deletedAt: null } });
+      if (wards.length !== input.ward_ids.length) throw new NotFoundException('Ward not found');
+    }
+    await this.prisma.$transaction(async (tx) => {
+      await tx.collector.update({
+        where: { id },
+        data: {
+          ...(input.name !== undefined ? { displayName: input.name } : {}),
+          ...(input.vehicle_type !== undefined ? { vehicleType: input.vehicle_type } : {}),
+          ...(input.max_capacity_l !== undefined ? { maxCapacityLiters: input.max_capacity_l } : {}),
+          ...(input.status !== undefined ? { status: input.status, isActive: input.status === EntityStatus.ACTIVE, deletedAt: input.status === EntityStatus.INACTIVE ? new Date() : null } : {}),
+          ...(input.ward_ids?.[0] ? { wardId: input.ward_ids[0] } : {}),
+        },
+      });
+      if (input.name !== undefined || input.phone !== undefined) {
+        await tx.user.update({ where: { id: collector.userId }, data: { ...(input.name !== undefined ? { name: input.name } : {}), ...(input.phone !== undefined ? { phone: input.phone } : {}) } });
+      }
+      if (input.ward_ids) {
+        await tx.collectorWard.createMany({ data: input.ward_ids.map((wardId) => ({ collectorId: id, wardId })), skipDuplicates: true });
+      }
+    });
+    return this.collectorProfile(id);
+  }
+
+  private async merchantProfile(id: string) {
+    const row = await this.prisma.merchant.findUnique({ where: { id }, include: { user: true, ward: true } });
+    if (!row) throw new NotFoundException('Merchant not found');
+    const point = await this.prisma.getGeographyPoint('merchants', id);
+    return { id: row.id, name: row.businessName, address: row.address, business_type: row.businessType, phone: row.user.phone, lat: point?.lat ?? null, lng: point?.lng ?? null, status: row.status, approval_status: row.approvalStatus, rejection_reason: row.rejectionReason, ward: { id: row.ward.id, code: row.ward.code, name: row.ward.name } };
+  }
+
+  private async collectorProfile(id: string) {
+    const row = await this.prisma.collector.findUnique({ where: { id }, include: { user: true, ward: true, collectorWards: true } });
+    if (!row) throw new NotFoundException('Collector not found');
+    return { id: row.id, display_name: row.displayName, vehicle_type: row.vehicleType, max_capacity_l: Number(row.maxCapacityLiters), status: row.status, is_active: row.isActive, ward: { id: row.ward.id, code: row.ward.code, name: row.ward.name }, ward_ids: row.collectorWards.map((item) => item.wardId), user: { id: row.user.id, name: row.user.name, phone: row.user.phone } };
   }
 
   private period(fromInput?: Date, toInput?: Date) {

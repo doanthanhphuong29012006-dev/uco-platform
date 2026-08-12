@@ -7,9 +7,14 @@ import { HistoryPage } from './pages/HistoryPage';
 import { OrdersPage } from './pages/OrdersPage';
 import { CollectorFlow } from './pages/CollectorFlow';
 import { StatusView } from './components/StatusView';
+import { MerchantApprovalView } from './components/MerchantApprovalView';
 import { startOutboxSyncWorker } from './lib/outbox-sync';
 
 type Tab = 'home' | 'history' | 'orders';
+
+function BrandHeader({ title }: { title: string }) {
+  return <header className="brand-header"><img src="/logo.svg" alt="Eco-Oil" /><strong>{title}</strong></header>;
+}
 
 export function App() {
   const user = useAuthStore((state) => state.user);
@@ -37,15 +42,20 @@ export function App() {
   }
 
   if (user.role === Role.COLLECTOR) {
-    return <div className="app-shell"><main className="main-area"><CollectorFlow /></main></div>;
+    return <div className="app-shell"><BrandHeader title="Tuyến hôm nay" /><main className="main-area"><CollectorFlow /></main></div>;
   }
 
   if (user.role !== Role.MERCHANT) {
     return <StatusView title="Vai trò chưa được hỗ trợ" message="Tài khoản này chưa có giao diện trong ứng dụng." action={{ label: 'Đăng xuất', onClick: signOut }} />;
   }
 
+  if (user.merchantApprovalStatus !== 'APPROVED') {
+    return <MerchantApprovalView user={user} />;
+  }
+
   return (
     <div className="app-shell">
+      <BrandHeader title={tab === 'home' ? 'Trang chủ' : tab === 'orders' ? 'Đơn của tôi' : 'Lịch sử'} />
       <main className="main-area">
         {tab === 'home' ? <HomePage /> : null}
         {tab === 'history' ? <HistoryPage /> : null}

@@ -108,6 +108,22 @@ select, input { width: 100%; min-height: 48px; border: 1px solid #cfe0d7; border
 .status-view p { max-width: 310px; color: var(--muted); line-height: 1.5; }
 .status-icon { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 19px; color: var(--green); background: var(--mint); font-size: 2rem; }
 .status-view button { padding: 0 18px; border: 0; border-radius: 12px; color: white; background: var(--green); font-weight: 700; }
+.login-logo, .approval-logo { display: block; object-fit: contain; }
+.brand-header { display: flex; align-items: center; gap: 9px; min-height: 52px; padding: 10px 18px; border-bottom: 1px solid var(--line); background: var(--cream); color: var(--green-dark); }
+.brand-header img { width: 28px; height: 28px; object-fit: contain; }
+.brand-header strong { font-size: .95rem; }
+.login-logo { width: 112px; height: 112px; margin: 0 auto 10px; }
+.approval-page { display: grid; place-items: center; min-height: 100vh; padding: 28px 22px; text-align: center; }
+.approval-page .approval-logo { width: 86px; height: 86px; margin-bottom: 18px; }
+.approval-page h1 { margin: 12px 0 8px; font-size: 1.45rem; }
+.approval-page > p { max-width: 360px; color: var(--muted); line-height: 1.55; }
+.approval-page .hotline { color: var(--green); font-weight: 800; }
+.approval-page .primary-button, .approval-page .secondary-button { width: min(360px, 100%); margin-top: 12px; }
+.approval-form { display: grid; gap: 11px; width: min(430px, 100%); margin-top: 15px; text-align: left; }
+.approval-form label { display: grid; gap: 6px; font-size: .82rem; font-weight: 750; }
+.approval-form input { width: 100%; min-height: 44px; border: 1px solid #cfe0d7; border-radius: 11px; padding: 0 12px; color: inherit; background: white; font: inherit; }
+.approval-form .primary-button { margin-top: 4px; }
+.notice-text { color: var(--green) !important; font-weight: 700; }
 
 .collector-content { background: #f5f8f6; min-height: 100vh; }
 .round-action { width: 46px; padding: 0; border: 1px solid var(--line); border-radius: 50%; color: var(--green); background: white; font-size: 1.35rem; }

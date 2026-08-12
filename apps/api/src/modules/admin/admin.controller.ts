@@ -1,4 +1,4 @@
-import { Controller, Get, Inject, Param, Patch, Query } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Param, Patch, Post, Query } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import {
   adminAlertListQuerySchema,
@@ -7,6 +7,9 @@ import {
   adminOverviewQuerySchema,
   adminReconciliationQuerySchema,
   adminStationListQuerySchema,
+  adminCollectorCreateSchema,
+  adminCollectorPatchSchema,
+  merchantRejectSchema,
 } from '@eco-oil/validation';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -48,9 +51,33 @@ export class AdminController {
   }
 
   @Roles(Role.ADMIN)
+  @Post('merchants/:id/approve')
+  approveMerchant(@Param('id') id: string, @CurrentUser() user: AccessTokenPayload) {
+    return this.service.approveMerchant(id, user.sub);
+  }
+
+  @Roles(Role.ADMIN)
+  @Post('merchants/:id/reject')
+  rejectMerchant(@Param('id') id: string, @CurrentUser() user: AccessTokenPayload, @Body() body: unknown) {
+    return this.service.rejectMerchant(id, user.sub, merchantRejectSchema.parse(body));
+  }
+
+  @Roles(Role.ADMIN)
   @Get('collectors')
   collectors(@Query() query: Record<string, unknown>) {
     return this.service.listCollectors(adminCollectorListQuerySchema.parse(query));
+  }
+
+  @Roles(Role.ADMIN)
+  @Post('collectors')
+  createCollector(@Body() body: unknown) {
+    return this.service.createCollector(adminCollectorCreateSchema.parse(body));
+  }
+
+  @Roles(Role.ADMIN)
+  @Patch('collectors/:id')
+  updateCollector(@Param('id') id: string, @Body() body: unknown) {
+    return this.service.updateCollector(id, adminCollectorPatchSchema.parse(body));
   }
 
   @Roles(Role.ADMIN)

@@ -1,5 +1,5 @@
 import { ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
-import { ContainerState, EntityStatus, OrderStatus, OrderSource } from '@prisma/client';
+import { ContainerState, EntityStatus, MerchantApprovalStatus, OrderStatus, OrderSource } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import type { OrderListQueryInput, OrderReadyInput, RouteQueryInput } from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -16,6 +16,13 @@ export class OrdersService {
     const merchant = await this.prisma.merchant.findUnique({ where: { userId: user.sub } });
     if (!merchant || merchant.status === EntityStatus.INACTIVE) {
       throw new NotFoundException('Merchant profile not found');
+    }
+    if (merchant.approvalStatus !== MerchantApprovalStatus.APPROVED) {
+      throw new ForbiddenException({
+        code: 'MERCHANT_NOT_APPROVED',
+        message: 'Tài khoản quán chưa được duyệt',
+        details: { approval_status: merchant.approvalStatus },
+      });
     }
 
     const container = input.container_id
@@ -69,6 +76,7 @@ export class OrdersService {
 
   async listMine(user: AccessTokenPayload, query: OrderListQueryInput) {
     const merchant = await this.requireMerchant(user.sub);
+    this.ensureApproved(merchant.approvalStatus);
     const where: Prisma.CollectionOrderWhereInput = {
       merchantId: merchant.id,
       deletedAt: null,
@@ -89,6 +97,7 @@ export class OrdersService {
 
   async cancel(user: AccessTokenPayload, id: string) {
     const merchant = await this.requireMerchant(user.sub);
+    this.ensureApproved(merchant.approvalStatus);
     const order = await this.prisma.collectionOrder.findUnique({ where: { id }, include: { container: true } });
     if (!order) {
       throw new NotFoundException('Order not found');
@@ -151,6 +160,16 @@ export class OrdersService {
       throw new NotFoundException('Merchant profile not found');
     }
     return merchant;
+  }
+
+  private ensureApproved(status: MerchantApprovalStatus): void {
+    if (status !== MerchantApprovalStatus.APPROVED) {
+      throw new ForbiddenException({
+        code: 'MERCHANT_NOT_APPROVED',
+        message: 'Tài khoản quán chưa được duyệt',
+        details: { approval_status: status },
+      });
+    }
   }
 
   private serialize(row: {

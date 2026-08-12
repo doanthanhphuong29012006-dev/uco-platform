@@ -45,8 +45,12 @@ export const api = {
     client.request<PagedResponse<AdminAlert>>(`/admin/alerts${query(params)}`),
   resolveAlert: (id: string) => client.request<AdminAlert>(`/admin/alerts/${id}/resolve`, { method: 'PATCH' }),
   stations: () => client.request<PagedResponse<AdminStationSummary>>('/admin/stations?page=1&limit=100'),
-  merchants: (params: { search?: string; anomaly?: boolean }) =>
+  merchants: (params: { search?: string; anomaly?: boolean; status?: string }) =>
     client.request<PagedResponse<AdminMerchantSummary>>(`/admin/merchants${query({ page: 1, limit: 100, ...params })}`),
   collectors: () => client.request<PagedResponse<AdminCollectorSummary>>('/admin/collectors?page=1&limit=100'),
   collectorPerformance: (id: string) => client.request<AdminCollectorPerformance>(`/admin/collectors/${id}/performance`),
+  approveMerchant: (id: string) => client.request(`/admin/merchants/${id}/approve`, { method: 'POST' }),
+  rejectMerchant: (id: string, reason: string) => client.request(`/admin/merchants/${id}/reject`, { method: 'POST', body: { reason } }),
+  createCollector: (body: { name: string; phone: string; zalo_id: string; vehicle_type: string; max_capacity_l: number; ward_ids: string[] }) => client.request('/admin/collectors', { method: 'POST', body }),
+  updateCollector: (id: string, body: Record<string, unknown>) => client.request(`/admin/collectors/${id}`, { method: 'PATCH', body }),
 };

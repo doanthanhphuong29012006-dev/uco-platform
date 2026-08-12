@@ -19,6 +19,12 @@ enum EntityStatus {
   INACTIVE
 }
 
+enum MerchantApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 enum ContainerState {
   AT_MERCHANT
   IN_TRANSIT
@@ -90,6 +96,7 @@ model Ward {
   merchants  Merchant[]
   collectors Collector[]
   stations   Station[]
+  collectorWards CollectorWard[]
 
   @@map("wards")
 }
@@ -99,11 +106,14 @@ model Merchant {
   userId       String       @unique @map("user_id") @db.Uuid
   wardId       String       @map("ward_id") @db.Uuid
   businessName String       @map("business_name")
+  businessType String?      @map("business_type")
   address      String?
   avgDailyLiters Decimal?   @map("avg_daily_liters") @db.Decimal(10, 2)
   lastCollectedAt DateTime? @map("last_collected_at")
   location     Unsupported("geography(Point, 4326)")?
   status       EntityStatus @default(ACTIVE)
+  approvalStatus MerchantApprovalStatus @default(PENDING) @map("approval_status")
+  rejectionReason String? @map("rejection_reason")
   isActive     Boolean      @default(true) @map("is_active")
   createdAt    DateTime     @default(now()) @map("created_at")
   updatedAt    DateTime     @updatedAt @map("updated_at")
@@ -123,6 +133,7 @@ model Collector {
   userId       String                  @unique @map("user_id") @db.Uuid
   wardId       String                  @map("ward_id") @db.Uuid
   displayName  String                  @map("display_name")
+  vehicleType  String?                 @map("vehicle_type")
   maxCapacityLiters Decimal             @default(100) @map("max_capacity_l") @db.Decimal(10, 2)
   status       EntityStatus            @default(ACTIVE)
   isActive     Boolean                 @default(true) @map("is_active")
@@ -135,9 +146,23 @@ model Collector {
   orders       CollectionOrder[]
   transactions CollectionTransaction[]
   deliveries   StationDelivery[]
+  collectorWards CollectorWard[]
 
   @@index([wardId, isActive])
   @@map("collectors")
+}
+
+model CollectorWard {
+  id          String    @id @default(uuid()) @db.Uuid
+  collectorId String    @map("collector_id") @db.Uuid
+  wardId      String    @map("ward_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at")
+  collector   Collector @relation(fields: [collectorId], references: [id])
+  ward        Ward      @relation(fields: [wardId], references: [id])
+
+  @@unique([collectorId, wardId])
+  @@index([wardId])
+  @@map("collector_wards")
 }
 
 model Station {

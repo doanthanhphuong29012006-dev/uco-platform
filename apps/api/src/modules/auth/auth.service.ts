@@ -16,7 +16,7 @@ import type { IZaloAuthProvider } from './providers/zalo-auth.provider';
 
 type UserWithProfiles = Prisma.UserGetPayload<{
   include: {
-    merchant: { select: { id: true } };
+    merchant: { select: { id: true; approvalStatus: true; rejectionReason: true } };
     collector: { select: { id: true } };
     station: { select: { id: true } };
   };
@@ -156,7 +156,7 @@ export class AuthService {
     return this.prisma.user.findUnique({
       where: { id: userId },
       include: {
-        merchant: { select: { id: true } },
+        merchant: { select: { id: true, approvalStatus: true, rejectionReason: true } },
         collector: { select: { id: true } },
         station: { select: { id: true } },
       },
@@ -181,6 +181,8 @@ export class AuthService {
       role: user.role,
       merchantId: user.merchant?.id ?? null,
       collectorId: user.collector?.id ?? null,
+      merchantApprovalStatus: user.merchant?.approvalStatus ?? null,
+      merchantRejectionReason: user.merchant?.rejectionReason ?? null,
     };
   }
 

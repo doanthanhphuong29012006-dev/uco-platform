@@ -5,10 +5,11 @@ import {
   entityStatusSchema,
   merchantListQuerySchema,
   merchantPatchSchema,
-  merchantRegisterSchema,
+  merchantPublicRegisterSchema,
 } from '@eco-oil/validation';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { Public } from '../auth/decorators/public.decorator';
 import type { AccessTokenPayload } from '../auth/auth.types';
 import { MerchantsService } from './merchants.service';
 
@@ -16,10 +17,10 @@ import { MerchantsService } from './merchants.service';
 export class MerchantsController {
   constructor(@Inject(MerchantsService) private readonly service: MerchantsService) {}
 
-  @Roles(Role.MERCHANT)
+  @Public()
   @Post('register')
-  register(@CurrentUser() user: AccessTokenPayload, @Body() body: unknown) {
-    return this.service.register(user, merchantRegisterSchema.parse(body));
+  register(@Body() body: unknown) {
+    return this.service.registerPublic(merchantPublicRegisterSchema.parse(body));
   }
 
   @Roles(Role.MERCHANT, Role.ADMIN)

@@ -1,11 +1,12 @@
 import { ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma} from '@prisma/client';
-import { EntityStatus, OrderStatus, Role } from '@prisma/client';
+import { EntityStatus, MerchantApprovalStatus, OrderStatus, Role } from '@prisma/client';
 import type {
   CollectionListQueryInput,
   MerchantListQueryInput,
   MerchantPatchInput,
   MerchantRegisterInput,
+  MerchantPublicRegisterInput,
   EntityStatusInput,
 } from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -28,11 +29,47 @@ export class MerchantsService {
         businessName: input.name,
         address: input.address,
         avgDailyLiters: input.avg_daily_liters,
+        businessType: input.business_type,
       },
       include: { user: true, ward: true },
     });
     await this.prisma.setGeographyPoint('merchants', merchant.id, input.lat, input.lng);
     return this.findOne(merchant.id);
+  }
+
+  async registerPublic(input: MerchantPublicRegisterInput) {
+    const existingUser = await this.prisma.user.findUnique({ where: { zaloId: input.zalo_id } });
+    if (existingUser) {
+      throw new ConflictException({
+        code: 'MERCHANT_ALREADY_REGISTERED',
+        message: 'Tài khoản Zalo này đã đăng ký quán',
+        details: { zalo_id: input.zalo_id },
+      });
+    }
+    await this.requireWard(input.ward_id);
+    const merchant = await this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: { zaloId: input.zalo_id, phone: input.phone, name: input.name, role: Role.MERCHANT },
+      });
+      const created = await tx.merchant.create({
+        data: {
+          userId: user.id,
+          wardId: input.ward_id,
+          businessName: input.name,
+          businessType: input.business_type,
+          address: input.address,
+          avgDailyLiters: input.avg_daily_liters,
+          approvalStatus: MerchantApprovalStatus.PENDING,
+        },
+      });
+      await tx.$executeRaw`
+        UPDATE "merchants"
+        SET "location" = ST_SetSRID(ST_MakePoint(${input.lng}, ${input.lat}), 4326)::geography
+        WHERE "id" = ${created.id}::uuid
+      `;
+      return created;
+    });
+    return { status: MerchantApprovalStatus.PENDING, merchant: await this.findOne(merchant.id) };
   }
 
   async me(user: AccessTokenPayload) {
@@ -48,6 +85,7 @@ export class MerchantsService {
     if (!merchant || merchant.status === EntityStatus.INACTIVE) {
       throw new NotFoundException('Merchant profile not found');
     }
+    this.ensureApproved(merchant.approvalStatus);
     const monthStart = new Date();
     monthStart.setUTCDate(1);
     monthStart.setUTCHours(0, 0, 0, 0);
@@ -92,6 +130,7 @@ export class MerchantsService {
     if (!merchant || merchant.status === EntityStatus.INACTIVE) {
       throw new NotFoundException('Merchant profile not found');
     }
+    this.ensureApproved(merchant.approvalStatus);
     const from = query.from ?? null;
     const to = query.to ?? null;
     const [rows, countRows] = await Promise.all([
@@ -145,7 +184,7 @@ export class MerchantsService {
 
   async update(user: AccessTokenPayload, id: string, input: MerchantPatchInput) {
     await this.assertOwnerOrAdmin(user, id);
-    await this.getRequired(id);
+    const existing = await this.getRequired(id);
     if (input.ward_id) {
       await this.requireWard(input.ward_id);
     }
@@ -156,8 +195,15 @@ export class MerchantsService {
         ...(input.address !== undefined ? { address: input.address } : {}),
         ...(input.ward_id !== undefined ? { wardId: input.ward_id } : {}),
         ...(input.avg_daily_liters !== undefined ? { avgDailyLiters: input.avg_daily_liters } : {}),
+        ...(input.business_type !== undefined ? { businessType: input.business_type } : {}),
+        ...(existing.approvalStatus === MerchantApprovalStatus.REJECTED
+          ? { approvalStatus: MerchantApprovalStatus.PENDING, rejectionReason: null }
+          : {}),
       },
     });
+    if (input.phone !== undefined) {
+      await this.prisma.user.update({ where: { id: existing.userId }, data: { phone: input.phone } });
+    }
     if (input.lat !== undefined && input.lng !== undefined) {
       await this.prisma.setGeographyPoint('merchants', id, input.lat, input.lng);
     }
@@ -236,12 +282,25 @@ export class MerchantsService {
       name: row.businessName,
       address: row.address,
       avg_daily_liters: row.avgDailyLiters === null ? null : Number(row.avgDailyLiters),
+      business_type: row.businessType,
       lat: point?.lat ?? null,
       lng: point?.lng ?? null,
       status: row.status,
+      approval_status: row.approvalStatus,
+      rejection_reason: row.rejectionReason,
       is_active: row.isActive,
       ward: { id: row.ward.id, code: row.ward.code, name: row.ward.name },
       user: { id: row.user.id, name: row.user.name, phone: row.user.phone },
     };
+  }
+
+  private ensureApproved(status: MerchantApprovalStatus): void {
+    if (status !== MerchantApprovalStatus.APPROVED) {
+      throw new ForbiddenException({
+        code: 'MERCHANT_NOT_APPROVED',
+        message: 'Tài khoản quán chưa được duyệt',
+        details: { approval_status: status },
+      });
+    }
   }
 }

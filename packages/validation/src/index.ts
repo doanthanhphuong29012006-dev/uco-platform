@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { AlertType, ContainerState, EntityStatus, OrderStatus, Quality } from '@eco-oil/shared-types';
+import { AlertType, ContainerState, EntityStatus, MerchantApprovalStatus, OrderStatus, Quality } from '@eco-oil/shared-types';
 
 export const uuidSchema = z.string().uuid();
 export const phoneSchema = z.string().min(8).max(20);
@@ -21,14 +21,24 @@ export type RefreshTokenInput = z.infer<typeof refreshTokenSchema>;
 const coordinateSchema = z.number().finite();
 
 export const merchantRegisterSchema = z.object({
+  zalo_id: z.string().trim().min(1).max(120).optional(),
   name: z.string().trim().min(1).max(200),
   address: z.string().trim().min(1).max(500),
+  phone: phoneSchema.optional(),
+  business_type: z.string().trim().min(1).max(120).optional(),
   lat: coordinateSchema.min(-90).max(90),
   lng: coordinateSchema.min(-180).max(180),
   ward_id: uuidSchema,
   avg_daily_liters: z.number().finite().nonnegative().max(100000).optional(),
 });
 export type MerchantRegisterInput = z.infer<typeof merchantRegisterSchema>;
+
+export const merchantPublicRegisterSchema = merchantRegisterSchema.extend({
+  zalo_id: z.string().trim().min(1).max(120),
+  phone: phoneSchema,
+  business_type: z.string().trim().min(1).max(120),
+});
+export type MerchantPublicRegisterInput = z.infer<typeof merchantPublicRegisterSchema>;
 
 export const merchantPatchSchema = merchantRegisterSchema.partial().superRefine((value, context) => {
   if (value.lat !== undefined && value.lng === undefined) {
@@ -212,10 +222,31 @@ export const adminAlertListQuerySchema = paginationSchema.extend({
 export type AdminAlertListQueryInput = z.infer<typeof adminAlertListQuerySchema>;
 
 export const adminMerchantListQuerySchema = merchantListQuerySchema.extend({
+  status: z.nativeEnum(MerchantApprovalStatus).optional(),
   search: z.string().trim().max(120).optional(),
   anomaly: z.coerce.boolean().optional(),
 });
 export type AdminMerchantListQueryInput = z.infer<typeof adminMerchantListQuerySchema>;
+
+export const adminCollectorCreateSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  phone: phoneSchema,
+  zalo_id: z.string().trim().min(1).max(120),
+  vehicle_type: z.string().trim().min(1).max(120),
+  max_capacity_l: z.number().finite().positive().max(100000),
+  ward_ids: z.array(uuidSchema).min(1).max(50),
+});
+export type AdminCollectorCreateInput = z.infer<typeof adminCollectorCreateSchema>;
+
+export const adminCollectorPatchSchema = adminCollectorCreateSchema.partial().extend({
+  status: z.nativeEnum(EntityStatus).optional(),
+});
+export type AdminCollectorPatchInput = z.infer<typeof adminCollectorPatchSchema>;
+
+export const merchantRejectSchema = z.object({
+  reason: z.string().trim().min(1).max(1000),
+});
+export type MerchantRejectInput = z.infer<typeof merchantRejectSchema>;
 
 export const adminCollectorListQuerySchema = personListQuerySchema;
 export type AdminCollectorListQueryInput = z.infer<typeof adminCollectorListQuerySchema>;

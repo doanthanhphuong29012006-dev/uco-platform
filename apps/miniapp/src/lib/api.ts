@@ -9,6 +9,7 @@ import type {
   GeoPoint,
   MerchantDashboardResponse,
   MerchantTransaction,
+  MerchantRegistrationRequest,
   PagedResponse,
   SyncBatchResponse,
   StationDeliveryCreateRequest,
@@ -125,6 +126,10 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 }
 
 export const api = {
+  registerMerchant: (payload: MerchantRegistrationRequest) =>
+    request<{ status: string; merchant: unknown }>('/merchants/register', { method: 'POST', body: payload, retry: false }),
+  updateMerchant: (id: string, payload: Partial<MerchantRegistrationRequest>) =>
+    request<unknown>(`/merchants/${id}`, { method: 'PATCH', body: payload }),
   loginSeed: (zaloId: string, phone: string) =>
     request<{ access_token: string; refresh_token: string; user: AuthUser }>('/auth/zalo', {
       method: 'POST',
