@@ -10,6 +10,7 @@ import { useOnlineStatus, useOutboxRows, useOutboxStats } from '../lib/outbox-ho
 import { loadRouteWithCache, lookupContainerWithCache, prefetchRouteData, type RouteLoadResult } from '../lib/offline-cache';
 import { enqueueCollection } from '../lib/outbox-db';
 import { startOutboxSyncWorker, syncOutbox } from '../lib/outbox-sync';
+import { submitContainerCode } from '../lib/container-code';
 import { zaloClient, WARD_CENTER } from '../lib/zalo-client';
 import type { PhotoAsset } from '../lib/zalo-client';
 import { StatusView } from '../components/StatusView';
@@ -18,7 +19,7 @@ import { StationDeliveryFlow } from './StationDeliveryFlow';
 type CollectorScreen =
   | { name: 'route' }
   | { name: 'qr'; stop: RouteStop }
-  | { name: 'entry'; stop: RouteStop; container: ContainerLookupResponse }
+  | { name: 'entry'; stop: RouteStop; container: ContainerLookupResponse; containerCode: string }
   | { name: 'summary' }
   | { name: 'station-delivery' }
   | { name: 'outbox' };
@@ -94,12 +95,13 @@ export function CollectorFlow() {
   if (screen.name === 'outbox') {
     content = <OutboxQueueScreen onBack={() => setScreen({ name: 'route' })} />;
   } else if (screen.name === 'qr') {
-    content = <CollectorQrScreen stop={screen.stop} onBack={() => setScreen({ name: 'route' })} onContinue={(container) => setScreen({ name: 'entry', stop: screen.stop, container })} />;
+     content = <CollectorQrScreen stop={screen.stop} onBack={() => setScreen({ name: 'route' })} onContinue={(container, containerCode) => setScreen({ name: 'entry', stop: screen.stop, container, containerCode })} />;
   } else if (screen.name === 'entry') {
     content = (
       <CollectorEntryScreen
         stop={screen.stop}
         container={screen.container}
+        containerCode={screen.containerCode}
         onBack={() => setScreen({ name: 'qr', stop: screen.stop })}
         onSuccess={(liters, clientUuid) => onCollectionSaved(screen.stop, liters, clientUuid)}
       />
@@ -222,8 +224,8 @@ function CollectorStopCard({ stop, outboxRow, onOpenQr }: { stop: RouteStop; out
   );
 }
 
-function CollectorQrScreen({ stop, onBack, onContinue }: { stop: RouteStop; onBack: () => void; onContinue: (container: ContainerLookupResponse) => void }) {
-  const [code, setCode] = useState('');
+function CollectorQrScreen({ stop, onBack, onContinue }: { stop: RouteStop; onBack: () => void; onContinue: (container: ContainerLookupResponse, containerCode: string) => void }) {
+  const [code, setCode] = useState(stop.container_code);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mismatch, setMismatch] = useState(false);
@@ -231,41 +233,44 @@ function CollectorQrScreen({ stop, onBack, onContinue }: { stop: RouteStop; onBa
   const [cachedAt, setCachedAt] = useState<string | null>(null);
 
   async function lookup(inputCode: string): Promise<void> {
-    const normalized = inputCode.trim();
-    if (!normalized) {
-      setError('Vui lòng nhập mã can.');
-      return;
-    }
-    setBusy(true);
-    setError(null);
     setMismatch(false);
     setContainer(null);
-    try {
-      const found = await lookupContainerWithCache(normalized);
-      if (found.container.qr_code !== stop.container_code) {
-        setMismatch(true);
-        return;
-      }
-      setCachedAt(found.cachedAt);
-      setContainer(found.container);
-    } catch (requestError) {
-      setError(requestError instanceof ApiError && requestError.code === 'NOT_FOUND' ? 'Không tìm thấy can này.' : 'Chưa tra được mã can, thử lại nhé.');
-    } finally {
-      setBusy(false);
-    }
+    setCachedAt(null);
+    await submitContainerCode(
+      inputCode,
+      lookupContainerWithCache,
+      {
+        setBusy,
+        setError,
+        onResolved: (found, normalized) => {
+          setCode(normalized);
+          if (found.container.qr_code !== stop.container_code) {
+            setMismatch(true);
+            return;
+          }
+          setCachedAt(found.cachedAt);
+          setContainer(found.container);
+        },
+      },
+      (requestError) => requestError instanceof ApiError && requestError.code === 'NOT_FOUND' ? 'Không tìm thấy can này.' : 'Chưa tra được mã can, thử lại nhé.',
+    );
   }
 
   async function scan(): Promise<void> {
     setBusy(true);
     setError(null);
-    try {
-      const scannedCode = await zaloClient.scanQRCode();
-      setCode(scannedCode);
-      await lookup(scannedCode);
-    } catch {
-      setError('Không quét được mã. Bạn có thể nhập tay mã can.');
-      setBusy(false);
-    }
+      try {
+        const scannedCode = await zaloClient.scanQRCode();
+        if (!scannedCode.trim()) {
+          setError('Chưa quét được mã can. Bạn có thể nhập tay mã can bên dưới.');
+          return;
+        }
+        await lookup(scannedCode);
+      } catch {
+        setError('Không quét được mã. Bạn có thể nhập tay mã can.');
+      } finally {
+        setBusy(false);
+      }
   }
 
   return (
@@ -274,14 +279,12 @@ function CollectorQrScreen({ stop, onBack, onContinue }: { stop: RouteStop; onBa
       <header className="collector-screen-heading"><p className="eyebrow">ĐIỂM {stop.seq}</p><h1>Quét mã can</h1><p>{stop.merchant.name}</p></header>
       <section className="qr-target-card"><span>Can cần thu</span><strong>{stop.container_code}</strong><small>{stop.merchant.address ?? ''}</small></section>
       <button className="scan-button" onClick={() => { void scan(); }} disabled={busy}>▣ {busy ? 'Đang kiểm tra…' : 'Quét QR bằng camera'}</button>
-      {import.meta.env.DEV ? (
-        <section className="manual-qr-card">
-          <p className="section-label">Môi trường phát triển</p>
-          <label htmlFor="manual-qr">Nhập tay mã can</label>
-          <input id="manual-qr" value={code} onChange={(event) => setCode(event.target.value)} placeholder="ECO-UCO-Q3P7-001" />
-          <button className="secondary-button" onClick={() => { void lookup(code); }} disabled={busy}>Tra mã can</button>
-        </section>
-      ) : null}
+      <section className="manual-qr-card">
+        <p className="section-label">Nhập mã can</p>
+        <label htmlFor="manual-qr">Bạn có thể nhập hoặc sửa mã can</label>
+        <input id="manual-qr" value={code} onChange={(event) => setCode(event.target.value)} placeholder="ECO-UCO-Q3P7-001" />
+        <button className="secondary-button" onClick={() => { void lookup(code); }} disabled={busy}>Kiểm tra mã can</button>
+      </section>
       {error ? <div className="error-panel">{error}</div> : null}
       {mismatch ? <div className="warning-panel"><strong>Đây không phải can của điểm này</strong><span>Kiểm tra lại mã QR. Không thể ghi nhận nhầm can.</span></div> : null}
       {container ? (
@@ -290,14 +293,14 @@ function CollectorQrScreen({ stop, onBack, onContinue }: { stop: RouteStop; onBa
           {cachedAt ? <p className="offline-cache-note">Dữ liệu lúc {formatTime(cachedAt)}</p> : null}
           <h2>{container.merchant.name}</h2>
           <p>{container.qr_code} · {formatLiters(container.capacity_liters)} · {container.state === ContainerState.AT_MERCHANT ? 'Đang ở quán' : container.state}</p>
-          <button className="primary-button" onClick={() => onContinue(container)}>Tiếp tục nhập giao dịch</button>
+          <button className="primary-button" onClick={() => onContinue(container, code.trim())}>Tiếp tục nhập giao dịch</button>
         </section>
       ) : null}
     </div>
   );
 }
 
-function CollectorEntryScreen({ stop, container, onBack, onSuccess }: { stop: RouteStop; container: ContainerLookupResponse; onBack: () => void; onSuccess: (liters: number, clientUuid: string) => void }) {
+function CollectorEntryScreen({ stop, container, containerCode, onBack, onSuccess }: { stop: RouteStop; container: ContainerLookupResponse; containerCode: string; onBack: () => void; onSuccess: (liters: number, clientUuid: string) => void }) {
   const [liters, setLiters] = useState('');
   const [quality, setQuality] = useState<Quality>(Quality.PASS);
   const [photos, setPhotos] = useState<PhotoAsset[]>([]);
@@ -356,7 +359,7 @@ function CollectorEntryScreen({ stop, container, onBack, onSuccess }: { stop: Ro
     const payload: CollectionCreateRequest = {
       client_uuid: clientUuid,
       order_id: stop.order_id,
-      container_code: stop.container_code,
+       container_code: containerCode,
       actual_liters: actualLiters,
       quality,
       geo: currentGeo,
@@ -382,7 +385,7 @@ function CollectorEntryScreen({ stop, container, onBack, onSuccess }: { stop: Ro
   return (
     <div className="page-content collector-content">
       <button className="back-button" onClick={onBack} disabled={saving}>← Quay lại quét mã</button>
-      <header className="collector-screen-heading"><p className="eyebrow">GHI NHẬN THU GOM</p><h1>{container.merchant.name}</h1><p>{container.qr_code}</p></header>
+       <header className="collector-screen-heading"><p className="eyebrow">GHI NHẬN THU GOM</p><h1>{container.merchant.name}</h1><p>{containerCode}</p></header>
       <section className="entry-target-card"><span>Số lít dự kiến</span><strong>{formatLiters(stop.expected_liters)}</strong><small>Mã giao dịch: {clientUuid.slice(0, 8)}…</small></section>
       <section className="liter-entry-card">
         <label htmlFor="actual-liters">Số lít thực tế</label>
