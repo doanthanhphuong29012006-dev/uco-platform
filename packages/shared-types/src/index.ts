@@ -44,6 +44,12 @@ export enum DeliveryStatus {
   FLAGGED = 'FLAGGED',
 }
 
+export enum PaymentStatus {
+  PENDING = 'PENDING',
+  PAID = 'PAID',
+  CANCELLED = 'CANCELLED',
+}
+
 export enum AlertType {
   GEO_MISMATCH = 'GEO_MISMATCH',
   DELIVERY_VARIANCE = 'DELIVERY_VARIANCE',
@@ -121,6 +127,40 @@ export interface MerchantDashboardResponse {
   pending_orders: number;
   liters_this_month: number;
   last_collected_at: string | null;
+}
+
+export interface PaymentRecord {
+  id: string;
+  merchant_id: string;
+  merchant_name: string;
+  transaction_id: string;
+  liters: number;
+  unit_price: number;
+  amount: number;
+  period: string;
+  status: PaymentStatus;
+  paid_at: string | null;
+  created_at: string;
+  collected_at: string;
+}
+
+export interface PaymentListResponse extends PagedResponse<PaymentRecord> {
+  totals: { liters: number; amount: number };
+}
+
+export interface PaymentRunResponse {
+  created: number;
+  skipped: number;
+  total_amount: number;
+}
+
+export interface OilPriceRecord {
+  id: string;
+  unit_price: number;
+  effective_from: string;
+  effective_to: string | null;
+  note: string | null;
+  created_at: string;
 }
 
 export interface MerchantTransaction {

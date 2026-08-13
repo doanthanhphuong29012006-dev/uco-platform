@@ -24,3 +24,14 @@ export function formatDate(value: string | null): string {
 export function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
+
+export function currentPaymentPeriod(now = new Date()): string {
+  const vietnamTime = new Date(now.getTime() + 7 * 60 * 60 * 1000);
+  const day = new Date(Date.UTC(vietnamTime.getUTCFullYear(), vietnamTime.getUTCMonth(), vietnamTime.getUTCDate()));
+  const isoDay = day.getUTCDay() || 7;
+  day.setUTCDate(day.getUTCDate() + 4 - isoDay);
+  const year = day.getUTCFullYear();
+  const yearStart = new Date(Date.UTC(year, 0, 1));
+  const week = Math.ceil((((day.getTime() - yearStart.getTime()) / 86_400_000) + 1) / 7);
+  return `${year}-W${String(week).padStart(2, '0')}`;
+}

@@ -13,6 +13,7 @@ import { RedisModule } from './redis/redis.module';
 import { StationDeliveriesModule } from './modules/station-deliveries/station-deliveries.module';
 import { SyncModule } from './modules/sync/sync.module';
 import { AdminModule } from './modules/admin/admin.module';
+import { PaymentsModule } from './modules/payments/payments.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { AdminModule } from './modules/admin/admin.module';
     StationDeliveriesModule,
     SyncModule,
     AdminModule,
+    PaymentsModule,
     HealthModule,
   ],
 })

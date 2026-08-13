@@ -13,6 +13,7 @@ import type {
   MerchantTransaction,
   MerchantRegistrationRequest,
   PagedResponse,
+  PaymentListResponse,
   SyncBatchResponse,
   StationDeliveryCreateRequest,
   StationDeliveryResponse,
@@ -154,8 +155,17 @@ export const api = {
       method: 'POST',
       body: expectedLiters === undefined ? {} : { expected_liters: expectedLiters },
     }),
-  transactions: (page: number, limit = 10) =>
-    request<PagedResponse<MerchantTransaction>>(`/merchants/me/transactions?page=${page}&limit=${limit}`),
+  transactions: (page: number, limit = 10, from?: string, to?: string) => {
+    const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    return request<PagedResponse<MerchantTransaction>>(`/merchants/me/transactions?${params.toString()}`);
+  },
+  payments: (period?: string, page = 1, limit = 50) => {
+    const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+    if (period) params.set('period', period);
+    return request<PaymentListResponse>(`/merchants/me/payments?${params.toString()}`);
+  },
   orders: () => request<PagedResponse<CollectionOrderResponse>>('/orders/me?page=1&limit=50'),
   cancelOrder: (orderId: string) => request<CollectionOrderResponse>(`/orders/${orderId}/cancel`, { method: 'POST' }),
   currentRoute: (location?: GeoPoint) => {

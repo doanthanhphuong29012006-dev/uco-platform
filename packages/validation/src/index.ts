@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { AlertType, ContainerState, EntityStatus, MerchantApprovalStatus, OrderStatus, Quality } from '@eco-oil/shared-types';
+import { AlertType, ContainerState, EntityStatus, MerchantApprovalStatus, OrderStatus, PaymentStatus, Quality } from '@eco-oil/shared-types';
 
 export const uuidSchema = z.string().uuid();
 export const phoneSchema = z.string().min(8).max(20);
@@ -78,6 +78,33 @@ export const paginationSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
   include_inactive: z.coerce.boolean().default(false),
 });
+
+export const paymentPeriodSchema = z.string().regex(/^\d{4}-W\d{2}$/, 'Kỳ thanh toán phải có dạng YYYY-Www');
+
+export const paymentRunQuerySchema = z.object({
+  period: paymentPeriodSchema,
+});
+export type PaymentRunQueryInput = z.infer<typeof paymentRunQuerySchema>;
+
+export const adminPaymentListQuerySchema = paginationSchema.extend({
+  period: paymentPeriodSchema.optional(),
+  merchant_id: uuidSchema.optional(),
+  status: z.nativeEnum(PaymentStatus).optional(),
+});
+export type AdminPaymentListQueryInput = z.infer<typeof adminPaymentListQuerySchema>;
+
+export const merchantPaymentListQuerySchema = paginationSchema.extend({
+  period: paymentPeriodSchema.optional(),
+  status: z.nativeEnum(PaymentStatus).optional(),
+});
+export type MerchantPaymentListQueryInput = z.infer<typeof merchantPaymentListQuerySchema>;
+
+export const oilPriceCreateSchema = z.object({
+  unit_price: z.number().finite().positive().max(1_000_000_000),
+  effective_from: z.coerce.date().optional(),
+  note: z.string().trim().max(1000).optional(),
+});
+export type OilPriceCreateInput = z.infer<typeof oilPriceCreateSchema>;
 
 export const merchantListQuerySchema = paginationSchema.extend({
   ward_id: uuidSchema.optional(),

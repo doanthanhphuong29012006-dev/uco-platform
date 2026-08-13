@@ -9,7 +9,7 @@ import { api } from '../lib/api';
 import { isAdminUser } from '../lib/dashboard-utils';
 import { Skeleton } from './ui';
 
-const links = [['/', 'Tổng quan'], ['/reconciliation', 'Đối soát'], ['/alerts', 'Cảnh báo'], ['/stations', 'Trạm'], ['/wards', 'Phường / Địa bàn'], ['/merchants', 'Quán'], ['/containers', 'Quản lý can'], ['/approvals', 'Duyệt quán'], ['/collectors', 'Người thu gom']] as const;
+const links = [['/', 'Tổng quan'], ['/payments', 'Thanh toán'], ['/reconciliation', 'Đối soát'], ['/alerts', 'Cảnh báo'], ['/stations', 'Trạm'], ['/wards', 'Phường / Địa bàn'], ['/merchants', 'Quán'], ['/containers', 'Quản lý can'], ['/approvals', 'Duyệt quán'], ['/collectors', 'Người thu gom']] as const;
 
 export function AdminShell({ children }: { children: ReactNode }) {
   const { user, loading, signOut } = useAuth();

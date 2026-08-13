@@ -6,13 +6,14 @@ import { LoginScreen } from './components/LoginScreen';
 import { HomePage } from './pages/HomePage';
 import { HistoryPage } from './pages/HistoryPage';
 import { OrdersPage } from './pages/OrdersPage';
+import { PaymentsPage } from './pages/PaymentsPage';
 import { CollectorFlow } from './pages/CollectorFlow';
 import { StatusView } from './components/StatusView';
 import { MerchantApprovalView } from './components/MerchantApprovalView';
 import { startOutboxSyncWorker } from './lib/outbox-sync';
 import { useOutboxStats } from './lib/outbox-hooks';
 
-type Tab = 'home' | 'history' | 'orders';
+type Tab = 'home' | 'history' | 'orders' | 'payments';
 
 function BrandHeader({ title, action }: { title: string; action?: ReactNode }) {
   return <header className="brand-header"><img src="/logo.svg" alt="Eco-Oil" /><strong>{title}</strong>{action}</header>;
@@ -53,16 +54,18 @@ export function App() {
   if (user.merchantApprovalStatus !== 'APPROVED') return <MerchantApprovalView user={user} />;
 
   return <div className="app-shell">
-    <BrandHeader title={tab === 'home' ? 'Trang chủ' : tab === 'orders' ? 'Đơn của tôi' : 'Lịch sử'} />
+    <BrandHeader title={tab === 'home' ? 'Trang chủ' : tab === 'orders' ? 'Đơn của tôi' : tab === 'payments' ? 'Thanh toán' : 'Lịch sử'} />
     <main className="main-area">
       {tab === 'home' ? <HomePage /> : null}
       {tab === 'history' ? <HistoryPage /> : null}
       {tab === 'orders' ? <OrdersPage /> : null}
+      {tab === 'payments' ? <PaymentsPage /> : null}
     </main>
     <nav className="bottom-nav" aria-label="Điều hướng chính">
       <button className={tab === 'home' ? 'nav-item active' : 'nav-item'} onClick={() => setTab('home')}><span>⌂</span><small>Trang chủ</small></button>
       <button className={tab === 'orders' ? 'nav-item active' : 'nav-item'} onClick={() => setTab('orders')}><span>▤</span><small>Đơn của tôi</small></button>
       <button className={tab === 'history' ? 'nav-item active' : 'nav-item'} onClick={() => setTab('history')}><span>◷</span><small>Lịch sử</small></button>
+      <button className={tab === 'payments' ? 'nav-item active' : 'nav-item'} onClick={() => setTab('payments')}><span>₫</span><small>Thanh toán</small></button>
       <button className="nav-item" onClick={() => { void signOut(); }}><span>↪</span><small>Thoát</small></button>
     </nav>
   </div>;

@@ -21,3 +21,8 @@ if (existsSync(envPath)) {
     process.env[key] = value;
   }
 }
+
+process.env.NODE_ENV = 'test';
+// E2E tests use seeded mock accounts, including ADMIN. Never inherit DEMO_MODE
+// from the developer environment because demo mode intentionally blocks mock Admin login.
+process.env.DEMO_MODE = 'false';

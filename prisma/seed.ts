@@ -15,6 +15,13 @@ const hanoiCollectorId = '50000000-0000-4000-8000-000000000003';
 const hanoiCollectorUserId = '40000000-0000-4000-8000-000000000203';
 const hanoiStationId = '30000000-0000-4000-8000-000000000002';
 const hanoiStationUserId = '40000000-0000-4000-8000-000000000002';
+const initialOilPriceId = '80000000-0000-4000-8000-000000000001';
+
+function startOfCurrentMonthInVietnam(now = new Date()): Date {
+  const vietnamOffsetMs = 7 * 60 * 60 * 1000;
+  const local = new Date(now.getTime() + vietnamOffsetMs);
+  return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), 1) - vietnamOffsetMs);
+}
 
 const merchantSeeds = [
   {
@@ -399,6 +406,18 @@ async function main(): Promise<void> {
     });
   }
 
+  await prisma.oilPrice.upsert({
+    where: { id: initialOilPriceId },
+    update: {},
+    create: {
+      id: initialOilPriceId,
+      unitPrice: 6000,
+      effectiveFrom: startOfCurrentMonthInVietnam(),
+      effectiveTo: null,
+      note: 'Đơn giá khởi tạo cho MVP',
+    },
+  });
+
   const counts = await prisma.$queryRaw<Array<Record<string, number>>>`
     SELECT
       (SELECT COUNT(*)::int FROM "wards") AS wards,
@@ -406,7 +425,8 @@ async function main(): Promise<void> {
       (SELECT COUNT(*)::int FROM "merchants") AS merchants,
       (SELECT COUNT(*)::int FROM "collectors") AS collectors,
       (SELECT COUNT(*)::int FROM "stations") AS stations,
-      (SELECT COUNT(*)::int FROM "containers") AS containers
+      (SELECT COUNT(*)::int FROM "containers") AS containers,
+      (SELECT COUNT(*)::int FROM "oil_prices") AS oil_prices
   `;
   const postgis = await prisma.$queryRaw<Array<{ version: string }>>`SELECT PostGIS_Version() AS version`;
   const locations = await prisma.$queryRaw<Array<{ businessName: string; wkt: string }>>`

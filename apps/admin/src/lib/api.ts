@@ -10,7 +10,11 @@ import type {
   AdminContainerSummary,
   AdminWardSummary,
   AuthUser,
+  OilPriceRecord,
   PagedResponse,
+  PaymentListResponse,
+  PaymentRecord,
+  PaymentRunResponse,
 } from '@eco-oil/shared-types';
 import { browserTokenStorage } from './storage';
 
@@ -64,4 +68,11 @@ export const api = {
   createContainer: (body: { ward_id?: string; ward_code?: string; capacity_liters: number; qr_code?: string }) => client.request<AdminContainerSummary>('/admin/containers', { method: 'POST', body }),
   assignContainer: (id: string, merchant_id: string) => client.request<AdminContainerSummary>(`/admin/containers/${id}/assign`, { method: 'POST', body: { merchant_id } }),
   unassignContainer: (id: string) => client.request<AdminContainerSummary>(`/admin/containers/${id}/unassign`, { method: 'POST' }),
+  payments: (params: { period?: string; merchant_id?: string; status?: string; page?: number; limit?: number }) =>
+    client.request<PaymentListResponse>(`/admin/payments${query(params)}`),
+  runPayments: (period: string) => client.request<PaymentRunResponse>(`/admin/payments/run?period=${encodeURIComponent(period)}`, { method: 'POST' }),
+  markPaymentPaid: (id: string) => client.request<PaymentRecord>(`/admin/payments/${id}/mark-paid`, { method: 'POST' }),
+  oilPrices: () => client.request<OilPriceRecord[]>('/admin/oil-prices'),
+  createOilPrice: (body: { unit_price: number; effective_from?: string; note?: string }) =>
+    client.request<OilPriceRecord>('/admin/oil-prices', { method: 'POST', body }),
 };

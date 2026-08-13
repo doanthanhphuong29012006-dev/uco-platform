@@ -53,6 +53,12 @@ enum DeliveryStatus {
   FLAGGED
 }
 
+enum PaymentStatus {
+  PENDING
+  PAID
+  CANCELLED
+}
+
 enum AlertType {
   GEO_MISMATCH
   DELIVERY_VARIANCE
@@ -131,6 +137,7 @@ model Merchant {
   containers   Container[]
   orders       CollectionOrder[]
   transactions CollectionTransaction[]
+  payments     Payment[]
 
   @@index([wardId, isActive])
   @@map("merchants")
@@ -264,9 +271,41 @@ model CollectionTransaction {
   collector    Collector          @relation(fields: [collectorId], references: [id])
   alerts       Alert[]
   stationDelivery StationDelivery? @relation(fields: [stationDeliveryId], references: [id])
+  payment      Payment?
 
   @@index([stationDeliveryId])
   @@map("collection_transactions")
+}
+
+model OilPrice {
+  id            String    @id @default(uuid()) @db.Uuid
+  unitPrice     Decimal   @map("unit_price") @db.Decimal(14, 2)
+  effectiveFrom DateTime  @map("effective_from") @db.Timestamptz(3)
+  effectiveTo   DateTime? @map("effective_to") @db.Timestamptz(3)
+  note          String?
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([effectiveFrom, effectiveTo])
+  @@map("oil_prices")
+}
+
+model Payment {
+  id            String                @id @default(uuid()) @db.Uuid
+  merchantId    String                @map("merchant_id") @db.Uuid
+  transactionId String                @unique @map("transaction_id") @db.Uuid
+  liters        Decimal               @db.Decimal(10, 2)
+  unitPrice     Decimal               @map("unit_price") @db.Decimal(14, 2)
+  amount        Decimal               @db.Decimal(18, 0)
+  period        String
+  status        PaymentStatus         @default(PENDING)
+  paidAt        DateTime?             @map("paid_at") @db.Timestamptz(3)
+  createdAt     DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  merchant      Merchant              @relation(fields: [merchantId], references: [id])
+  transaction   CollectionTransaction @relation(fields: [transactionId], references: [id])
+
+  @@index([merchantId, period])
+  @@index([period, status])
+  @@map("payments")
 }
 
 model StationDelivery {
