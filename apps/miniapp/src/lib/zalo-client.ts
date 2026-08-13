@@ -78,9 +78,8 @@ async function browserLocation(): Promise<GeoPoint> {
   });
 }
 
-async function compressImage(filePath: string): Promise<PhotoAsset> {
-  const response = await fetch(filePath);
-  const source = await createImageBitmap(await response.blob());
+export async function compressImageBlob(blob: Blob): Promise<PhotoAsset> {
+  const source = await createImageBitmap(blob);
   const scale = Math.min(1, 1280 / Math.max(source.width, source.height));
   const width = Math.max(1, Math.round(source.width * scale));
   const height = Math.max(1, Math.round(source.height * scale));
@@ -94,6 +93,11 @@ async function compressImage(filePath: string): Promise<PhotoAsset> {
   context.drawImage(source, 0, 0, width, height);
   source.close();
   return { url: canvas.toDataURL('image/jpeg', 0.7), width, height };
+}
+
+async function compressImage(filePath: string): Promise<PhotoAsset> {
+  const response = await fetch(filePath);
+  return compressImageBlob(await response.blob());
 }
 
 class RealZaloClient implements IZaloClient {
@@ -193,11 +197,7 @@ class MockZaloClient implements IZaloClient {
   }
 
   async chooseImage(): Promise<PhotoAsset> {
-    return {
-      url: 'data:image/jpeg;base64,eco-oil-dev-photo',
-      width: 1280,
-      height: 960,
-    };
+    throw new Error('Camera is unavailable in mock mode. Choose an image file.');
   }
 
   openDirections(destination: GeoPoint): void {

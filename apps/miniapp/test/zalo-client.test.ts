@@ -17,7 +17,7 @@ test('browser outside Zalo uses the mock client for the full SDK surface', async
   assert.equal(await client.getAccessToken(), 'mock-access-token:zalo_collector_01');
   assert.deepEqual(await client.getLocation(), { lat: 10.7769, lng: 106.7009 });
   assert.equal(await client.scanQRCode(), '');
-  assert.match((await client.chooseImage()).url, /^data:image\/jpeg/);
+  await assert.rejects(() => client.chooseImage(), /Camera is unavailable in mock mode/);
 
   client.setStorage('zalo-client-test', 'mock-value');
   assert.equal(client.getStorage('zalo-client-test'), 'mock-value');

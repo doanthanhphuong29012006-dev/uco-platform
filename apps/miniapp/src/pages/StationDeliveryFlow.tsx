@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { ChangeEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { DeliveryStatus } from '@eco-oil/shared-types';
 import type { CollectionCreateRequest, StationDeliveryCreateRequest, StationDeliveryResponse, StationRecommendation } from '@eco-oil/shared-types';
@@ -9,8 +10,10 @@ import { syncOutbox } from '../lib/outbox-sync';
 import { useOutboxRows } from '../lib/outbox-hooks';
 import { WARD_CENTER, zaloClient } from '../lib/zalo-client';
 import type { PhotoAsset } from '../lib/zalo-client';
+import { compressImageBlob } from '../lib/zalo-client';
 import { StatusView } from '../components/StatusView';
 import type { CompletedStop } from './CollectorFlow';
+import { canSubmitStationDelivery, retryStationDeliverySync } from '../lib/station-delivery';
 
 type DeliveryScreen = 'select' | 'review' | 'receipt' | 'closeout';
 
@@ -33,6 +36,8 @@ export function StationDeliveryFlow({ completed, onBack }: StationDeliveryFlowPr
   const [locationDenied, setLocationDenied] = useState(false);
   const [selectedStation, setSelectedStation] = useState<StationRecommendation | null>(null);
   const [deliveryClientUuid, setDeliveryClientUuid] = useState<string | null>(null);
+  const [retryingWaiting, setRetryingWaiting] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
   const rows = useOutboxRows();
   const entries = Object.values(completed);
   const candidates = useMemo(() => getCandidates(entries, rows), [entries, rows]);
@@ -57,11 +62,13 @@ export function StationDeliveryFlow({ completed, onBack }: StationDeliveryFlowPr
   });
 
   async function retryWaiting(): Promise<void> {
-    const waitingRows = entries
-      .map((entry) => rows.find((row) => row.client_uuid === entry.clientUuid))
-      .filter((row): row is OutboxRecord => Boolean(row && row.status !== 'synced'));
-    await Promise.all(waitingRows.filter((row) => row.status === 'failed').map((row) => retryOutbox(row.client_uuid)));
-    await syncOutbox();
+    await retryStationDeliverySync(async () => {
+      const waitingRows = entries
+        .map((entry) => rows.find((row) => row.client_uuid === entry.clientUuid))
+        .filter((row): row is OutboxRecord => Boolean(row && row.status !== 'synced'));
+      await Promise.all(waitingRows.filter((row) => row.status === 'failed').map((row) => retryOutbox(row.client_uuid)));
+      return syncOutbox();
+    }, setRetryingWaiting, setRetryError);
   }
 
   if (entries.length === 0) {
@@ -69,7 +76,7 @@ export function StationDeliveryFlow({ completed, onBack }: StationDeliveryFlowPr
   }
 
   if (screen === 'select') {
-    return <StationSelectScreen expectedLiters={expectedLiters} waiting={waiting} locationDenied={locationDenied} recommendations={recommendations.data ?? []} loading={recommendations.isPending} error={recommendations.error} onBack={onBack} onRetryWaiting={() => { void retryWaiting(); }} onChoose={(station) => { setSelectedStation(station); setScreen('review'); }} onRetry={() => { void recommendations.refetch(); }} />;
+    return <StationSelectScreen expectedLiters={expectedLiters} waiting={waiting} locationDenied={locationDenied} recommendations={recommendations.data ?? []} loading={recommendations.isPending} error={recommendations.error} retryingWaiting={retryingWaiting} retryError={retryError} onBack={onBack} onRetryWaiting={() => { void retryWaiting(); }} onChoose={(station) => { setSelectedStation(station); setScreen('review'); }} onRetry={() => { void recommendations.refetch(); }} />;
   }
 
   if (screen === 'review' && selectedStation) {
@@ -83,13 +90,15 @@ export function StationDeliveryFlow({ completed, onBack }: StationDeliveryFlowPr
   return <ShiftCloseout candidates={candidates} onFinish={onBack} />;
 }
 
-function StationSelectScreen({ expectedLiters, waiting, locationDenied, recommendations, loading, error, onBack, onRetryWaiting, onChoose, onRetry }: {
+function StationSelectScreen({ expectedLiters, waiting, locationDenied, recommendations, loading, error, retryingWaiting, retryError, onBack, onRetryWaiting, onChoose, onRetry }: {
   expectedLiters: number;
   waiting: number;
   locationDenied: boolean;
   recommendations: StationRecommendation[];
   loading: boolean;
   error: unknown;
+  retryingWaiting: boolean;
+  retryError: string | null;
   onBack: () => void;
   onRetryWaiting: () => void;
   onChoose: (station: StationRecommendation) => void;
@@ -100,7 +109,7 @@ function StationSelectScreen({ expectedLiters, waiting, locationDenied, recommen
       <button className="back-button" onClick={onBack}>← Về tóm tắt ca</button>
       <header className="collector-screen-heading"><p className="eyebrow">NỘP TRẠM</p><h1>Chọn trạm tiếp nhận</h1><p>Đang mang {formatLiters(expectedLiters)} cần đối soát</p></header>
       {locationDenied ? <div className="location-banner">Không lấy được vị trí. Khoảng cách đang tính từ tâm phường.</div> : null}
-      {waiting > 0 ? <div className="warning-panel delivery-waiting-panel"><strong>Còn {waiting} giao dịch chưa đồng bộ, đang gửi…</strong><span>Phải đồng bộ xong để server biết chính xác các giao dịch trước khi nộp trạm.</span><button className="secondary-button" onClick={onRetryWaiting}>Thử lại đồng bộ</button></div> : null}
+      {waiting > 0 ? <div className="warning-panel delivery-waiting-panel"><strong>Còn {waiting} giao dịch chưa đồng bộ, đang gửi…</strong><span>Phải đồng bộ xong để server biết chính xác các giao dịch trước khi nộp trạm.</span>{retryError ? <span className="error-text">{retryError}</span> : null}<button className="secondary-button" onClick={onRetryWaiting} disabled={retryingWaiting}>{retryingWaiting ? 'Đang thử lại…' : 'Thử lại đồng bộ'}</button></div> : null}
       {loading ? <StatusView title="Đang tìm trạm còn chỗ…" /> : null}
       {error ? <StatusView title="Chưa tìm được trạm" message={error instanceof ApiError ? error.message : 'Kiểm tra kết nối rồi thử lại.'} action={{ label: 'Thử lại', onClick: onRetry }} /> : null}
       {!loading && !error && waiting === 0 && recommendations.length === 0 ? <StatusView title="Không có trạm đủ sức chứa" message="Thử lại sau hoặc liên hệ điều phối để được hướng dẫn." action={{ label: 'Tải lại', onClick: onRetry }} /> : null}
@@ -134,9 +143,31 @@ function StationDeliveryReview({ station, candidates, expectedLiters, onBack, on
     setTakingPhoto(true);
     try {
       const photo = await zaloClient.chooseImage();
+      if (!photo.url.trim()) {
+        throw new Error('Ảnh không hợp lệ');
+      }
       setPhotos((current) => [...current, photo]);
     } catch {
       setError('Chưa chụp được ảnh, thử lại nhé.');
+    } finally {
+      setTakingPhoto(false);
+    }
+  }
+
+  async function choosePhotoFile(event: ChangeEvent<HTMLInputElement>): Promise<void> {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setTakingPhoto(true);
+    setError(null);
+    try {
+      const photo = await compressImageBlob(file);
+      if (!photo.url.trim()) {
+        throw new Error('Ảnh không hợp lệ');
+      }
+      setPhotos((current) => [...current, photo]);
+    } catch {
+      setError('Không đọc được ảnh. Hãy chọn một ảnh khác.');
     } finally {
       setTakingPhoto(false);
     }
@@ -169,7 +200,7 @@ function StationDeliveryReview({ station, candidates, expectedLiters, onBack, on
     }
   }
 
-  return <div className="page-content collector-content station-page"><button className="back-button" onClick={onBack} disabled={saving}>← Chọn lại trạm</button><header className="collector-screen-heading"><p className="eyebrow">ĐỐI SOÁT TRƯỚC KHI NỘP</p><h1>{station.name}</h1><p>{station.address ?? ''}</p></header><section className="delivery-transactions-card"><h2>Từng giao dịch sẽ nộp</h2>{candidates.map((item) => <div className="delivery-transaction-row" key={item.clientUuid}><div><strong>{item.stop.merchant.name}</strong><span>{formatTime(item.collection.collected_at ?? item.record.created_at)}</span></div><b>{formatLiters(item.collection.actual_liters)}</b></div>)}<div className="delivery-total-row"><span>Tổng server sẽ tự tính</span><strong>{formatLiters(expectedLiters)}</strong></div></section><section className="delivery-input-card"><label htmlFor="delivery-liters">Số lít thực tế đổ vào trạm</label><div className="delivery-liters-input"><input id="delivery-liters" type="number" inputMode="decimal" step="0.1" min="0" value={actual} onChange={(event) => setActual(event.target.value)} /><span>lít</span></div><p className={flagged ? 'variance-danger' : 'variance-ok'}>{varianceLiters >= 0 ? '+' : ''}{varianceLiters.toFixed(1)} L ({(variancePct * 100).toFixed(1)}%)</p>{flagged ? <div className="warning-panel"><strong>Chênh lệch vượt 2%, giao dịch sẽ được gắn cờ kiểm tra</strong><span>Vui lòng nhập lý do và chụp ảnh trước khi gửi.</span></div> : <p className="variance-help">Trong ngưỡng đối soát 2%.</p>}</section>{flagged ? <><section className="delivery-note-card"><label htmlFor="delivery-note">Lý do chênh lệch bắt buộc</label><textarea id="delivery-note" value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ví dụ: dầu còn bám trong can…" /></section><section className="photo-card"><div><strong>Ảnh bằng chứng</strong><p>{photos.length > 0 ? `${photos.length} ảnh đã chụp` : 'Cần ít nhất 1 ảnh'}</p></div><button className="secondary-button" onClick={() => { void takePhoto(); }} disabled={takingPhoto || saving}>{takingPhoto ? 'Đang chụp…' : 'Chụp ảnh'}</button></section></> : null}{error ? <div className="error-panel">{error}</div> : null}<p className="server-calculation-note">Expected liters không gửi từ app. Server sẽ tính lại từ các giao dịch đã đồng bộ.</p><button className="submit-collection-button" onClick={() => { void submit(); }} disabled={saving || invalid || (flagged && (!note.trim() || photos.length === 0))}>{saving ? 'Đang lưu phiếu trên máy…' : 'Xác nhận nộp trạm'}</button></div>;
+  return <div className="page-content collector-content station-page"><button className="back-button" onClick={onBack} disabled={saving}>← Chọn lại trạm</button><header className="collector-screen-heading"><p className="eyebrow">ĐỐI SOÁT TRƯỚC KHI NỘP</p><h1>{station.name}</h1><p>{station.address ?? ''}</p></header><section className="delivery-transactions-card"><h2>Từng giao dịch sẽ nộp</h2>{candidates.map((item) => <div className="delivery-transaction-row" key={item.clientUuid}><div><strong>{item.stop.merchant.name}</strong><span>{formatTime(item.collection.collected_at ?? item.record.created_at)}</span></div><b>{formatLiters(item.collection.actual_liters)}</b></div>)}<div className="delivery-total-row"><span>Tổng server sẽ tự tính</span><strong>{formatLiters(expectedLiters)}</strong></div></section><section className="delivery-input-card"><label htmlFor="delivery-liters">Số lít thực tế đổ vào trạm</label><div className="delivery-liters-input"><input id="delivery-liters" type="number" inputMode="decimal" step="0.1" min="0" value={actual} onChange={(event) => setActual(event.target.value)} /><span>lít</span></div><p className={flagged ? 'variance-danger' : 'variance-ok'}>{varianceLiters >= 0 ? '+' : ''}{varianceLiters.toFixed(1)} L ({(variancePct * 100).toFixed(1)}%)</p>{flagged ? <div className="warning-panel"><strong>Chênh lệch vượt 2%, giao dịch sẽ được gắn cờ kiểm tra</strong><span>Vui lòng nhập lý do và chụp ảnh trước khi gửi.</span></div> : <p className="variance-help">Trong ngưỡng đối soát 2%.</p>}</section>{flagged ? <><section className="delivery-note-card"><label htmlFor="delivery-note">Lý do chênh lệch bắt buộc</label><textarea id="delivery-note" value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ví dụ: dầu còn bám trong can…" /></section><section className="photo-card"><div><strong>Ảnh bằng chứng</strong><p>{photos.length > 0 ? `${photos.length} ảnh thật đã chọn` : 'Cần ít nhất 1 ảnh thật để gửi'}</p></div><div className="flex flex-wrap gap-2"><button className="secondary-button" onClick={() => { void takePhoto(); }} disabled={takingPhoto || saving}>{takingPhoto ? 'Đang chụp…' : 'Chụp ảnh'}</button><label className="secondary-button cursor-pointer">Chọn ảnh từ máy<input className="sr-only" type="file" accept="image/*" onChange={(event) => { void choosePhotoFile(event); }} disabled={takingPhoto || saving} /></label></div></section></> : null}{error ? <div className="error-panel">{error}</div> : null}<p className="server-calculation-note">Expected liters không gửi từ app. Server sẽ tính lại từ các giao dịch đã đồng bộ.</p><button className="submit-collection-button" onClick={() => { void submit(); }} disabled={saving || !canSubmitStationDelivery({ invalid, flagged, note, photoCount: photos.length })}>{saving ? 'Đang lưu phiếu trên máy…' : 'Xác nhận nộp trạm'}</button></div>;
 }
 
 function StationDeliveryReceipt({ station, clientUuid, expectedLiters, rows, onCloseOut, onBack }: { station: StationRecommendation; clientUuid: string; expectedLiters: number; rows: OutboxRecord[]; onCloseOut: () => void; onBack: () => void }) {

@@ -8,6 +8,7 @@ import type {
   AdminReconciliationResponse,
   AdminStationSummary,
   AdminContainerSummary,
+  AdminContainerReturnRequest,
   AdminWardSummary,
   AuthUser,
   OilPriceRecord,
@@ -68,6 +69,7 @@ export const api = {
   createContainer: (body: { ward_id?: string; ward_code?: string; capacity_liters: number; qr_code?: string }) => client.request<AdminContainerSummary>('/admin/containers', { method: 'POST', body }),
   assignContainer: (id: string, merchant_id: string) => client.request<AdminContainerSummary>(`/admin/containers/${id}/assign`, { method: 'POST', body: { merchant_id } }),
   unassignContainer: (id: string) => client.request<AdminContainerSummary>(`/admin/containers/${id}/unassign`, { method: 'POST' }),
+  returnContainerToMerchant: (id: string, body: AdminContainerReturnRequest) => client.request<AdminContainerSummary>(`/admin/containers/${id}/return-to-merchant`, { method: 'POST', body }),
   payments: (params: { period?: string; merchant_id?: string; status?: string; page?: number; limit?: number }) =>
     client.request<PaymentListResponse>(`/admin/payments${query(params)}`),
   runPayments: (period: string) => client.request<PaymentRunResponse>(`/admin/payments/run?period=${encodeURIComponent(period)}`, { method: 'POST' }),

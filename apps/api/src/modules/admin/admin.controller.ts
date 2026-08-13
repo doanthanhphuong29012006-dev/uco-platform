@@ -12,6 +12,7 @@ import {
   merchantRejectSchema,
   adminContainerCreateSchema,
   adminContainerListQuerySchema,
+  adminContainerReturnSchema,
   containerAssignSchema,
   adminWardCreateSchema,
   adminWardPatchSchema,
@@ -115,6 +116,12 @@ export class AdminController {
   @Post('containers/:id/unassign')
   unassignContainer(@Param('id') id: string, @CurrentUser() user: AccessTokenPayload) {
     return this.service.unassignContainer(id, user.sub);
+  }
+
+  @Roles(Role.ADMIN)
+  @Post('containers/:id/return-to-merchant')
+  returnContainerToMerchant(@Param('id') id: string, @Body() body: unknown, @CurrentUser() user: AccessTokenPayload) {
+    return this.service.returnContainerToMerchant(id, adminContainerReturnSchema.parse(body ?? {}), user.sub);
   }
 
   @Roles(Role.ADMIN)

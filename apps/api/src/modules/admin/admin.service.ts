@@ -14,6 +14,7 @@ import type {
   MerchantRejectInput,
   AdminContainerCreateInput,
   AdminContainerListQueryInput,
+  AdminContainerReturnInput,
   ContainerAssignInput,
   AdminWardCreateInput,
   AdminWardPatchInput,
@@ -743,6 +744,57 @@ export class AdminService {
     const row = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.container.update({ where: { id }, data: { merchantId: null, state: 'AT_MERCHANT' }, include: { merchant: true } });
       await tx.auditLog.create({ data: { actorUserId, action: 'UNASSIGN_CONTAINER', entityType: 'Container', entityId: id, details: { previous_merchant_id: container.merchantId } } });
+      return updated;
+    });
+    return this.serializeAdminContainer(row);
+  }
+
+  async returnContainerToMerchant(id: string, input: AdminContainerReturnInput, actorUserId: string) {
+    const row = await this.prisma.$transaction(async (tx) => {
+      const container = await tx.container.findUnique({ where: { id }, include: { merchant: true } });
+      if (!container) throw new NotFoundException('Container not found');
+      if (container.state !== 'AT_STATION') {
+        throw new BadRequestException({
+          code: 'CONTAINER_NOT_AT_STATION',
+          message: 'Can không ở tại trạm nên không thể trả về quán',
+          details: { state: container.state },
+        });
+      }
+
+      const merchantId = input.merchant_id ?? container.merchantId;
+      if (!merchantId) {
+        throw new BadRequestException({
+          code: 'MERCHANT_REQUIRED',
+          message: 'Cần chọn quán nhận can trước khi trả can',
+          details: null,
+        });
+      }
+
+      const merchant = await tx.merchant.findUnique({ where: { id: merchantId } });
+      if (!merchant || merchant.approvalStatus !== MerchantApprovalStatus.APPROVED || merchant.status === EntityStatus.INACTIVE) {
+        throw new BadRequestException({
+          code: 'MERCHANT_NOT_APPROVED',
+          message: 'Quán nhận can chưa được duyệt hoặc không còn hoạt động',
+          details: { merchant_id: merchantId },
+        });
+      }
+
+      const before = { state: container.state, merchant_id: container.merchantId };
+      const after = { state: 'AT_MERCHANT', merchant_id: merchant.id };
+      const updated = await tx.container.update({
+        where: { id },
+        data: { state: 'AT_MERCHANT', merchantId: merchant.id, lastSeenAt: new Date() },
+        include: { merchant: true },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorUserId,
+          action: 'RETURN_CONTAINER',
+          entityType: 'Container',
+          entityId: id,
+          details: { before, after, note: input.note ?? null },
+        },
+      });
       return updated;
     });
     return this.serializeAdminContainer(row);

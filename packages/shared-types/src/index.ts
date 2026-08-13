@@ -236,6 +236,11 @@ export interface AdminContainerSummary {
   merchant: { id: string; name: string; address: string | null } | null;
 }
 
+export interface AdminContainerReturnRequest {
+  merchant_id?: string;
+  note?: string;
+}
+
 export interface AdminWardSummary {
   id: string;
   code: string;

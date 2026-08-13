@@ -182,6 +182,12 @@ export const adminContainerListQuerySchema = paginationSchema.extend({
 });
 export type AdminContainerListQueryInput = z.infer<typeof adminContainerListQuerySchema>;
 
+export const adminContainerReturnSchema = z.object({
+  merchant_id: uuidSchema.optional(),
+  note: z.string().trim().max(500).optional(),
+});
+export type AdminContainerReturnInput = z.infer<typeof adminContainerReturnSchema>;
+
 const wardCodeSchema = z.string().trim().min(1).max(30).regex(/^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/, 'Mã phường chỉ được gồm chữ, số và dấu gạch ngang').transform((value) => value.toUpperCase());
 const adminWardBaseSchema = z.object({
   code: wardCodeSchema,
