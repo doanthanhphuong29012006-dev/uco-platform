@@ -36,8 +36,22 @@ export class AuthService {
     refresh_token: string;
     user: AuthUserResponse;
   }> {
+    if (this.isMockMode() && input.zalo_id.startsWith('mock-access-token:')) {
+      throw new UnauthorizedException({
+        code: 'INVALID_ZALO_ID',
+        message: 'Mã Zalo không hợp lệ cho đăng nhập mô phỏng',
+        details: null,
+      });
+    }
     const verified = await this.zaloProvider.verify(input.zalo_id);
     const zaloId = verified.zaloId || input.zalo_id;
+    if (this.isMockMode() && zaloId.startsWith('mock-access-token:')) {
+      throw new UnauthorizedException({
+        code: 'INVALID_ZALO_ID',
+        message: 'Mã Zalo không hợp lệ cho đăng nhập mô phỏng',
+        details: null,
+      });
+    }
     const phone = input.phone || verified.phone;
     let user = await this.prisma.user.findUnique({ where: { zaloId } });
 
@@ -97,6 +111,7 @@ export class AuthService {
       },
     });
     return users.filter((user) => {
+      if (user.zaloId.includes(':')) return false;
       if (this.isDemoMode() && user.role !== Role.MERCHANT && user.role !== Role.COLLECTOR) return false;
       if (user.merchant) return user.merchant.status === 'ACTIVE' && user.merchant.isActive && user.merchant.deletedAt === null;
       if (user.collector) return user.collector.status === 'ACTIVE' && user.collector.isActive && user.collector.deletedAt === null;

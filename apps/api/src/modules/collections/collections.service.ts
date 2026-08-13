@@ -1,6 +1,6 @@
 import { ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AlertType, ContainerState, EntityStatus, OrderStatus, Quality } from '@prisma/client';
+import { AlertSeverity, AlertType, ContainerState, EntityStatus, OrderStatus, Quality } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import type { CollectionCreateInput, CollectionListQueryInput } from '@eco-oil/validation';
@@ -192,6 +192,7 @@ export class CollectionsService {
           data: {
             transactionId: transaction.id,
             type: AlertType.GEO_MISMATCH,
+            severity: AlertSeverity.HIGH,
             message: 'Collection geo point is outside merchant mismatch threshold',
             details: { distance_m: distanceM, threshold_m: threshold },
           },

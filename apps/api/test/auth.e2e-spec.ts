@@ -75,6 +75,15 @@ describe('Auth and RBAC (e2e)', () => {
     const collector = response.body.find((account: { zalo_id: string }) => account.zalo_id === 'zalo_collector_01');
     expect(collector).toMatchObject({ role: 'COLLECTOR' });
     expect(collector.wards.length).toBeGreaterThan(0);
+    expect(response.body.every((account: { zalo_id: string }) => !account.zalo_id.includes(':'))).toBe(true);
+  });
+
+  it('rejects a mock access token passed as a Zalo id', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/auth/zalo')
+      .send({ zalo_id: 'mock-access-token:zalo_merchant_01', phone: '0900000001' })
+      .expect(401);
+    expect(response.body).toMatchObject({ code: 'INVALID_ZALO_ID' });
   });
 
   it('rotates refresh tokens and rejects reuse of the old token', async () => {

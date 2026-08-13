@@ -11,7 +11,7 @@ import { loadRouteWithCache, lookupContainerWithCache, prefetchRouteData, type R
 import { enqueueCollection } from '../lib/outbox-db';
 import { startOutboxSyncWorker, syncOutbox } from '../lib/outbox-sync';
 import { submitContainerCode } from '../lib/container-code';
-import { zaloClient, WARD_CENTER } from '../lib/zalo-client';
+import { zaloClient } from '../lib/zalo-client';
 import type { PhotoAsset } from '../lib/zalo-client';
 import { StatusView } from '../components/StatusView';
 import { StationDeliveryFlow } from './StationDeliveryFlow';
@@ -65,6 +65,14 @@ export function CollectorFlow() {
     queryFn: () => loadRouteWithCache(location ?? undefined),
     staleTime: 15_000,
   });
+
+  useEffect(() => {
+    const wardCenter = route.data?.route.stops.find((stop) => stop.ward_center)?.ward_center;
+    if (!location && wardCenter) {
+      setLocation(wardCenter);
+      setLocationDenied(true);
+    }
+  }, [location, route.data]);
 
   useEffect(() => {
     if (route.data && initialStopCount === null) {
@@ -178,7 +186,7 @@ function CollectorRouteScreen({ stops, route, location, locationDenied, complete
         </div>
       </header>
       {!location && !locationDenied ? <div className="location-banner">Đang xin quyền vị trí để tính tuyến gần nhất…</div> : null}
-      {locationDenied ? <div className="location-banner">Bạn đang dùng tâm phường. Bật quyền vị trí để khoảng cách và tuyến chính xác hơn.</div> : null}
+      {locationDenied ? <div className="location-banner">Không lấy được vị trí GPS, đang dùng vị trí trung tâm phường. Giao dịch có thể bị đánh dấu cần kiểm tra.</div> : null}
       {route.fromCache ? <div className="offline-cache-banner">Đang dùng dữ liệu lúc {formatTime(route.cachedAt)}</div> : null}
       {!shiftStarted ? <button className="start-shift-button" onClick={onStartShift} disabled={prefetching}>{prefetching ? 'Đang lưu tuyến và mã QR…' : 'Bắt đầu ca — lưu tuyến offline'}</button> : <div className="shift-ready-note">✓ Tuyến và mã QR đã sẵn sàng khi mất sóng</div>}
       <section className="route-capacity-card">
@@ -309,6 +317,7 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
   const [takingPhoto, setTakingPhoto] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [locationFallback, setLocationFallback] = useState(false);
   const [clientUuid] = useState(() => crypto.randomUUID());
   const capacity = Number(container.capacity_liters ?? 0);
   const actualLiters = Number(liters);
@@ -350,9 +359,17 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
     let currentGeo = geo;
     if (!currentGeo) {
       try {
-          currentGeo = await zaloClient.getLocation();
+        currentGeo = await zaloClient.getLocation(stop.ward_center ?? null);
       } catch {
-        currentGeo = WARD_CENTER;
+        currentGeo = stop.ward_center ?? null;
+      }
+      if (!currentGeo) {
+        setError('Không xác định được vị trí hiện tại hoặc tâm phường. Vui lòng bật GPS rồi thử lại.');
+        setSaving(false);
+        return;
+      }
+      if (stop.ward_center && currentGeo.lat === stop.ward_center.lat && currentGeo.lng === stop.ward_center.lng) {
+        setLocationFallback(true);
       }
       setGeo(currentGeo);
     }
@@ -386,7 +403,7 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
     <div className="page-content collector-content">
       <button className="back-button" onClick={onBack} disabled={saving}>← Quay lại quét mã</button>
        <header className="collector-screen-heading"><p className="eyebrow">GHI NHẬN THU GOM</p><h1>{container.merchant.name}</h1><p>{containerCode}</p></header>
-      <section className="entry-target-card"><span>Số lít dự kiến</span><strong>{formatLiters(stop.expected_liters)}</strong><small>Mã giao dịch: {clientUuid.slice(0, 8)}…</small></section>
+      <section className="entry-target-card"><span>Số lít dự kiến</span><strong>{formatLiters(stop.expected_liters)}</strong><small>Mã giao dịch: {clientUuid.slice(0, 8)}…</small>{locationFallback ? <p className="location-banner">Không lấy được vị trí GPS, đang dùng vị trí trung tâm phường. Giao dịch có thể bị đánh dấu cần kiểm tra.</p> : null}</section>
       <section className="liter-entry-card">
         <label htmlFor="actual-liters">Số lít thực tế</label>
         <div className="large-number-input"><button onClick={() => adjustLiters(-0.5)} disabled={saving}>−</button><input id="actual-liters" type="number" inputMode="decimal" step="0.5" min="0" value={liters} onChange={(event) => setLiters(event.target.value)} placeholder="0.0" /><span>lít</span><button onClick={() => adjustLiters(0.5)} disabled={saving}>+</button></div>

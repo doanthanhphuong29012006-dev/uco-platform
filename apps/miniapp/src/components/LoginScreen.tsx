@@ -16,7 +16,7 @@ export function LoginScreen() {
   const loginWithZalo = useAuthStore((state) => state.loginWithZalo);
   const [registering, setRegistering] = useState(false);
   const [registerError, setRegisterError] = useState<string | null>(null);
-  const [registerForm, setRegisterForm] = useState({ zalo_id: 'zalo_merchant_new_01', name: '', address: '', phone: '', business_type: 'Quán ăn', lat: 10.7818, lng: 106.6851, ward_id: '' });
+  const [registerForm, setRegisterForm] = useState({ zalo_id: 'zalo_merchant_new_01', name: '', address: '', phone: '', business_type: 'Quán ăn', lat: null as number | null, lng: null as number | null, ward_id: '' });
   const [wards, setWards] = useState<AdminWardSummary[]>([]);
   const [wardLoadError, setWardLoadError] = useState<string | null>(null);
 
@@ -59,6 +59,7 @@ export function LoginScreen() {
     setRegisterError(null);
     try {
       const point = await zaloClient.getLocation();
+      if (!point) throw new Error('Không lấy được vị trí GPS. Vui lòng bật quyền vị trí rồi thử lại.');
       await api.registerMerchant({ ...registerForm, lat: point.lat, lng: point.lng });
       await loginSeed(registerForm.zalo_id, registerForm.phone);
     } catch (reason) {

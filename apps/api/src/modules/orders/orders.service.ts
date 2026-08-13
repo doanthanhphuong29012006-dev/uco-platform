@@ -166,8 +166,9 @@ export class OrdersService {
       merchant: { name: string; address: string | null; phone?: string | null; lat: number; lng: number };
       container_code: string;
       expected_liters: number;
-      priority: number;
-      distance_m: number;
+        priority: number;
+        distance_m: number;
+        ward_center: { lat: number; lng: number } | null;
     }> = [];
     let total = 0;
     for (const row of rows) {
@@ -183,6 +184,7 @@ export class OrdersService {
         expected_liters: row.expectedLiters,
         priority: row.priority,
         distance_m: row.distanceM,
+        ward_center: row.wardCenterLat === null || row.wardCenterLng === null ? null : { lat: row.wardCenterLat, lng: row.wardCenterLng },
       });
     }
     // TODO(sprint-4): Persist route/route_stops when re-optimization is introduced.

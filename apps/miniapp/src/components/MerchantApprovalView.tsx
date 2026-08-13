@@ -11,13 +11,14 @@ export function MerchantApprovalView({ user }: { user: AuthUser }) {
   const [editing, setEditing] = useState(user.merchantApprovalStatus === 'REJECTED');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: user.name ?? '', address: '', phone: user.phone ?? '', business_type: 'Quán ăn', lat: 10.7818, lng: 106.6851 });
+  const [form, setForm] = useState({ name: user.name ?? '', address: '', phone: user.phone ?? '', business_type: 'Quán ăn', lat: null as number | null, lng: null as number | null });
 
   async function save() {
     if (!user.merchantId) return;
     setBusy(true); setMessage(null);
     try {
       const point = await zaloClient.getLocation();
+      if (!point) throw new Error('Không lấy được vị trí GPS. Vui lòng bật quyền vị trí rồi thử lại.');
       await api.updateMerchant(user.merchantId, { ...form, lat: point.lat, lng: point.lng, ward_id: WARD_ID });
       setEditing(false);
       setMessage('Đã gửi lại hồ sơ. Eco-Oil sẽ xem xét trong thời gian sớm nhất.');

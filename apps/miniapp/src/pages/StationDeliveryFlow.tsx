@@ -2,13 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { DeliveryStatus } from '@eco-oil/shared-types';
-import type { CollectionCreateRequest, StationDeliveryCreateRequest, StationDeliveryResponse, StationRecommendation } from '@eco-oil/shared-types';
+import type { CollectionCreateRequest, GeoPoint, StationDeliveryCreateRequest, StationDeliveryResponse, StationRecommendation } from '@eco-oil/shared-types';
 import { ApiError, api } from '../lib/api';
 import { formatCurrency, formatLiters } from '../lib/formatters';
 import { enqueueStationDelivery, retryOutbox, type OutboxRecord } from '../lib/outbox-db';
 import { syncOutbox } from '../lib/outbox-sync';
 import { useOutboxRows } from '../lib/outbox-hooks';
-import { WARD_CENTER, zaloClient } from '../lib/zalo-client';
+import { zaloClient } from '../lib/zalo-client';
 import type { PhotoAsset } from '../lib/zalo-client';
 import { compressImageBlob } from '../lib/zalo-client';
 import { StatusView } from '../components/StatusView';
@@ -32,7 +32,7 @@ const PRICE_PER_LITER = Number(import.meta.env.VITE_ESTIMATED_PRICE_PER_LITER ??
 
 export function StationDeliveryFlow({ completed, onBack }: StationDeliveryFlowProps) {
   const [screen, setScreen] = useState<DeliveryScreen>('select');
-  const [location, setLocation] = useState(WARD_CENTER);
+  const [location, setLocation] = useState<GeoPoint | null>(null);
   const [locationDenied, setLocationDenied] = useState(false);
   const [selectedStation, setSelectedStation] = useState<StationRecommendation | null>(null);
   const [deliveryClientUuid, setDeliveryClientUuid] = useState<string | null>(null);
@@ -46,8 +46,15 @@ export function StationDeliveryFlow({ completed, onBack }: StationDeliveryFlowPr
 
   useEffect(() => {
     let active = true;
-    void zaloClient.getLocation().then((point) => {
-      if (active) setLocation(point);
+    const fallback = entries.find((entry) => entry.stop.ward_center)?.stop.ward_center ?? null;
+    void zaloClient.getLocation(fallback).then((point) => {
+      if (!active) return;
+      if (point) {
+        setLocation(point);
+        if (fallback && point.lat === fallback.lat && point.lng === fallback.lng) setLocationDenied(true);
+      } else {
+        setLocationDenied(true);
+      }
     }).catch(() => {
       if (active) setLocationDenied(true);
     });
@@ -56,8 +63,8 @@ export function StationDeliveryFlow({ completed, onBack }: StationDeliveryFlowPr
 
   const recommendations = useQuery({
     queryKey: ['station-recommendations', location, expectedLiters],
-    queryFn: () => api.recommendStations(location, expectedLiters),
-    enabled: screen === 'select' && expectedLiters > 0 && waiting === 0,
+    queryFn: () => location ? api.recommendStations(location, expectedLiters) : Promise.reject(new Error('Chưa xác định được vị trí')),
+    enabled: screen === 'select' && expectedLiters > 0 && waiting === 0 && location !== null,
     staleTime: 15_000,
   });
 
@@ -108,7 +115,7 @@ function StationSelectScreen({ expectedLiters, waiting, locationDenied, recommen
     <div className="page-content collector-content station-page">
       <button className="back-button" onClick={onBack}>← Về tóm tắt ca</button>
       <header className="collector-screen-heading"><p className="eyebrow">NỘP TRẠM</p><h1>Chọn trạm tiếp nhận</h1><p>Đang mang {formatLiters(expectedLiters)} cần đối soát</p></header>
-      {locationDenied ? <div className="location-banner">Không lấy được vị trí. Khoảng cách đang tính từ tâm phường.</div> : null}
+      {locationDenied ? <div className="location-banner">Không lấy được vị trí GPS, đang dùng vị trí trung tâm phường. Giao dịch có thể bị đánh dấu cần kiểm tra.</div> : null}
       {waiting > 0 ? <div className="warning-panel delivery-waiting-panel"><strong>Còn {waiting} giao dịch chưa đồng bộ, đang gửi…</strong><span>Phải đồng bộ xong để server biết chính xác các giao dịch trước khi nộp trạm.</span>{retryError ? <span className="error-text">{retryError}</span> : null}<button className="secondary-button" onClick={onRetryWaiting} disabled={retryingWaiting}>{retryingWaiting ? 'Đang thử lại…' : 'Thử lại đồng bộ'}</button></div> : null}
       {loading ? <StatusView title="Đang tìm trạm còn chỗ…" /> : null}
       {error ? <StatusView title="Chưa tìm được trạm" message={error instanceof ApiError ? error.message : 'Kiểm tra kết nối rồi thử lại.'} action={{ label: 'Thử lại', onClick: onRetry }} /> : null}

@@ -18,6 +18,8 @@ export interface RouteOrderRow {
   merchantPhone: string | null;
   merchantLat: number;
   merchantLng: number;
+  wardCenterLat: number | null;
+  wardCenterLng: number | null;
   containerCode: string;
   expectedLiters: number;
   priority: number;
@@ -79,6 +81,8 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         u."phone" AS "merchantPhone",
         ST_Y(COALESCE(m."location", ST_SetSRID(ST_MakePoint(COALESCE(w."center_lng", $1), COALESCE(w."center_lat", $2)), 4326)::geography)::geometry)::float8 AS "merchantLat",
         ST_X(COALESCE(m."location", ST_SetSRID(ST_MakePoint(COALESCE(w."center_lng", $1), COALESCE(w."center_lat", $2)), 4326)::geography)::geometry)::float8 AS "merchantLng",
+        w."center_lat"::float8 AS "wardCenterLat",
+        w."center_lng"::float8 AS "wardCenterLng",
         c."qr_code" AS "containerCode",
         COALESCE(o."expected_liters", 0)::float8 AS "expectedLiters",
         o."priority"::float8 AS "priority",

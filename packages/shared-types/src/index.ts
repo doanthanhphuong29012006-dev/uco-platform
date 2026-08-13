@@ -210,6 +210,7 @@ export interface RouteStop {
   expected_liters: number;
   priority: number;
   distance_m: number;
+  ward_center?: GeoPoint | null;
 }
 
 export interface CurrentRouteResponse {

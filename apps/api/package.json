@@ -6,7 +6,7 @@
     "dev": "nest start --watch",
     "lint": "eslint \"src/**/*.ts\"",
     "start": "node dist/main.js",
-    "test": "jest --passWithNoTests --runInBand --forceExit",
+    "test": "jest --passWithNoTests --runInBand",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -177,8 +177,10 @@ describe('Collections idempotency and geo validation (e2e)', () => {
       })
       .expect(201);
     const alerts = await prisma.alert.count({ where: { transactionId: response.body.id, type: 'GEO_MISMATCH' } });
+    const alert = await prisma.alert.findFirst({ where: { transactionId: response.body.id, type: 'GEO_MISMATCH' } });
     expect(response.body.quality).toBe('FLAG');
     expect(alerts).toBe(1);
+    expect(alert?.severity).toBe('HIGH');
   });
 
   it('returns collection history for the collector', async () => {

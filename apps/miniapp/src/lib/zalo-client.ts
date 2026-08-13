@@ -1,8 +1,5 @@
 import type { GeoPoint } from '@eco-oil/shared-types';
 
-export const WARD_CENTER: GeoPoint = { lat: 10.7818, lng: 106.6851 };
-export const MOCK_LOCATION: GeoPoint = { lat: 10.7769, lng: 106.7009 };
-
 export interface PhotoAsset {
   url: string;
   width: number;
@@ -20,7 +17,7 @@ export interface IZaloClient {
   login(): Promise<SeedAccount>;
   setSeedAccount(account: SeedAccount): void;
   getAccessToken(): Promise<string>;
-  getLocation(): Promise<GeoPoint>;
+  getLocation(fallback?: GeoPoint | null): Promise<GeoPoint | null>;
   scanQRCode(): Promise<string>;
   chooseImage(): Promise<PhotoAsset>;
   openDirections(destination: GeoPoint): void;
@@ -66,7 +63,7 @@ export function isZaloEnvironment(): boolean {
 }
 
 async function browserLocation(): Promise<GeoPoint> {
-  if (!navigator.geolocation) {
+  if (typeof navigator === 'undefined' || !navigator.geolocation) {
     throw new Error('GPS is not available');
   }
   return new Promise<GeoPoint>((resolve, reject) => {
@@ -117,7 +114,7 @@ class RealZaloClient implements IZaloClient {
     return import('zmp-sdk').then(({ getAccessToken }) => getAccessToken());
   }
 
-  async getLocation(): Promise<GeoPoint> {
+  async getLocation(): Promise<GeoPoint | null> {
     const { getLocation } = await import('zmp-sdk');
     await getLocation();
     try {
@@ -188,8 +185,12 @@ class MockZaloClient implements IZaloClient {
     return `mock-access-token:${this.seedAccount.zaloId}`;
   }
 
-  async getLocation(): Promise<GeoPoint> {
-    return MOCK_LOCATION;
+  async getLocation(fallback: GeoPoint | null = null): Promise<GeoPoint | null> {
+    try {
+      return await browserLocation();
+    } catch {
+      return fallback;
+    }
   }
 
   async scanQRCode(): Promise<string> {
