@@ -7,6 +7,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { PaymentsService } from '../src/modules/payments/payments.service';
+import { paymentPeriodFor } from '../src/modules/payments/payment-period';
 
 const collectorUserId = '40000000-0000-4000-8000-000000000201';
 const collectorId = '50000000-0000-4000-8000-000000000001';
@@ -19,10 +21,15 @@ const containerTwoId = '60000000-0000-4000-8000-000000000002';
 const containerFourId = '60000000-0000-4000-8000-000000000004';
 const containerSevenId = '60000000-0000-4000-8000-000000000007';
 const containerEightId = '60000000-0000-4000-8000-000000000009';
+const containerOneId = '60000000-0000-4000-8000-000000000001';
+const containerThreeId = '60000000-0000-4000-8000-000000000003';
+const containerFiveId = '60000000-0000-4000-8000-000000000005';
+const containerSixId = '60000000-0000-4000-8000-000000000006';
 
 describe('Collections idempotency and geo validation (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
+  let paymentsService: PaymentsService;
 
   async function login(zaloId: string, phone: string): Promise<string> {
     const response = await request(app.getHttpServer())
@@ -32,11 +39,11 @@ describe('Collections idempotency and geo validation (e2e)', () => {
     return response.body.access_token as string;
   }
 
-  async function createOrder(token: string, containerId: string, expectedLiters: number) {
+  async function createOrder(token: string, containerId: string, expectedLiters?: number) {
     return request(app.getHttpServer())
       .post('/api/v1/orders/ready')
       .set('Authorization', 'Bearer ' + token)
-      .send({ container_id: containerId, expected_liters: expectedLiters })
+      .send({ container_id: containerId, ...(expectedLiters === undefined ? {} : { expected_liters: expectedLiters }) })
       .expect(201);
   }
 
@@ -47,13 +54,14 @@ describe('Collections idempotency and geo validation (e2e)', () => {
     app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
     await app.init();
     prisma = app.get(PrismaService);
+    paymentsService = app.get(PaymentsService);
 
     await prisma.collectionOrder.updateMany({
       where: { status: { in: ['READY', 'ASSIGNED'] } },
       data: { status: 'CANCELLED', cancelledAt: new Date() },
     });
     await prisma.container.updateMany({
-      where: { id: { in: [containerTwoId, containerFourId, containerSevenId, containerEightId] } },
+      where: { id: { in: [containerOneId, containerTwoId, containerThreeId, containerFourId, containerFiveId, containerSixId, containerSevenId, containerEightId] } },
       data: { state: 'AT_MERCHANT', lastSeenAt: null },
     });
     await prisma.user.update({ where: { id: collectorUserId }, data: { role: Role.COLLECTOR } });
@@ -181,6 +189,96 @@ describe('Collections idempotency and geo validation (e2e)', () => {
     expect(response.body.quality).toBe('FLAG');
     expect(alerts).toBe(1);
     expect(alert?.severity).toBe('HIGH');
+  });
+
+  it('creates a MEDIUM COLLECTION_LITERS_DEVIATION alert for 17 reported and 30 collected liters', async () => {
+    const merchantToken = await login('zalo_merchant_01', '0900000001');
+    const collectorToken = await login('zalo_collector_01', '0910000001');
+    const order = await createOrder(merchantToken, containerOneId, 17);
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/collections')
+      .set('Authorization', 'Bearer ' + collectorToken)
+      .send({
+        client_uuid: randomUUID(),
+        order_id: order.body.id,
+        container_code: 'ECO-UCO-Q3-P7-001',
+        actual_liters: 30,
+        quality: 'PASS',
+        geo: { lat: 10.78255, lng: 106.68475 },
+        photos: [],
+      })
+      .expect(201);
+    const alert = await prisma.alert.findFirst({ where: { transactionId: response.body.id, type: 'COLLECTION_LITERS_DEVIATION' } });
+    expect(alert).toMatchObject({ type: 'COLLECTION_LITERS_DEVIATION', severity: 'MEDIUM' });
+    expect(alert?.message).toContain('17 L');
+    expect(alert?.message).toContain('30 L');
+    expect(alert?.message).toContain('76.5%');
+    expect(response.body.quality).toBe('PASS');
+  });
+
+  it('does not create a deviation alert when 20 reported and 22 collected liters are within 30 percent', async () => {
+    const merchantToken = await login('zalo_merchant_02', '0900000002');
+    const collectorToken = await login('zalo_collector_01', '0910000001');
+    const order = await createOrder(merchantToken, containerThreeId, 20);
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/collections')
+      .set('Authorization', 'Bearer ' + collectorToken)
+      .send({
+        client_uuid: randomUUID(),
+        order_id: order.body.id,
+        container_code: 'ECO-UCO-Q3-P7-003',
+        actual_liters: 22,
+        quality: 'PASS',
+        geo: { lat: 10.78195, lng: 106.68535 },
+        photos: [],
+      })
+      .expect(201);
+    expect(await prisma.alert.count({ where: { transactionId: response.body.id, type: 'COLLECTION_LITERS_DEVIATION' } })).toBe(0);
+  });
+
+  it('does not create a deviation alert when an order has no expected liters', async () => {
+    const merchantToken = await login('zalo_merchant_03', '0900000003');
+    const collectorToken = await login('zalo_collector_01', '0910000001');
+    const order = await createOrder(merchantToken, containerFiveId);
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/collections')
+      .set('Authorization', 'Bearer ' + collectorToken)
+      .send({
+        client_uuid: randomUUID(),
+        order_id: order.body.id,
+        container_code: 'ECO-UCO-Q3-P7-005',
+        actual_liters: 30,
+        quality: 'PASS',
+        geo: { lat: 10.78305, lng: 106.68615 },
+        photos: [],
+      })
+      .expect(201);
+    expect(await prisma.alert.count({ where: { transactionId: response.body.id, type: 'COLLECTION_LITERS_DEVIATION' } })).toBe(0);
+  });
+
+  it('keeps a deviation transaction PASS and allows it to be finalized as a payment', async () => {
+    const merchantToken = await login('zalo_merchant_03', '0900000003');
+    const collectorToken = await login('zalo_collector_01', '0910000001');
+    const order = await createOrder(merchantToken, containerSixId, 10);
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/collections')
+      .set('Authorization', 'Bearer ' + collectorToken)
+      .send({
+        client_uuid: randomUUID(),
+        order_id: order.body.id,
+        container_code: 'ECO-UCO-Q3-P7-006',
+        actual_liters: 20,
+        quality: 'PASS',
+        geo: { lat: 10.78305, lng: 106.68615 },
+        photos: [],
+      })
+      .expect(201);
+    expect(response.body.quality).toBe('PASS');
+    const transaction = await prisma.collectionTransaction.findUniqueOrThrow({ where: { id: response.body.id } });
+    const period = paymentPeriodFor(transaction.collectedAt);
+    await paymentsService.run(period, '40000000-0000-4000-8000-000000000999');
+    expect(await prisma.payment.findUnique({ where: { transactionId: response.body.id } })).not.toBeNull();
+    await prisma.payment.delete({ where: { transactionId: response.body.id } });
   });
 
   it('returns collection history for the collector', async () => {

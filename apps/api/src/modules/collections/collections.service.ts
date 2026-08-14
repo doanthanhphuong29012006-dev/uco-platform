@@ -39,6 +39,8 @@ type CollectionRow = {
   geo_lng: number | null;
 };
 
+const COLLECTION_LITERS_DEVIATION_THRESHOLD_PCT = 0.3;
+
 @Injectable()
 export class CollectionsService {
   constructor(
@@ -197,6 +199,26 @@ export class CollectionsService {
             details: { distance_m: distanceM, threshold_m: threshold },
           },
         });
+      }
+      const expectedLiters = Number(order.expectedLiters ?? 0);
+      if (expectedLiters > 0) {
+        const deviationPct = Math.abs(input.actual_liters - expectedLiters) / expectedLiters;
+        if (deviationPct > COLLECTION_LITERS_DEVIATION_THRESHOLD_PCT) {
+          await tx.alert.create({
+            data: {
+              transactionId: transaction.id,
+              type: AlertType.COLLECTION_LITERS_DEVIATION,
+              severity: AlertSeverity.MEDIUM,
+              message: `Merchant reported ${expectedLiters} L; collector recorded ${input.actual_liters} L; deviation ${(deviationPct * 100).toFixed(1)}%.`,
+              details: {
+                expected_liters: expectedLiters,
+                actual_liters: input.actual_liters,
+                deviation_pct: deviationPct,
+                threshold_pct: COLLECTION_LITERS_DEVIATION_THRESHOLD_PCT,
+              },
+            },
+          });
+        }
       }
       return { row: await this.loadById(tx, transaction.id), replayed: false };
       });
