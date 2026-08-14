@@ -194,7 +194,7 @@ function CollectorRouteScreen({ stops, route, location, locationDenied, complete
         <div className="route-progress"><span className={routeFill >= 80 ? 'route-progress-high' : ''} style={{ width: `${routeFill}%` }} /></div>
         <div className="route-capacity-bottom"><span>{routeFill}% dung tích xe</span><span>{formatLiters(route.route.remaining_capacity_l)} còn trống</span></div>
       </section>
-      <div className="route-summary-line"><strong>{Object.keys(completed).length} / {totalStops} điểm đã thu</strong><button className="text-button" onClick={onOpenSummary}>Tóm tắt ca</button></div>
+      <div className="route-summary-line"><strong>{Object.keys(completed).length} / {Math.max(totalStops, Object.keys(completed).length)} điểm đã thu</strong><button className="text-button" onClick={onOpenSummary}>Tóm tắt ca</button></div>
       {stops.length === 0 ? (
         <StatusView title="Đã hoàn thành tuyến" message={completedLiters > 0 ? `Đã thu ${formatLiters(completedLiters)}. Bạn có thể xem lại tóm tắt ca.` : 'Hiện chưa có điểm READY trong phường.'} action={{ label: 'Xem tóm tắt ca', onClick: onOpenSummary }} />
       ) : (
@@ -419,14 +419,16 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
 
 function CollectorSummaryScreen({ route, completed, totalStops, onBack, onOpenDelivery }: { route: CurrentRouteResponse | undefined; completed: Record<string, CompletedStop>; totalStops: number; onBack: () => void; onOpenDelivery: () => void }) {
   const totalCollected = Object.values(completed).reduce((sum, item) => sum + item.liters, 0);
+  const completedCount = Object.keys(completed).length;
+  const displayedTotalStops = Math.max(totalStops, completedCount);
   const vehicleCapacity = route ? route.total_expected_liters + route.remaining_capacity_l : 0;
   return (
     <div className="page-content collector-content summary-page">
       <button className="back-button" onClick={onBack}>← Về tuyến hôm nay</button>
       <header className="collector-screen-heading"><p className="eyebrow">KẾT QUẢ CA</p><h1>Tóm tắt thu gom</h1></header>
       <div className="summary-hero"><span>Đã thu hôm nay</span><strong>{formatLiters(totalCollected)}</strong></div>
-      <section className="summary-grid"><div><span>Điểm đã thu</span><strong>{Object.keys(completed).length} / {totalStops}</strong></div><div><span>Dung tích còn lại</span><strong>{formatLiters(Math.max(vehicleCapacity - totalCollected, 0))}</strong></div></section>
-      <button className="station-button" onClick={onOpenDelivery} disabled={Object.keys(completed).length === 0}>Đi nộp trạm <small>{Object.keys(completed).length === 0 ? 'Chưa có giao dịch' : 'Đối soát và chọn trạm'}</small></button>
+      <section className="summary-grid"><div><span>Điểm đã thu</span><strong>{completedCount} / {displayedTotalStops}</strong></div><div><span>Dung tích còn lại</span><strong>{formatLiters(Math.max(vehicleCapacity - totalCollected, 0))}</strong></div></section>
+      <button className="station-button" onClick={onOpenDelivery} disabled={completedCount === 0}>Đi nộp trạm <small>{completedCount === 0 ? 'Chưa có giao dịch' : 'Đối soát và chọn trạm'}</small></button>
     </div>
   );
 }

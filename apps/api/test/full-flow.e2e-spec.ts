@@ -38,8 +38,9 @@ describe('Full merchant-to-station working shift (e2e)', () => {
 
     // Keep this end-to-end scenario isolated from other suites sharing uco_test.
     await prisma.alert.deleteMany();
-    await prisma.collectionTransaction.deleteMany();
+    await prisma.payment.deleteMany();
     await prisma.stationDelivery.deleteMany();
+    await prisma.collectionTransaction.deleteMany();
     await prisma.auditLog.deleteMany();
     await prisma.collectionOrder.deleteMany();
     await prisma.station.updateMany({ data: { currentVolumeLiters: 0 } });

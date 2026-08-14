@@ -15,6 +15,7 @@ import type {
   AdminContainerCreateInput,
   AdminContainerListQueryInput,
   AdminContainerReturnInput,
+  AdminContainerCancelTransitInput,
   ContainerAssignInput,
   AdminWardCreateInput,
   AdminWardPatchInput,
@@ -800,6 +801,71 @@ export class AdminService {
     return this.serializeAdminContainer(row);
   }
 
+  async cancelContainerTransit(id: string, input: AdminContainerCancelTransitInput, actorUserId: string) {
+    const result = await this.prisma.$transaction(async (tx) => {
+      const container = await tx.container.findUnique({ where: { id }, include: { merchant: true } });
+      if (!container) throw new NotFoundException('Container not found');
+      if (container.state !== 'IN_TRANSIT') {
+        throw new BadRequestException({
+          code: 'CONTAINER_NOT_IN_TRANSIT',
+          message: 'Can không ở trạng thái đang vận chuyển',
+          details: { state: container.state },
+        });
+      }
+      if (!container.merchantId || !container.merchant) {
+        throw new BadRequestException({
+          code: 'MERCHANT_REQUIRED',
+          message: 'Can đang vận chuyển chưa được gắn với quán',
+          details: null,
+        });
+      }
+
+      const pendingTransactions = await tx.collectionTransaction.findMany({
+        where: { containerId: id, stationDeliveryId: null, deletedAt: null },
+        select: { id: true },
+      });
+      const affectedTransactionIds = pendingTransactions.map((transaction) => transaction.id);
+      const before = { state: container.state, merchant_id: container.merchantId };
+      const after = {
+        state: 'AT_MERCHANT',
+        merchant_id: container.merchantId,
+        note: input.note ?? null,
+        affected_transaction_ids: affectedTransactionIds,
+      };
+      const updated = await tx.container.update({
+        where: { id },
+        data: { state: 'AT_MERCHANT', lastSeenAt: new Date() },
+        include: { merchant: true },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorUserId,
+          action: 'CANCEL_TRANSIT',
+          entityType: 'Container',
+          entityId: id,
+          details: { before, after },
+        },
+      });
+      await tx.alert.create({
+        data: {
+          type: AlertType.CONTAINER_TRANSIT_CANCELLED,
+          severity: AlertSeverity.MEDIUM,
+          message: `Đã huỷ ca vận chuyển can ${container.qrCode} của quán ${container.merchant.businessName}; ${affectedTransactionIds.length} giao dịch chưa nộp trạm.`,
+          details: {
+            container_id: id,
+            qr_code: container.qrCode,
+            merchant_id: container.merchantId,
+            merchant_name: container.merchant.businessName,
+            affected_transaction_ids: affectedTransactionIds,
+            note: input.note ?? null,
+          },
+        },
+      });
+      return { updated, affectedTransactionIds };
+    });
+    return { ...this.serializeAdminContainer(result.updated), affected_transaction_ids: result.affectedTransactionIds };
+  }
+
   private async nextAdminQrCode(wardCode: string) {
     const prefix = containerQrPrefix(wardCode);
     const rows = await this.prisma.container.findMany({ where: { qrCode: { startsWith: prefix } }, select: { qrCode: true } });
@@ -818,13 +884,14 @@ export class AdminService {
     return wards.find((ward) => wardLookupKey(ward.code) === wardLookupKey(normalized)) ?? null;
   }
 
-  private serializeAdminContainer(row: { id: string; qrCode: string; state: string; status: string; capacityLiters: Prisma.Decimal | null; merchant: { id: string; businessName: string; address: string | null } | null }) {
+  private serializeAdminContainer(row: { id: string; qrCode: string; state: string; status: string; capacityLiters: Prisma.Decimal | null; lastSeenAt: Date | null; merchant: { id: string; businessName: string; address: string | null } | null }) {
     return {
       id: row.id,
       qr_code: row.qrCode,
       state: row.state,
       status: row.status,
       capacity_liters: row.capacityLiters === null ? null : Number(row.capacityLiters),
+      last_seen_at: row.lastSeenAt,
       merchant: row.merchant ? { id: row.merchant.id, name: row.merchant.businessName, address: row.merchant.address } : null,
     };
   }

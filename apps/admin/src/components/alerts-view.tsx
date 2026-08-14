@@ -12,6 +12,7 @@ const ALERT_LABELS: Record<string, string> = {
   GEO_MISMATCH: 'Sai vị trí',
   DELIVERY_VARIANCE: 'Lệch nộp trạm',
   COLLECTION_LITERS_DEVIATION: 'Lệch số lít so với quán báo',
+  CONTAINER_TRANSIT_CANCELLED: 'Đã huỷ ca vận chuyển của can',
 };
 
 function alertLabel(type: string): string {
@@ -62,6 +63,7 @@ export function AlertsView() {
         <option value="GEO_MISMATCH">Sai vị trí</option>
         <option value="DELIVERY_VARIANCE">Lệch nộp trạm</option>
         <option value="COLLECTION_LITERS_DEVIATION">Lệch số lít so với quán báo</option>
+        <option value="CONTAINER_TRANSIT_CANCELLED">Đã huỷ ca vận chuyển của can</option>
       </select>
       <select className="min-h-11 rounded-xl border border-slate-300 bg-white px-3" value={resolved} onChange={(event) => setResolved(event.target.value)}>
         <option value="false">Chưa xử lý</option>

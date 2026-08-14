@@ -55,6 +55,7 @@ export enum AlertType {
   DELIVERY_VARIANCE = 'DELIVERY_VARIANCE',
   WARD_LOCATION_MISMATCH = 'WARD_LOCATION_MISMATCH',
   COLLECTION_LITERS_DEVIATION = 'COLLECTION_LITERS_DEVIATION',
+  CONTAINER_TRANSIT_CANCELLED = 'CONTAINER_TRANSIT_CANCELLED',
 }
 
 export enum AlertSeverity {
@@ -235,6 +236,7 @@ export interface AdminContainerSummary {
   state: ContainerState;
   status: EntityStatus;
   capacity_liters: number | null;
+  last_seen_at: string | null;
   merchant: { id: string; name: string; address: string | null } | null;
 }
 

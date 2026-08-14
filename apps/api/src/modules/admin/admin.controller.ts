@@ -13,6 +13,7 @@ import {
   adminContainerCreateSchema,
   adminContainerListQuerySchema,
   adminContainerReturnSchema,
+  adminContainerCancelTransitSchema,
   containerAssignSchema,
   adminWardCreateSchema,
   adminWardPatchSchema,
@@ -122,6 +123,12 @@ export class AdminController {
   @Post('containers/:id/return-to-merchant')
   returnContainerToMerchant(@Param('id') id: string, @Body() body: unknown, @CurrentUser() user: AccessTokenPayload) {
     return this.service.returnContainerToMerchant(id, adminContainerReturnSchema.parse(body ?? {}), user.sub);
+  }
+
+  @Roles(Role.ADMIN)
+  @Post('containers/:id/cancel-transit')
+  cancelContainerTransit(@Param('id') id: string, @Body() body: unknown, @CurrentUser() user: AccessTokenPayload) {
+    return this.service.cancelContainerTransit(id, adminContainerCancelTransitSchema.parse(body ?? {}), user.sub);
   }
 
   @Roles(Role.ADMIN)

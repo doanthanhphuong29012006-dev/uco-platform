@@ -70,6 +70,7 @@ export const api = {
   assignContainer: (id: string, merchant_id: string) => client.request<AdminContainerSummary>(`/admin/containers/${id}/assign`, { method: 'POST', body: { merchant_id } }),
   unassignContainer: (id: string) => client.request<AdminContainerSummary>(`/admin/containers/${id}/unassign`, { method: 'POST' }),
   returnContainerToMerchant: (id: string, body: AdminContainerReturnRequest) => client.request<AdminContainerSummary>(`/admin/containers/${id}/return-to-merchant`, { method: 'POST', body }),
+  cancelContainerTransit: (id: string, body: { note?: string }) => client.request<AdminContainerSummary & { affected_transaction_ids: string[] }>(`/admin/containers/${id}/cancel-transit`, { method: 'POST', body }),
   payments: (params: { period?: string; merchant_id?: string; status?: string; page?: number; limit?: number }) =>
     client.request<PaymentListResponse>(`/admin/payments${query(params)}`),
   runPayments: (period: string) => client.request<PaymentRunResponse>(`/admin/payments/run?period=${encodeURIComponent(period)}`, { method: 'POST' }),
