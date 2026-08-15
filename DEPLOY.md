@@ -78,3 +78,83 @@ Mini App dùng các tài khoản `zalo_demo_merchant_01` đến `zalo_demo_merch
 - `JWT_SECRET` không có fallback trong code.
 - `DEMO_MODE=true` chặn Admin qua đường `/auth/zalo` và `/auth/dev-accounts` không trả Admin.
 - Redis là tùy chọn; PostgreSQL vẫn bắt buộc.
+
+- ## Triển khai cloud (cấu hình đang chạy thật)
+
+Bản demo đang chạy trên: Neon (PostgreSQL + PostGIS), Upstash (Redis),
+Render (API), Vercel (Mini App + Admin). Toàn bộ ở Singapore.
+
+### Render — service API
+
+Build Command:
+
+```pnpm install --frozen-lockfile && pnpm --filter api exec prisma generate --schema=../../prisma/schema.prisma && pnpm --filter "api..." build
+```
+
+Start Command:
+
+```
+node apps/api/dist/main.js
+```
+
+Ba điểm bắt buộc, mỗi điểm đều từng làm deploy chết:
+
+- `--filter "api..."` có ba dấu chấm, để build cả package phụ thuộc
+  (`@eco-oil/validation`, `@eco-oil/shared-types`). Thiếu ba chấm thì lỗi
+  `TS2307: Cannot find module '@eco-oil/validation'`.
+- `--schema=../../prisma/schema.prisma` vì schema nằm ở gốc repo, không nằm
+  trong `apps/api`.
+- **Không set biến `PORT`.** Render tự cấp cổng; set tay thì báo
+  "No open ports detected" rồi kill service.
+- Start Command **không được** chứa `prisma migrate deploy`. Chuỗi kết nối
+  Neon là dạng pooled, không xin được advisory lock của Prisma, nên migration
+  timeout `P1002` và server chết trong vòng lặp restart.
+
+Biến môi trường trên Render: `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`,
+`ADMIN_PASSWORD`, `CORS_ORIGINS`, `DEMO_MODE`, `NODE_ENV`, `ZALO_AUTH_MODE`.
+
+```
+CORS_ORIGINS=https://uco-platform-miniapp.vercel.app,https://uco-platform-admin.vercel.app
+```
+
+Không có dấu cách sau dấu phẩy, không có dấu `/` ở cuối. Sau khi sửa biến
+phải bấm **Save Changes** rồi F5 lại trang để xác nhận — giá trị hiện đúng
+trên màn hình không có nghĩa là đã lưu.
+
+### Vercel — hai project riêng
+
+| Project | Root Directory | Framework |
+|---|---|---|
+| Mini App | `apps/miniapp` | Vite |
+| Admin | `apps/admin` | Next.js |
+
+Root Directory là bắt buộc; trỏ vào gốc repo thì build sai app.
+
+### Quy trình deploy khi có migration mới
+
+Render tự deploy mỗi lần push. Nên nếu push trước, code mới sẽ chạy trên
+schema cũ và trả lỗi 500. Thứ tự đúng:
+
+```powershell
+cd "<đường dẫn repo>"
+$env:DATABASE_URL="<chuỗi kết nối Neon>"
+pnpm --filter api exec prisma migrate deploy --schema=../../prisma/schema.prisma
+# xác nhận "All migrations have been successfully applied", rồi mới push
+```
+
+Đóng cửa sổ PowerShell sau khi xong để biến không lẫn vào lần chạy dev sau.
+Không để dòng `$env:DATABASE_URL` xuất hiện trong ảnh chụp màn hình.
+
+Bước này chưa tự động. Hướng xử lý lâu dài: thêm `directUrl` vào datasource
+Prisma trỏ chuỗi kết nối không pooled, hoặc tạo one-off job trên Render.
+
+### Dữ liệu tham chiếu
+
+`prisma migrate deploy` chỉ tạo cấu trúc, **không chạy seed**. Sau lần
+migrate đầu tiên trên database trống phải tự nhập dữ liệu tham chiếu, ít
+nhất là bảng `oil_prices` — thiếu giá thì chốt kỳ ném `NO_PRICE_CONFIGURED`.
+
+### Lưu ý khi demo
+
+Render gói Free ngủ khi không có request; lần gọi đầu mất khoảng 50 giây.
+Gọi trước `GET /health` vài phút trước khi trình diễn.
