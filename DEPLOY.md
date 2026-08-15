@@ -87,8 +87,8 @@ Render (API), Vercel (Mini App + Admin). Toàn bộ ở Singapore.
 ### Render — service API
 
 Build Command:
-
-```pnpm install --frozen-lockfile && pnpm --filter api exec prisma generate --schema=../../prisma/schema.prisma && pnpm --filter "api..." build
+```
+pnpm install --frozen-lockfile && pnpm --filter api exec prisma generate --schema=../../prisma/schema.prisma && pnpm --filter "api..." build
 ```
 
 Start Command:
