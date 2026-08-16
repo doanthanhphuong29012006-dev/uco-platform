@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ContainerState, Quality } from '@eco-oil/shared-types';
+import { ContainerState, DEFAULT_DENSITY_KG_PER_LITER, Quality } from '@eco-oil/shared-types';
 import type { CollectionCreateRequest, ContainerLookupResponse, CurrentRouteResponse, GeoPoint, RouteStop } from '@eco-oil/shared-types';
 import { ApiError } from '../lib/api';
 import { formatLiters } from '../lib/formatters';
@@ -26,6 +26,7 @@ type CollectorScreen =
 
 export interface CompletedStop {
   liters: number;
+  kilograms: number | null;
   clientUuid: string;
   stop: RouteStop;
 }
@@ -93,8 +94,8 @@ export function CollectorFlow() {
     }
   }
 
-  function onCollectionSaved(stop: RouteStop, liters: number, clientUuid: string): void {
-    setCompleted((current) => ({ ...current, [stop.order_id]: { liters, clientUuid, stop } }));
+  function onCollectionSaved(stop: RouteStop, liters: number, kilograms: number | null, clientUuid: string): void {
+    setCompleted((current) => ({ ...current, [stop.order_id]: { liters, kilograms, clientUuid, stop } }));
     setScreen({ name: 'route' });
     void queryClient.invalidateQueries({ queryKey: ['collector-route'] });
   }
@@ -111,7 +112,7 @@ export function CollectorFlow() {
         container={screen.container}
         containerCode={screen.containerCode}
         onBack={() => setScreen({ name: 'qr', stop: screen.stop })}
-        onSuccess={(liters, clientUuid) => onCollectionSaved(screen.stop, liters, clientUuid)}
+        onSuccess={(liters, kilograms, clientUuid) => onCollectionSaved(screen.stop, liters, kilograms, clientUuid)}
       />
     );
   } else if (screen.name === 'summary') {
@@ -308,8 +309,9 @@ function CollectorQrScreen({ stop, onBack, onContinue }: { stop: RouteStop; onBa
   );
 }
 
-function CollectorEntryScreen({ stop, container, containerCode, onBack, onSuccess }: { stop: RouteStop; container: ContainerLookupResponse; containerCode: string; onBack: () => void; onSuccess: (liters: number, clientUuid: string) => void }) {
-  const [liters, setLiters] = useState('');
+function CollectorEntryScreen({ stop, container, containerCode, onBack, onSuccess }: { stop: RouteStop; container: ContainerLookupResponse; containerCode: string; onBack: () => void; onSuccess: (liters: number, kilograms: number | null, clientUuid: string) => void }) {
+  const [liters, setLiters] = useState(stop.expected_liters > 0 ? stop.expected_liters.toFixed(1) : '');
+  const [kilograms, setKilograms] = useState('');
   const [quality, setQuality] = useState<Quality>(Quality.PASS);
   const [photos, setPhotos] = useState<PhotoAsset[]>([]);
   const [geo, setGeo] = useState<GeoPoint | null>(null);
@@ -321,12 +323,19 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
   const [clientUuid] = useState(() => crypto.randomUUID());
   const capacity = Number(container.capacity_liters ?? 0);
   const actualLiters = Number(liters);
+  const actualKg = kilograms.trim() === '' ? null : Number(kilograms);
   const maxLiters = capacity * 1.1;
   const invalidLiters = !Number.isFinite(actualLiters) || actualLiters <= 0 || actualLiters > maxLiters;
+  const invalidKg = actualKg !== null && (!Number.isFinite(actualKg) || actualKg <= 0);
 
   function adjustLiters(amount: number): void {
     const next = Math.max(0, (Number(liters) || 0) + amount);
     setLiters(next.toFixed(1));
+  }
+
+  function adjustKilograms(amount: number): void {
+    const next = Math.max(0, (Number(kilograms) || 0) + amount);
+    setKilograms(next.toFixed(1));
   }
 
   async function takePhoto(): Promise<void> {
@@ -343,7 +352,7 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
   }
 
   async function submit(): Promise<void> {
-    if (invalidLiters) {
+    if (invalidLiters || invalidKg) {
       setError(`Số lít phải lớn hơn 0 và không vượt ${maxLiters.toFixed(1)} lít.`);
       return;
     }
@@ -378,6 +387,7 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
       order_id: stop.order_id,
        container_code: containerCode,
       actual_liters: actualLiters,
+      ...(actualKg === null ? {} : { actual_kg: actualKg }),
       quality,
       geo: currentGeo,
       photos: photos.map((photo) => photo.url),
@@ -387,7 +397,7 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
       await enqueueCollection(payload);
       setSuccess(true);
       void syncOutbox();
-      window.setTimeout(() => onSuccess(actualLiters, clientUuid), 450);
+      window.setTimeout(() => onSuccess(actualLiters, actualKg, clientUuid), 450);
     } catch {
       setError('Chưa lưu được dữ liệu trên máy. Đừng đóng màn hình, thử lại nhé.');
     } finally {
@@ -396,7 +406,7 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
   }
 
   if (success) {
-    return <div className="success-screen"><div className="success-icon">✓</div><h1>Đã lưu an toàn</h1><p>{formatLiters(actualLiters)} · Giao dịch sẽ tự đồng bộ khi có mạng.</p></div>;
+    return <div className="success-screen"><div className="success-icon">✓</div><h1>Đã lưu an toàn</h1><p>{formatLiters(actualLiters)} lít {actualKg === null ? `(~${(actualLiters * DEFAULT_DENSITY_KG_PER_LITER).toFixed(1)} kg ước lượng)` : `· ${actualKg.toFixed(1)} kg đã cân`} · Giao dịch sẽ tự đồng bộ khi có mạng.</p></div>;
   }
 
   return (
@@ -405,6 +415,9 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
        <header className="collector-screen-heading"><p className="eyebrow">GHI NHẬN THU GOM</p><h1>{container.merchant.name}</h1><p>{containerCode}</p></header>
       <section className="entry-target-card"><span>Số lít dự kiến</span><strong>{formatLiters(stop.expected_liters)}</strong><small>Mã giao dịch: {clientUuid.slice(0, 8)}…</small>{locationFallback ? <p className="location-banner">Không lấy được vị trí GPS, đang dùng vị trí trung tâm phường. Giao dịch có thể bị đánh dấu cần kiểm tra.</p> : null}</section>
       <section className="liter-entry-card">
+        <label htmlFor="actual-kilograms">Khá»‘i lÆ°á»£ng (kg Ä‘Ã£ cÃ¢n)</label>
+        <div className="large-number-input"><button onClick={() => adjustKilograms(-0.5)} disabled={saving}>âˆ’</button><input id="actual-kilograms" type="number" inputMode="decimal" step="0.5" min="0" value={kilograms} onChange={(event) => setKilograms(event.target.value)} placeholder="0.0" /><span>kg</span><button onClick={() => adjustKilograms(0.5)} disabled={saving}>+</button></div>
+        <p className={invalidKg ? 'error-text' : 'field-help'}>{actualKg === null ? 'KhÃ´ng cÃ³ sá»‘ cÃ¢n? Há»‡ thá»‘ng sáº½ Æ°á»›c lÆ°á»£ng kg tá»« sá»‘ lÃ­t bÃªn dÆ°á»›i.' : 'SCALE â€” sá»‘ kg nÃ y lÃ  sá»‘ cÃ¢n thá»±c táº¿.'}</p>
         <label htmlFor="actual-liters">Số lít thực tế</label>
         <div className="large-number-input"><button onClick={() => adjustLiters(-0.5)} disabled={saving}>−</button><input id="actual-liters" type="number" inputMode="decimal" step="0.5" min="0" value={liters} onChange={(event) => setLiters(event.target.value)} placeholder="0.0" /><span>lít</span><button onClick={() => adjustLiters(0.5)} disabled={saving}>+</button></div>
         <p className={invalidLiters && liters ? 'error-text' : 'field-help'}>Dung tích {formatLiters(capacity)} · tối đa {maxLiters.toFixed(1)} lít</p>
@@ -412,7 +425,7 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
       <section className="quality-card"><p className="section-label">Chất lượng dầu</p><div className="quality-options"><button className={quality === Quality.PASS ? 'quality-option selected' : 'quality-option'} onClick={() => setQuality(Quality.PASS)} disabled={saving}>✓ Đạt</button><button className={quality === Quality.FLAG ? 'quality-option selected flag-selected' : 'quality-option'} onClick={() => setQuality(Quality.FLAG)} disabled={saving}>⚠ Cần kiểm tra</button></div></section>
       {quality === Quality.FLAG ? <section className="photo-card"><div><strong>Ảnh kiểm tra</strong><p>{photos.length > 0 ? `${photos.length} ảnh đã chụp` : 'Cần ít nhất 1 ảnh'}</p></div><button className="secondary-button" onClick={() => { void takePhoto(); }} disabled={takingPhoto || saving}>{takingPhoto ? 'Đang chụp…' : 'Chụp ảnh'}</button></section> : null}
       {error ? <div className="error-panel">{error}</div> : null}
-      <button className="submit-collection-button" onClick={() => { void submit(); }} disabled={saving || invalidLiters || (quality === Quality.FLAG && photos.length === 0)}>{saving ? 'Đang lưu trên máy…' : 'Xác nhận thu gom'}</button>
+      <button className="submit-collection-button" onClick={() => { void submit(); }} disabled={saving || invalidLiters || invalidKg || (quality === Quality.FLAG && photos.length === 0)}>{saving ? 'Đang lưu trên máy…' : 'Xác nhận thu gom'}</button>
     </div>
   );
 }

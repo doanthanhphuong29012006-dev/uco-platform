@@ -48,6 +48,16 @@ enum Quality {
   FLAG
 }
 
+enum MassSource {
+  SCALE
+  ESTIMATED_FROM_VOLUME
+}
+
+enum PriceUnit {
+  PER_LITER
+  PER_KG
+}
+
 enum DeliveryStatus {
   OK
   FLAGGED
@@ -66,6 +76,7 @@ enum AlertType {
   WARD_LOCATION_MISMATCH
   COLLECTION_LITERS_DEVIATION
   CONTAINER_TRANSIT_CANCELLED
+  MASS_ESTIMATED_NOT_WEIGHED
 }
 
 enum AlertSeverity {
@@ -259,6 +270,9 @@ model CollectionTransaction {
   merchantId   String             @map("merchant_id") @db.Uuid
   collectorId  String             @map("collector_id") @db.Uuid
   actualLiters Decimal            @map("actual_liters") @db.Decimal(10, 2)
+  actualKg    Decimal?            @map("actual_kg") @db.Decimal(10, 3)
+  massSource  MassSource           @default(ESTIMATED_FROM_VOLUME) @map("mass_source")
+  densityFactor Decimal?           @map("density_factor") @db.Decimal(10, 6)
   quality      Quality
   geoPoint     Unsupported("geography(Point, 4326)")? @map("geo_point")
   photos       Json               @default("[]")
@@ -282,6 +296,7 @@ model CollectionTransaction {
 model OilPrice {
   id            String    @id @default(uuid()) @db.Uuid
   unitPrice     Decimal   @map("unit_price") @db.Decimal(14, 2)
+  unit          PriceUnit @default(PER_LITER)
   effectiveFrom DateTime  @map("effective_from") @db.Timestamptz(3)
   effectiveTo   DateTime? @map("effective_to") @db.Timestamptz(3)
   note          String?
@@ -296,8 +311,10 @@ model Payment {
   merchantId    String                @map("merchant_id") @db.Uuid
   transactionId String                @unique @map("transaction_id") @db.Uuid
   liters        Decimal               @db.Decimal(10, 2)
+  kilograms     Decimal?              @map("kilograms") @db.Decimal(10, 3)
   unitPrice     Decimal               @map("unit_price") @db.Decimal(14, 2)
   amount        Decimal               @db.Decimal(18, 0)
+  unit          PriceUnit             @default(PER_LITER)
   period        String
   status        PaymentStatus         @default(PENDING)
   paidAt        DateTime?             @map("paid_at") @db.Timestamptz(3)
@@ -318,6 +335,11 @@ model StationDelivery {
   expectedLiters Decimal        @map("expected_liters") @db.Decimal(10, 2)
   actualLiters   Decimal        @map("actual_liters") @db.Decimal(10, 2)
   varianceLiters Decimal        @map("variance_liters") @db.Decimal(10, 2)
+  expectedKg     Decimal?       @map("expected_kg") @db.Decimal(10, 3)
+  actualKg       Decimal?       @map("actual_kg") @db.Decimal(10, 3)
+  varianceKg     Decimal?       @map("variance_kg") @db.Decimal(10, 3)
+  massSource     MassSource     @default(ESTIMATED_FROM_VOLUME) @map("mass_source")
+  hasEstimatedMass Boolean      @default(false) @map("has_estimated_mass")
   variancePct    Decimal        @map("variance_pct") @db.Decimal(10, 6)
   status         DeliveryStatus @default(OK)
   note           String?

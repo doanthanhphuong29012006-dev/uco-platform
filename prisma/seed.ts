@@ -1,6 +1,7 @@
 import {
   ContainerState,
   MerchantApprovalStatus,
+  PriceUnit,
   PrismaClient,
   Role,
 } from '@prisma/client';
@@ -221,8 +222,9 @@ async function main(): Promise<void> {
       where: { id: merchant.id },
       update: {
         userId: merchant.userId,
-      businessName: merchant.businessName,
-      businessType: 'Quán ăn',
+        wardId,
+        businessName: merchant.businessName,
+        businessType: 'Quán ăn',
         address: merchant.address,
         avgDailyLiters: merchant.avgDailyLiters,
         lastCollectedAt: new Date(Date.now() - merchant.lastCollectedDaysAgo * 24 * 60 * 60 * 1000),
@@ -234,8 +236,9 @@ async function main(): Promise<void> {
       create: {
         id: merchant.id,
         userId: merchant.userId,
-      businessName: merchant.businessName,
-      businessType: 'Quán ăn',
+        wardId,
+        businessName: merchant.businessName,
+        businessType: 'Quán ăn',
         address: merchant.address,
         avgDailyLiters: merchant.avgDailyLiters,
         lastCollectedAt: new Date(Date.now() - merchant.lastCollectedDaysAgo * 24 * 60 * 60 * 1000),
@@ -258,7 +261,6 @@ async function main(): Promise<void> {
       where: { id: collector.id },
       update: {
         userId: collector.userId,
-        wardId,
         displayName: collector.displayName,
         vehicleType: 'Xe máy có thùng chứa',
         maxCapacityLiters: 100,
@@ -269,7 +271,6 @@ async function main(): Promise<void> {
       create: {
         id: collector.id,
         userId: collector.userId,
-        wardId,
         displayName: collector.displayName,
         vehicleType: 'Xe máy có thùng chứa',
         maxCapacityLiters: 100,
@@ -412,6 +413,7 @@ async function main(): Promise<void> {
     create: {
       id: initialOilPriceId,
       unitPrice: 6000,
+      unit: PriceUnit.PER_LITER,
       effectiveFrom: startOfCurrentMonthInVietnam(),
       effectiveTo: null,
       note: 'Đơn giá khởi tạo cho MVP',

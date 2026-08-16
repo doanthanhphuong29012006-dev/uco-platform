@@ -48,6 +48,9 @@ type OverviewRow = {
 type ReconciliationRow = {
   collected_liters: number;
   delivered_liters: number;
+  collected_kg: number;
+  delivered_kg: number;
+  has_estimated_mass: boolean;
   by_collector: unknown;
   undelivered_transactions: unknown;
 };
@@ -123,12 +126,14 @@ export class AdminService {
           'merchant_name', recent."merchant_name",
           'collector_name', recent."collector_name",
           'actual_liters', recent."actual_liters",
+          'actual_kg', recent."actual_kg",
+          'mass_source', recent."mass_source",
           'quality', recent."quality",
           'collected_at', recent."collected_at"
         ) ORDER BY recent."collected_at" DESC), '[]'::json) AS recent_transactions
         FROM (
           SELECT ct."id", m."business_name" AS "merchant_name", u."name" AS "collector_name",
-            ct."actual_liters"::float8 AS "actual_liters", ct."quality"::text AS "quality", ct."collected_at"
+            ct."actual_liters"::float8 AS "actual_liters", ct."actual_kg"::float8 AS "actual_kg", ct."mass_source"::text AS "mass_source", ct."quality"::text AS "quality", ct."collected_at"
           FROM "collection_transactions" ct
           JOIN "merchants" m ON m."id" = ct."merchant_id"
           LEFT JOIN "collectors" co ON co."id" = ct."collector_id"
@@ -185,10 +190,14 @@ export class AdminService {
     const rows = await this.prisma.$queryRaw<ReconciliationRow[]>`
       WITH collected AS (
         SELECT ct."collector_id", c."display_name" AS name, SUM(ct."actual_liters")::float8 AS collected_liters,
+          SUM(ct."actual_kg")::float8 AS collected_kg,
+          BOOL_OR(ct."mass_source" <> 'SCALE') AS collected_estimated,
           COALESCE(json_agg(json_build_object(
             'id', ct."id",
             'merchant_name', m."business_name",
             'liters', ct."actual_liters"::float8,
+            'kilograms', ct."actual_kg"::float8,
+            'mass_source', ct."mass_source"::text,
             'collected_at', ct."collected_at"
           ) ORDER BY ct."collected_at"), '[]'::json) AS transactions
         FROM "collection_transactions" ct
@@ -198,7 +207,9 @@ export class AdminService {
         GROUP BY ct."collector_id", c."display_name"
       ),
       delivered AS (
-        SELECT sd."collector_id", c."display_name" AS name, SUM(sd."actual_liters")::float8 AS delivered_liters
+        SELECT sd."collector_id", c."display_name" AS name, SUM(sd."actual_liters")::float8 AS delivered_liters,
+          SUM(sd."actual_kg")::float8 AS delivered_kg,
+          BOOL_OR(sd."has_estimated_mass") AS delivered_estimated
         FROM "station_deliveries" sd
         JOIN "collectors" c ON c."id" = sd."collector_id"
         WHERE sd."deleted_at" IS NULL AND sd."delivered_at" >= ${day} AND sd."delivered_at" < ${nextDay}
@@ -209,6 +220,9 @@ export class AdminService {
           COALESCE(c.name, d.name) AS name,
           COALESCE(c.collected_liters, 0)::float8 AS collected_liters,
           COALESCE(d.delivered_liters, 0)::float8 AS delivered_liters,
+          COALESCE(c.collected_kg, 0)::float8 AS collected_kg,
+          COALESCE(d.delivered_kg, 0)::float8 AS delivered_kg,
+          COALESCE(c.collected_estimated, false) OR COALESCE(d.delivered_estimated, false) AS has_estimated_mass,
           COALESCE(c.transactions, '[]'::json) AS transactions
         FROM collected c FULL OUTER JOIN delivered d ON d."collector_id" = c."collector_id"
       ),
@@ -217,6 +231,8 @@ export class AdminService {
           'id', ct."id",
           'merchant_name', m."business_name",
           'liters', ct."actual_liters"::float8,
+          'kilograms', ct."actual_kg"::float8,
+          'mass_source', ct."mass_source"::text,
           'collected_at', ct."collected_at"
         ) ORDER BY ct."collected_at"), '[]'::json) AS items
         FROM "collection_transactions" ct
@@ -229,14 +245,22 @@ export class AdminService {
       SELECT
         COALESCE((SELECT SUM("actual_liters")::float8 FROM "collection_transactions" WHERE "deleted_at" IS NULL AND "collected_at" >= ${day} AND "collected_at" < ${nextDay}), 0)::float8 AS collected_liters,
         COALESCE((SELECT SUM("actual_liters")::float8 FROM "station_deliveries" WHERE "deleted_at" IS NULL AND "delivered_at" >= ${day} AND "delivered_at" < ${nextDay}), 0)::float8 AS delivered_liters,
+        COALESCE((SELECT SUM("actual_kg")::float8 FROM "collection_transactions" WHERE "deleted_at" IS NULL AND "collected_at" >= ${day} AND "collected_at" < ${nextDay}), 0)::float8 AS collected_kg,
+        COALESCE((SELECT SUM("actual_kg")::float8 FROM "station_deliveries" WHERE "deleted_at" IS NULL AND "delivered_at" >= ${day} AND "delivered_at" < ${nextDay}), 0)::float8 AS delivered_kg,
+        COALESCE((SELECT BOOL_OR("mass_source" <> 'SCALE') FROM "collection_transactions" WHERE "deleted_at" IS NULL AND "collected_at" >= ${day} AND "collected_at" < ${nextDay}), false)
+          OR COALESCE((SELECT BOOL_OR("has_estimated_mass") FROM "station_deliveries" WHERE "deleted_at" IS NULL AND "delivered_at" >= ${day} AND "delivered_at" < ${nextDay}), false) AS has_estimated_mass,
         COALESCE((SELECT json_agg(json_build_object(
           'collector_id', collector_id,
           'name', name,
           'collected_l', collected_liters,
           'delivered_l', delivered_liters,
           'variance_l', collected_liters - delivered_liters,
+          'collected_kg', collected_kg,
+          'delivered_kg', delivered_kg,
+          'variance_kg', collected_kg - delivered_kg,
+          'has_estimated_mass', has_estimated_mass,
           'transactions', transactions,
-          'status', CASE WHEN ABS((collected_liters - delivered_liters) / NULLIF(collected_liters, 0)) > ${threshold} THEN 'FLAGGED' ELSE 'OK' END
+          'status', CASE WHEN ABS((collected_kg - delivered_kg) / NULLIF(collected_kg, 0)) - ${threshold} > 0.000000001 THEN 'FLAGGED' ELSE 'OK' END
         ) ORDER BY name) FROM collector_rows), '[]'::json) AS by_collector,
         (SELECT items FROM undelivered) AS undelivered_transactions
     `;
@@ -244,12 +268,20 @@ export class AdminService {
     const collected = Number(row?.collected_liters ?? 0);
     const delivered = Number(row?.delivered_liters ?? 0);
     const variance = collected - delivered;
+    const collectedKg = Number(row?.collected_kg ?? 0);
+    const deliveredKg = Number(row?.delivered_kg ?? 0);
+    const varianceKg = collectedKg - deliveredKg;
     return {
       date: day.toISOString().slice(0, 10),
       collected_liters: collected,
       delivered_liters: delivered,
       variance_l: variance,
       variance_pct: collected === 0 ? 0 : variance / collected,
+      collected_kg: collectedKg,
+      delivered_kg: deliveredKg,
+      variance_kg: varianceKg,
+      variance_kg_pct: collectedKg === 0 ? 0 : varianceKg / collectedKg,
+      has_estimated_mass: Boolean(row?.has_estimated_mass),
       by_collector: row?.by_collector ?? [],
       undelivered_transactions: row?.undelivered_transactions ?? [],
     };

@@ -7,7 +7,7 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { EntityStatus, MerchantApprovalStatus, PaymentStatus, Prisma } from '@prisma/client';
+import { EntityStatus, MerchantApprovalStatus, PaymentStatus, PriceUnit, Prisma } from '@prisma/client';
 import type {
   AdminPaymentListQueryInput,
   MerchantPaymentListQueryInput,
@@ -25,13 +25,18 @@ export class PaymentsService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async resolveUnitPrice(at: Date, database: PriceReader = this.prisma): Promise<Prisma.Decimal> {
+    const price = await this.resolvePrice(at, database);
+    return price.unitPrice;
+  }
+
+  private async resolvePrice(at: Date, database: PriceReader = this.prisma) {
     const price = await database.oilPrice.findFirst({
       where: {
         effectiveFrom: { lte: at },
         OR: [{ effectiveTo: null }, { effectiveTo: { gt: at } }],
       },
       orderBy: { effectiveFrom: 'desc' },
-      select: { unitPrice: true },
+        select: { unitPrice: true, unit: true },
     });
     if (!price) {
       throw new UnprocessableEntityException({
@@ -40,14 +45,14 @@ export class PaymentsService {
         details: { at: at.toISOString() },
       });
     }
-    return price.unitPrice;
+    return price;
   }
 
   async run(period: string, actorUserId: string) {
     const { from, to } = this.parseBounds(period);
     const transactions = await this.prisma.collectionTransaction.findMany({
       where: { quality: 'PASS', deletedAt: null, collectedAt: { gte: from, lt: to } },
-      select: { id: true, merchantId: true, actualLiters: true, collectedAt: true },
+      select: { id: true, merchantId: true, actualLiters: true, actualKg: true, collectedAt: true },
       orderBy: { collectedAt: 'asc' },
     });
     const prices = await this.prisma.oilPrice.findMany({
@@ -66,8 +71,16 @@ export class PaymentsService {
           details: { transaction_id: transaction.id, collected_at: transaction.collectedAt.toISOString() },
         });
       }
-      const amount = transaction.actualLiters.mul(price.unitPrice).toDecimalPlaces(0, Prisma.Decimal.ROUND_HALF_UP);
-      return { transaction, unitPrice: price.unitPrice, amount };
+      const quantity = price.unit === PriceUnit.PER_KG ? transaction.actualKg : transaction.actualLiters;
+      if (quantity === null) {
+        throw new UnprocessableEntityException({
+          code: 'NO_MASS_RECORDED',
+          message: 'Giao dịch chưa có số kg để tính theo đơn giá mỗi kg',
+          details: { transaction_id: transaction.id },
+        });
+      }
+      const amount = quantity.mul(price.unitPrice).toDecimalPlaces(0, Prisma.Decimal.ROUND_HALF_UP);
+      return { transaction, unit: price.unit, unitPrice: price.unitPrice, quantity, amount };
     });
 
     return this.prisma.$transaction(async (database) => {
@@ -76,17 +89,19 @@ export class PaymentsService {
       for (const snapshot of snapshots) {
         const inserted = await database.$queryRaw<Array<{ amount: Prisma.Decimal }>>`
           INSERT INTO "payments" (
-            "id", "merchant_id", "transaction_id", "liters", "unit_price", "amount", "period", "status", "created_at"
+            "id", "merchant_id", "transaction_id", "liters", "kilograms", "unit_price", "amount", "period", "status", "created_at", "unit"
           ) VALUES (
             ${randomUUID()}::uuid,
             ${snapshot.transaction.merchantId}::uuid,
             ${snapshot.transaction.id}::uuid,
             ${snapshot.transaction.actualLiters},
+            ${snapshot.transaction.actualKg},
             ${snapshot.unitPrice},
             ${snapshot.amount},
             ${period},
             'PENDING'::"PaymentStatus",
-            NOW()
+            NOW(),
+            ${snapshot.unit}::"PriceUnit"
           )
           ON CONFLICT ("transaction_id") DO NOTHING
           RETURNING "amount"
@@ -198,7 +213,7 @@ export class PaymentsService {
           await database.oilPrice.update({ where: { id: current.id }, data: { effectiveTo: effectiveFrom } });
         }
         const created = await database.oilPrice.create({
-          data: { unitPrice: input.unit_price, effectiveFrom, note: input.note },
+          data: { unitPrice: input.unit_price, unit: input.unit, effectiveFrom, note: input.note },
         });
         await database.auditLog.create({
           data: {
@@ -206,7 +221,7 @@ export class PaymentsService {
             action: 'CREATE_OIL_PRICE',
             entityType: 'OilPrice',
             entityId: created.id,
-            details: { unit_price: input.unit_price, effective_from: effectiveFrom.toISOString() },
+            details: { unit_price: input.unit_price, unit: input.unit, effective_from: effectiveFrom.toISOString() },
           },
         });
         return this.serializePrice(created);
@@ -263,7 +278,9 @@ export class PaymentsService {
     merchantId: string;
     transactionId: string;
     liters: Prisma.Decimal;
+    kilograms: Prisma.Decimal | null;
     unitPrice: Prisma.Decimal;
+    unit: PriceUnit;
     amount: Prisma.Decimal;
     period: string;
     status: PaymentStatus;
@@ -278,7 +295,9 @@ export class PaymentsService {
       merchant_name: payment.merchant.businessName,
       transaction_id: payment.transactionId,
       liters: payment.liters.toNumber(),
+      kilograms: payment.kilograms === null ? null : payment.kilograms.toNumber(),
       unit_price: payment.unitPrice.toNumber(),
+      unit: payment.unit,
       amount: payment.amount.toNumber(),
       period: payment.period,
       status: payment.status,
@@ -291,6 +310,7 @@ export class PaymentsService {
   private serializePrice(price: {
     id: string;
     unitPrice: Prisma.Decimal;
+    unit: PriceUnit;
     effectiveFrom: Date;
     effectiveTo: Date | null;
     note: string | null;
@@ -299,6 +319,7 @@ export class PaymentsService {
     return {
       id: price.id,
       unit_price: price.unitPrice.toNumber(),
+      unit: price.unit,
       effective_from: price.effectiveFrom,
       effective_to: price.effectiveTo,
       note: price.note,

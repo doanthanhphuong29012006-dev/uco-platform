@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { AlertType, ContainerState, EntityStatus, MerchantApprovalStatus, OrderStatus, PaymentStatus, Quality } from '@eco-oil/shared-types';
+import { AlertType, ContainerState, EntityStatus, MerchantApprovalStatus, OrderStatus, PaymentStatus, PriceUnit, Quality } from '@eco-oil/shared-types';
 
 export const uuidSchema = z.string().uuid();
 export const phoneSchema = z.string().min(8).max(20);
@@ -101,6 +101,7 @@ export type MerchantPaymentListQueryInput = z.infer<typeof merchantPaymentListQu
 
 export const oilPriceCreateSchema = z.object({
   unit_price: z.number().finite().positive().max(1_000_000_000),
+  unit: z.nativeEnum(PriceUnit).default(PriceUnit.PER_LITER),
   effective_from: z.coerce.date().optional(),
   note: z.string().trim().max(1000).optional(),
 });
@@ -251,6 +252,7 @@ export const collectionCreateSchema = z.object({
   order_id: uuidSchema,
   container_code: z.string().trim().min(1).max(100),
   actual_liters: z.number().finite().positive().max(100000),
+  actual_kg: z.number().finite().positive().max(100000).optional(),
   quality: z.nativeEnum(Quality),
   geo: z.object({
     lat: z.number().finite().min(-90).max(90),
@@ -281,6 +283,7 @@ export const stationDeliveryCreateSchema = z.object({
     }
   }),
   actual_liters: z.number().finite().positive().max(100000),
+  actual_kg: z.number().finite().positive().max(100000).optional(),
   delivered_at: z.coerce.date().optional(),
   note: z.string().trim().max(1000).optional(),
   photos: z.array(z.string().url()).max(20).default([]),

@@ -116,6 +116,24 @@ describe('Weekly merchant payments (e2e)', () => {
     expect(oldPayment).toMatchObject({ unit_price: 6000, amount: 60000 });
   });
 
+  it('calculates a payment from kilograms when the effective price unit is PER_KG', async () => {
+    await prisma.collectionTransaction.update({ where: { id: transactionAId }, data: { actualKg: 10, massSource: 'SCALE', densityFactor: null } });
+    await prisma.collectionTransaction.update({ where: { id: transactionBId }, data: { actualKg: 4.4, massSource: 'SCALE', densityFactor: null } });
+    await prisma.payment.deleteMany({ where: { transactionId: transactionBId } });
+    if (newPriceId) {
+      await prisma.oilPrice.delete({ where: { id: newPriceId } });
+      newPriceId = undefined;
+    }
+    await prisma.oilPrice.update({ where: { id: originalPrice.id }, data: { effectiveTo: null, unit: 'PER_KG', unitPrice: 1000 } });
+    const result = await paymentsService.run(period, '40000000-0000-4000-8000-000000000999');
+    expect(result.created).toBe(1);
+    const payment = await prisma.payment.findUniqueOrThrow({ where: { transactionId: transactionBId } });
+    expect(payment.unit).toBe('PER_KG');
+    expect(payment.kilograms?.toNumber()).toBe(4.4);
+    expect(payment.amount.toNumber()).toBe(4400);
+    await prisma.oilPrice.update({ where: { id: originalPrice.id }, data: { unit: originalPrice.unit, unitPrice: originalPrice.unitPrice } });
+  });
+
   it('never exposes merchant B payments through merchant A me endpoint', async () => {
     const response = await request(app.getHttpServer()).get(`/api/v1/merchants/me/payments?period=${period}`).set('Authorization', `Bearer ${merchantAToken}`).expect(200);
     expect(response.body.data).toHaveLength(1);

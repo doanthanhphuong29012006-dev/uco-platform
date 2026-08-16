@@ -56,7 +56,20 @@ export enum AlertType {
   WARD_LOCATION_MISMATCH = 'WARD_LOCATION_MISMATCH',
   COLLECTION_LITERS_DEVIATION = 'COLLECTION_LITERS_DEVIATION',
   CONTAINER_TRANSIT_CANCELLED = 'CONTAINER_TRANSIT_CANCELLED',
+  MASS_ESTIMATED_NOT_WEIGHED = 'MASS_ESTIMATED_NOT_WEIGHED',
 }
+
+export enum MassSource {
+  SCALE = 'SCALE',
+  ESTIMATED_FROM_VOLUME = 'ESTIMATED_FROM_VOLUME',
+}
+
+export enum PriceUnit {
+  PER_LITER = 'PER_LITER',
+  PER_KG = 'PER_KG',
+}
+
+export const DEFAULT_DENSITY_KG_PER_LITER = 0.91;
 
 export enum AlertSeverity {
   LOW = 'LOW',
@@ -137,7 +150,9 @@ export interface PaymentRecord {
   merchant_name: string;
   transaction_id: string;
   liters: number;
+  kilograms: number | null;
   unit_price: number;
+  unit: PriceUnit;
   amount: number;
   period: string;
   status: PaymentStatus;
@@ -159,6 +174,7 @@ export interface PaymentRunResponse {
 export interface OilPriceRecord {
   id: string;
   unit_price: number;
+  unit: PriceUnit;
   effective_from: string;
   effective_to: string | null;
   note: string | null;
@@ -175,6 +191,9 @@ export interface MerchantTransaction {
   collector_id: string;
   collector_name: string | null;
   actual_liters: number;
+  actual_kg: number | null;
+  mass_source: MassSource;
+  density_factor: number | null;
   quality: Quality;
   geo: { lat: number; lng: number } | null;
   photos: unknown;
@@ -265,6 +284,7 @@ export interface CollectionCreateRequest {
   order_id: string;
   container_code: string;
   actual_liters: number;
+  actual_kg?: number;
   quality: Quality;
   geo: GeoPoint;
   photos: string[];
@@ -278,6 +298,8 @@ export interface CollectionTransactionResponse extends CollectionCreateRequest {
   collector_id: string;
   collected_at: string;
   created_at: string;
+  mass_source: MassSource;
+  density_factor: number | null;
 }
 
 export interface SyncBatchResult {
@@ -309,15 +331,21 @@ export interface StationDeliveryCreateRequest {
   station_id: string;
   transaction_ids: string[];
   actual_liters: number;
+  actual_kg?: number;
   delivered_at?: string;
   note?: string;
   photos?: string[];
 }
 
-export interface StationDeliveryResponse extends StationDeliveryCreateRequest {
+export interface StationDeliveryResponse extends Omit<StationDeliveryCreateRequest, 'actual_kg'> {
   id: string;
   collector_id: string;
   expected_liters: number;
+  expected_kg: number | null;
+  actual_kg: number | null;
+  variance_kg: number | null;
+  mass_source: MassSource;
+  has_estimated_mass: boolean;
   variance_l: number;
   variance_pct: number;
   status: DeliveryStatus;
@@ -329,6 +357,8 @@ export interface AdminRecentTransaction {
   merchant_name: string;
   collector_name: string | null;
   actual_liters: number;
+  actual_kg: number | null;
+  mass_source: MassSource;
   quality: Quality;
   collected_at: string;
 }
@@ -376,6 +406,8 @@ export interface AdminReconciliationTransaction {
   id: string;
   merchant_name: string;
   liters: number;
+  kilograms: number | null;
+  mass_source: MassSource;
   collected_at: string;
 }
 
@@ -385,6 +417,10 @@ export interface AdminReconciliationCollector {
   collected_l: number;
   delivered_l: number;
   variance_l: number;
+  collected_kg: number;
+  delivered_kg: number;
+  variance_kg: number;
+  has_estimated_mass: boolean;
   status: 'OK' | 'FLAGGED';
   transactions: AdminReconciliationTransaction[];
 }
@@ -395,11 +431,18 @@ export interface AdminReconciliationResponse {
   delivered_liters: number;
   variance_l: number;
   variance_pct: number;
+  collected_kg: number;
+  delivered_kg: number;
+  variance_kg: number;
+  variance_kg_pct: number;
+  has_estimated_mass: boolean;
   by_collector: AdminReconciliationCollector[];
   undelivered_transactions: Array<{
     id: string;
     merchant_name: string;
     liters: number;
+    kilograms: number | null;
+    mass_source: MassSource;
     collected_at: string;
   }>;
 }

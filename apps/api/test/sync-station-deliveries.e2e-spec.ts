@@ -144,4 +144,24 @@ describe('Sync batch and station delivery reconciliation (e2e)', () => {
       .expect(409);
     expect(replayConflict.body.code).toBe('TRANSACTION_ALREADY_DELIVERED');
   });
+
+  it('compares station variance on kilograms: exactly 2 percent is OK and above 2 percent is FLAGGED', async () => {
+    const merchant = await prisma.merchant.findFirstOrThrow({ where: { user: { zaloId: 'zalo_merchant_01' } } });
+    const collector = await prisma.collector.findUniqueOrThrow({ where: { id: collectorId } });
+    const container = await prisma.container.findUniqueOrThrow({ where: { id: containers[0].id } });
+    const exactTransactionId = '71000000-0000-4000-8000-000000000001';
+    const flaggedTransactionId = '71000000-0000-4000-8000-000000000002';
+    await prisma.payment.deleteMany({ where: { transactionId: { in: [exactTransactionId, flaggedTransactionId] } } });
+    await prisma.stationDelivery.deleteMany({ where: { clientUuid: { startsWith: 'mass-test-' } } });
+    await prisma.collectionTransaction.deleteMany({ where: { id: { in: [exactTransactionId, flaggedTransactionId] } } });
+    await prisma.collectionTransaction.createMany({ data: [
+      { id: exactTransactionId, clientUuid: randomUUID(), containerId: container.id, merchantId: merchant.id, collectorId: collector.id, actualLiters: 10, actualKg: 9.1, massSource: 'SCALE', quality: 'PASS' },
+      { id: flaggedTransactionId, clientUuid: randomUUID(), containerId: container.id, merchantId: merchant.id, collectorId: collector.id, actualLiters: 10, actualKg: 9.1, massSource: 'SCALE', quality: 'PASS' },
+    ] });
+    const exact = await request(app.getHttpServer()).post('/api/v1/station-deliveries').set('Authorization', `Bearer ${collectorToken}`).send({ client_uuid: randomUUID(), station_id: stationId, transaction_ids: [exactTransactionId], actual_liters: 10, actual_kg: 9.282, delivered_at: '2026-08-11T15:00:00Z' }).expect(201);
+    expect(exact.body.status).toBe('OK');
+    const flagged = await request(app.getHttpServer()).post('/api/v1/station-deliveries').set('Authorization', `Bearer ${collectorToken}`).send({ client_uuid: randomUUID(), station_id: stationId, transaction_ids: [flaggedTransactionId], actual_liters: 10, actual_kg: 9.283, delivered_at: '2026-08-11T15:01:00Z' }).expect(201);
+    expect(flagged.body.status).toBe('FLAGGED');
+    expect(await prisma.alert.count({ where: { stationDeliveryId: flagged.body.id, type: 'DELIVERY_VARIANCE' } })).toBe(1);
+  });
 });

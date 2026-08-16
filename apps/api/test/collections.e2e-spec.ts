@@ -281,6 +281,33 @@ describe('Collections idempotency and geo validation (e2e)', () => {
     await prisma.payment.delete({ where: { transactionId: response.body.id } });
   });
 
+  it('records manually weighed mass as SCALE with no density factor', async () => {
+    await prisma.container.update({ where: { id: containerOneId }, data: { state: 'AT_MERCHANT' } });
+    const merchantToken = await login('zalo_merchant_01', '0900000001');
+    const collectorToken = await login('zalo_collector_01', '0910000001');
+    const order = await createOrder(merchantToken, containerOneId, 10);
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/collections')
+      .set('Authorization', 'Bearer ' + collectorToken)
+      .send({ client_uuid: randomUUID(), order_id: order.body.id, container_code: 'ECO-UCO-Q3-P7-001', actual_liters: 10, actual_kg: 9.2, quality: 'PASS', geo: { lat: 10.78255, lng: 106.68475 }, photos: [] })
+      .expect(201);
+    expect(response.body).toMatchObject({ actual_kg: 9.2, mass_source: 'SCALE', density_factor: null });
+  });
+
+  it('converts volume to estimated mass, stores the factor and creates a LOW alert', async () => {
+    await prisma.container.update({ where: { id: containerThreeId }, data: { state: 'AT_MERCHANT' } });
+    const merchantToken = await login('zalo_merchant_02', '0900000002');
+    const collectorToken = await login('zalo_collector_01', '0910000001');
+    const order = await createOrder(merchantToken, containerThreeId, 10);
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/collections')
+      .set('Authorization', 'Bearer ' + collectorToken)
+      .send({ client_uuid: randomUUID(), order_id: order.body.id, container_code: 'ECO-UCO-Q3-P7-003', actual_liters: 10, quality: 'PASS', geo: { lat: 10.78195, lng: 106.68535 }, photos: [] })
+      .expect(201);
+    expect(response.body).toMatchObject({ actual_kg: 9.1, mass_source: 'ESTIMATED_FROM_VOLUME', density_factor: 0.91 });
+    expect(await prisma.alert.findFirst({ where: { transactionId: response.body.id, type: 'MASS_ESTIMATED_NOT_WEIGHED', severity: 'LOW' } })).not.toBeNull();
+  });
+
   it('returns collection history for the collector', async () => {
     const collectorToken = await login('zalo_collector_01', '0910000001');
     const response = await request(app.getHttpServer()).get('/api/v1/collections/me?page=1&limit=20').set('Authorization', 'Bearer ' + collectorToken).expect(200);

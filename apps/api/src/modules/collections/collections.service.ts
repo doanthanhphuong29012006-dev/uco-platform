@@ -1,10 +1,11 @@
 import { ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AlertSeverity, AlertType, ContainerState, EntityStatus, OrderStatus, Quality } from '@prisma/client';
+import { AlertSeverity, AlertType, ContainerState, EntityStatus, MassSource, OrderStatus, Quality } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import type { CollectionCreateInput, CollectionListQueryInput } from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
+import { getDensityKgPerLiter } from '../../config/mass.constants';
 import type { AccessTokenPayload } from '../auth/auth.types';
 
 type InsertedTransaction = {
@@ -15,6 +16,9 @@ type InsertedTransaction = {
   merchant_id: string;
   collector_id: string;
   actual_liters: number;
+  actual_kg: number;
+  mass_source: MassSource;
+  density_factor: number | null;
   quality: Quality;
   photos: Prisma.JsonValue;
   collected_at: Date;
@@ -30,6 +34,9 @@ type CollectionRow = {
   merchant_id: string;
   collector_id: string;
   actual_liters: number;
+  actual_kg: number;
+  mass_source: MassSource;
+  density_factor: number | null;
   quality: Quality;
   photos: Prisma.JsonValue;
   collected_at: Date;
@@ -99,6 +106,11 @@ export class CollectionsService {
         });
       }
 
+      const densityFactor = getDensityKgPerLiter(this.config);
+      const massSource = input.actual_kg === undefined ? MassSource.ESTIMATED_FROM_VOLUME : MassSource.SCALE;
+      const actualKg = input.actual_kg ?? input.actual_liters * densityFactor;
+      const storedDensityFactor = massSource === MassSource.ESTIMATED_FROM_VOLUME ? densityFactor : null;
+
       const collectedAt = input.collected_at ?? new Date();
       const threshold = this.config.get<number>('GEO_MISMATCH_THRESHOLD_M', 500);
       const distanceRows = await tx.$queryRaw<Array<{ distanceM: number | null }>>`
@@ -118,7 +130,7 @@ export class CollectionsService {
           INSERT INTO "collection_transactions" (
             "id", "client_uuid", "order_id", "container_id", "merchant_id", "collector_id",
             "actual_liters", "quality", "geo_point", "photos", "collected_at", "created_at"
-            , "synced_at"
+            , "synced_at", "actual_kg", "mass_source", "density_factor"
           ) VALUES (
             ${randomUUID()}::uuid,
             ${input.client_uuid},
@@ -132,13 +144,17 @@ export class CollectionsService {
             ${JSON.stringify(input.photos)}::jsonb,
             ${collectedAt},
             now(),
-            ${synced ? new Date() : null}
+            ${synced ? new Date() : null},
+            ${actualKg},
+            ${massSource}::"MassSource",
+            ${storedDensityFactor}
           )
           ON CONFLICT ("client_uuid") DO NOTHING
           RETURNING *
         )
         SELECT inserted."id", inserted."client_uuid", inserted."order_id", inserted."container_id",
           inserted."merchant_id", inserted."collector_id", inserted."actual_liters"::float8 AS "actual_liters",
+          inserted."actual_kg"::float8 AS "actual_kg", inserted."mass_source"::text AS "mass_source", inserted."density_factor"::float8 AS "density_factor",
           inserted."quality"::text AS "quality", inserted."photos", inserted."collected_at", inserted."created_at",
           inserted."deleted_at", ST_Y(inserted."geo_point"::geometry)::float8 AS "geo_lat",
           ST_X(inserted."geo_point"::geometry)::float8 AS "geo_lng"
@@ -220,6 +236,17 @@ export class CollectionsService {
           });
         }
       }
+      if (massSource === MassSource.ESTIMATED_FROM_VOLUME) {
+        await tx.alert.create({
+          data: {
+            transactionId: transaction.id,
+            type: AlertType.MASS_ESTIMATED_NOT_WEIGHED,
+            severity: AlertSeverity.LOW,
+            message: `Giao dịch chưa được cân: ${input.actual_liters.toFixed(2)} lít được quy đổi thành ${actualKg.toFixed(2)} kg với hệ số ${densityFactor} kg/lít.`,
+            details: { actual_liters: input.actual_liters, actual_kg: actualKg, density_factor: densityFactor },
+          },
+        });
+      }
       return { row: await this.loadById(tx, transaction.id), replayed: false };
       });
 
@@ -239,7 +266,7 @@ export class CollectionsService {
     const [rows, countRows] = await Promise.all([
       this.prisma.$queryRaw<CollectionRow[]>`
         SELECT ct."id", ct."client_uuid", ct."order_id", ct."container_id", ct."merchant_id", ct."collector_id",
-          ct."actual_liters"::float8 AS "actual_liters", ct."quality"::text AS "quality", ct."photos",
+          ct."actual_liters"::float8 AS "actual_liters", ct."actual_kg"::float8 AS "actual_kg", ct."mass_source"::text AS "mass_source", ct."density_factor"::float8 AS "density_factor", ct."quality"::text AS "quality", ct."photos",
           ct."collected_at", ct."created_at", c."qr_code" AS "container_code",
           ST_Y(ct."geo_point"::geometry)::float8 AS "geo_lat", ST_X(ct."geo_point"::geometry)::float8 AS "geo_lng"
         FROM "collection_transactions" ct
@@ -266,7 +293,7 @@ export class CollectionsService {
   private async loadByClientUuid(tx: Prisma.TransactionClient, clientUuid: string): Promise<CollectionRow | null> {
     const rows = await tx.$queryRaw<CollectionRow[]>`
       SELECT ct."id", ct."client_uuid", ct."order_id", ct."container_id", ct."merchant_id", ct."collector_id",
-        ct."actual_liters"::float8 AS "actual_liters", ct."quality"::text AS "quality", ct."photos",
+        ct."actual_liters"::float8 AS "actual_liters", ct."actual_kg"::float8 AS "actual_kg", ct."mass_source"::text AS "mass_source", ct."density_factor"::float8 AS "density_factor", ct."quality"::text AS "quality", ct."photos",
         ct."collected_at", ct."created_at", c."qr_code" AS "container_code",
         ST_Y(ct."geo_point"::geometry)::float8 AS "geo_lat", ST_X(ct."geo_point"::geometry)::float8 AS "geo_lng"
       FROM "collection_transactions" ct
@@ -280,7 +307,7 @@ export class CollectionsService {
   private async loadById(tx: Prisma.TransactionClient, id: string): Promise<CollectionRow | null> {
     const rows = await tx.$queryRaw<CollectionRow[]>`
       SELECT ct."id", ct."client_uuid", ct."order_id", ct."container_id", ct."merchant_id", ct."collector_id",
-        ct."actual_liters"::float8 AS "actual_liters", ct."quality"::text AS "quality", ct."photos",
+        ct."actual_liters"::float8 AS "actual_liters", ct."actual_kg"::float8 AS "actual_kg", ct."mass_source"::text AS "mass_source", ct."density_factor"::float8 AS "density_factor", ct."quality"::text AS "quality", ct."photos",
         ct."collected_at", ct."created_at", c."qr_code" AS "container_code",
         ST_Y(ct."geo_point"::geometry)::float8 AS "geo_lat", ST_X(ct."geo_point"::geometry)::float8 AS "geo_lng"
       FROM "collection_transactions" ct
@@ -301,6 +328,9 @@ export class CollectionsService {
       merchant_id: row.merchant_id,
       collector_id: row.collector_id,
       actual_liters: Number(row.actual_liters),
+      actual_kg: Number(row.actual_kg),
+      mass_source: row.mass_source,
+      density_factor: row.density_factor === null ? null : Number(row.density_factor),
       quality: row.quality,
       geo: row.geo_lat === null || row.geo_lng === null ? null : { lat: row.geo_lat, lng: row.geo_lng },
       photos: row.photos,

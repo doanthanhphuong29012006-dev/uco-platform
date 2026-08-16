@@ -76,6 +76,6 @@ export const api = {
   runPayments: (period: string) => client.request<PaymentRunResponse>(`/admin/payments/run?period=${encodeURIComponent(period)}`, { method: 'POST' }),
   markPaymentPaid: (id: string) => client.request<PaymentRecord>(`/admin/payments/${id}/mark-paid`, { method: 'POST' }),
   oilPrices: () => client.request<OilPriceRecord[]>('/admin/oil-prices'),
-  createOilPrice: (body: { unit_price: number; effective_from?: string; note?: string }) =>
+  createOilPrice: (body: { unit_price: number; unit?: 'PER_LITER' | 'PER_KG'; effective_from?: string; note?: string }) =>
     client.request<OilPriceRecord>('/admin/oil-prices', { method: 'POST', body }),
 };

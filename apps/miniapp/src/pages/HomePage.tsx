@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { DEFAULT_DENSITY_KG_PER_LITER } from '@eco-oil/shared-types';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, api } from '../lib/api';
 import { currentVietnamWeek, fillPercent, formatCurrency, formatDate, formatLiters } from '../lib/formatters';
@@ -34,6 +35,7 @@ export function HomePage() {
   const isWaiting = data.pending_orders > 0;
   const hasClosedPayments = (weeklyPayments.data?.data.length ?? 0) > 0;
   const estimatedWeeklyLiters = weeklyTransactions.data?.data.filter((transaction) => transaction.quality === 'PASS').reduce((sum, transaction) => sum + transaction.actual_liters, 0) ?? 0;
+  const estimatedWeeklyKg = weeklyTransactions.data?.data.filter((transaction) => transaction.quality === 'PASS').reduce((sum, transaction) => sum + (transaction.actual_kg ?? transaction.actual_liters * DEFAULT_DENSITY_KG_PER_LITER), 0) ?? 0;
   const weeklyMoney = hasClosedPayments ? weeklyPayments.data?.totals.amount ?? 0 : estimatedWeeklyLiters * PRICE_PER_LITER;
 
   async function submitOrder(liters: number | undefined) {
@@ -64,7 +66,7 @@ export function HomePage() {
 
   return <div className="page-content">
     <header className="page-header"><div><p className="eyebrow">HÔM NAY</p><h1>Chào quán mình 👋</h1></div><div className="leaf-badge">✦</div></header>
-    <section className="hero-card"><div><p className="card-eyebrow">TIỀN TUẦN NÀY · {week.period}</p><strong>{formatCurrency(weeklyMoney)}</strong><p className="muted">{hasClosedPayments ? 'Số tiền đã chốt theo giao dịch' : 'Ước tính · kỳ chưa được chốt'}</p></div><div className="hero-orb">₫</div></section>
+    <section className="hero-card"><div><p className="card-eyebrow">TIỀN TUẦN NÀY · {week.period}</p><strong>{formatCurrency(weeklyMoney)}</strong><p className="muted">{hasClosedPayments ? 'Số tiền đã chốt theo giao dịch' : 'Ước tính · kỳ chưa được chốt'} · {estimatedWeeklyKg.toFixed(1)} kg</p></div><div className="hero-orb">₫</div></section>
     {notice ? <div className="notice" role="status">{notice}</div> : null}
     <section className="section-block"><div className="section-heading"><h2>Can của quán</h2><span>{data.containers.length} can</span></div>{!hasContainers ? <div className="empty-container-state"><strong>Quán chưa được cấp can</strong><p>Eco-Oil sẽ liên hệ giao can trong 1-2 ngày làm việc.</p><small>Hotline: 1900 1234</small></div> : <div className="container-list">{data.containers.map((container) => { const percentage = fillPercent(container.estimated_liters, container.capacity_l); return <article className="container-card" key={container.code}><div className="container-icon">▣</div><div className="container-main"><div className="container-title-row"><strong>{container.code}</strong><span className={`state-pill state-${container.state.toLowerCase()}`}>{container.state === 'AT_MERCHANT' ? 'Ở quán' : 'Đang vận chuyển'}</span></div><p>{formatLiters(container.capacity_l)} dung tích · Ước tính {percentage}% đầy</p><div className="progress-track"><span style={{ width: `${percentage}%` }} /></div></div></article>; })}</div>}</section>
     <button className={`ready-button ${isWaiting || !availableContainer ? 'ready-button-waiting' : ''}`} onClick={() => setSheetOpen(true)} disabled={isWaiting || !availableContainer}><span className="ready-button-icon">{isWaiting ? '✓' : '↑'}</span><span>{isWaiting ? 'Đã báo, đang chờ thu gom' : availableContainer ? 'Sẵn sàng thu gom' : hasContainers ? 'Can đang trên đường về' : 'Đang chờ được cấp can'}</span></button>
