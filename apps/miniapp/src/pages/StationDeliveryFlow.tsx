@@ -42,7 +42,7 @@ export function StationDeliveryFlow({ completed, onBack }: StationDeliveryFlowPr
   const entries = Object.values(completed);
   const candidates = useMemo(() => getCandidates(entries, rows), [entries, rows]);
   const expectedLiters = entries.reduce((sum, item) => sum + item.liters, 0);
-  const expectedKg = candidates.reduce((sum, item) => sum + (item.collection.actual_kg ?? item.collection.actual_liters * DEFAULT_DENSITY_KG_PER_LITER), 0);
+  const expectedKg = candidates.reduce((sum, item) => sum + collectionKilograms(item.collection), 0);
   const waiting = entries.length - candidates.length;
 
   useEffect(() => {
@@ -216,7 +216,7 @@ function StationDeliveryReview({ station, candidates, expectedLiters, expectedKg
     <div className="page-content collector-content station-page">
       <button className="back-button" onClick={onBack} disabled={saving}>← Chọn lại trạm</button>
       <header className="collector-screen-heading"><p className="eyebrow">ĐỐI SOÁT TRƯỚC KHI NỘP</p><h1>{station.name}</h1><p>{station.address ?? ''}</p></header>
-      <section className="delivery-transactions-card"><h2>Từng giao dịch sẽ nộp</h2>{candidates.map((item) => <div className="delivery-transaction-row" key={item.clientUuid}><div><strong>{item.stop.merchant.name}</strong><span>{formatTime(item.collection.collected_at ?? item.record.created_at)}</span></div><b>{formatLiters(item.collection.actual_liters)} lít · {(item.collection.actual_kg ?? item.collection.actual_liters * DEFAULT_DENSITY_KG_PER_LITER).toFixed(1)} kg</b></div>)}<div className="delivery-total-row"><span>Tổng server sẽ tự tính</span><strong>{formatLiters(expectedLiters)} lít (~{expectedKg.toFixed(1)} kg)</strong></div></section>
+      <section className="delivery-transactions-card"><h2>Từng giao dịch sẽ nộp</h2>{candidates.map((item) => <div className="delivery-transaction-row" key={item.clientUuid}><div><strong>{item.stop.merchant.name}</strong><span>{formatTime(item.collection.collected_at ?? item.record.created_at)}</span></div><b>{formatLiters(collectionLiters(item.collection))} lít · {collectionKilograms(item.collection).toFixed(1)} kg</b></div>)}<div className="delivery-total-row"><span>Tổng server sẽ tự tính</span><strong>{formatLiters(expectedLiters)} lít (~{expectedKg.toFixed(1)} kg)</strong></div></section>
       <section className="delivery-input-card"><label htmlFor="delivery-kg">Khối lượng thực tế đổ vào trạm (ưu tiên số cân)</label><div className="delivery-liters-input"><input id="delivery-kg" type="number" inputMode="decimal" step="0.1" min="0" value={actualKgInput} onChange={(event) => setActualKgInput(event.target.value)} /><span>kg</span></div><p className={flagged ? 'variance-danger' : 'variance-ok'}>{varianceKg >= 0 ? '+' : ''}{varianceKg.toFixed(2)} kg ({(varianceKgPct * 100).toFixed(1)}%)</p><label htmlFor="delivery-liters">Số lít thực tế (để đối chiếu song song)</label><div className="delivery-liters-input"><input id="delivery-liters" type="number" inputMode="decimal" step="0.1" min="0" value={actual} onChange={(event) => setActual(event.target.value)} /><span>lít</span></div><p className="variance-help">Ngưỡng đối soát 2% được tính trên kg.</p>{flagged ? <div className="warning-panel"><strong>Chênh lệch vượt 2%, giao dịch sẽ được gắn cờ kiểm tra</strong><span>Vui lòng nhập lý do và chụp ảnh trước khi gửi.</span></div> : null}</section>
       {flagged ? <><section className="delivery-note-card"><label htmlFor="delivery-note">Lý do chênh lệch bắt buộc</label><textarea id="delivery-note" value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ví dụ: dầu còn bám trong can…" /></section><section className="photo-card"><div><strong>Ảnh bằng chứng</strong><p>{photos.length > 0 ? `${photos.length} ảnh thật đã chọn` : 'Cần ít nhất 1 ảnh thật để gửi'}</p></div><div className="flex flex-wrap gap-2"><button className="secondary-button" onClick={() => { void takePhoto(); }} disabled={takingPhoto || saving}>{takingPhoto ? 'Đang chụp…' : 'Chụp ảnh'}</button><label className="secondary-button cursor-pointer">Chọn ảnh từ máy<input className="sr-only" type="file" accept="image/*" onChange={(event) => { void choosePhotoFile(event); }} disabled={takingPhoto || saving} /></label></div></section></> : null}
       {error ? <div className="error-panel">{error}</div> : null}<p className="server-calculation-note">Expected liters không gửi từ app. Server sẽ tính lại từ các giao dịch đã đồng bộ.</p><button className="submit-collection-button" onClick={() => { void submit(); }} disabled={saving || !canSubmitStationDelivery({ invalid, flagged, note, photoCount: photos.length })}>{saving ? 'Đang lưu phiếu trên máy…' : 'Xác nhận nộp trạm'}</button>
@@ -233,7 +233,7 @@ function StationDeliveryReceipt({ station, clientUuid, expectedLiters, rows, onC
 }
 
 function ShiftCloseout({ candidates, onFinish }: { candidates: DeliveryCandidate[]; onFinish: () => void }) {
-  const total = candidates.reduce((sum, item) => sum + item.collection.actual_liters, 0);
+  const total = candidates.reduce((sum, item) => sum + collectionLiters(item.collection), 0);
   return <div className="page-content collector-content summary-page"><header className="collector-screen-heading"><p className="eyebrow">KẾT CA</p><h1>Ca làm đã khép lại</h1></header><div className="summary-hero"><span>Tổng lít đã thu</span><strong>{formatLiters(total)}</strong></div><section className="summary-grid"><div><span>Số điểm đã thu</span><strong>{candidates.length}</strong></div><div><span>Số phiếu nộp trạm</span><strong>1</strong></div></section><section className="closeout-money"><span>Tổng tiền ước tính</span><strong>{formatCurrency(total * PRICE_PER_LITER)}</strong><small>Đơn giá thử nghiệm: {formatCurrency(PRICE_PER_LITER)} / lít</small></section><button className="primary-button closeout-button" onClick={onFinish}>Kết thúc ca</button></div>;
 }
 
@@ -243,6 +243,14 @@ function getCandidates(entries: CompletedStop[], rows: OutboxRecord[]): Delivery
     if (!record || record.status !== 'synced' || !record.server_id || record.type !== 'collection') return null;
     return { ...entry, record, collection: record.payload as CollectionCreateRequest };
   }).filter((item): item is DeliveryCandidate => item !== null);
+}
+
+function collectionLiters(collection: CollectionCreateRequest): number {
+  return collection.actual_liters ?? (collection.actual_kg ?? 0) / DEFAULT_DENSITY_KG_PER_LITER;
+}
+
+function collectionKilograms(collection: CollectionCreateRequest): number {
+  return collection.actual_kg ?? collectionLiters(collection) * DEFAULT_DENSITY_KG_PER_LITER;
 }
 
 function deliveryErrorMessage(error: unknown): string {

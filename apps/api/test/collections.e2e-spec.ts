@@ -47,6 +47,14 @@ describe('Collections idempotency and geo validation (e2e)', () => {
       .expect(201);
   }
 
+  async function prepareContainer(containerId: string) {
+    await prisma.collectionOrder.updateMany({
+      where: { containerId, status: { in: ['READY', 'ASSIGNED'] } },
+      data: { status: 'CANCELLED', cancelledAt: new Date() },
+    });
+    await prisma.container.update({ where: { id: containerId }, data: { state: 'AT_MERCHANT', lastSeenAt: null } });
+  }
+
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleFixture.createNestApplication();
@@ -306,6 +314,60 @@ describe('Collections idempotency and geo validation (e2e)', () => {
       .expect(201);
     expect(response.body).toMatchObject({ actual_kg: 9.1, mass_source: 'ESTIMATED_FROM_VOLUME', density_factor: 0.91 });
     expect(await prisma.alert.findFirst({ where: { transactionId: response.body.id, type: 'MASS_ESTIMATED_NOT_WEIGHED', severity: 'LOW' } })).not.toBeNull();
+  });
+
+  it('accepts kilogram-only collection input and derives liters with the stored density factor', async () => {
+    await prepareContainer(containerOneId);
+    const merchantToken = await login('zalo_merchant_01', '0900000001');
+    const collectorToken = await login('zalo_collector_01', '0910000001');
+    const order = await createOrder(merchantToken, containerOneId, 10);
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/collections')
+      .set('Authorization', 'Bearer ' + collectorToken)
+      .send({ client_uuid: randomUUID(), order_id: order.body.id, container_code: 'ECO-UCO-Q3-P7-001', actual_kg: 9.1, quality: 'PASS', geo: { lat: 10.78255, lng: 106.68475 }, photos: [] })
+      .expect(201);
+    expect(response.body).toMatchObject({ actual_liters: 10, actual_kg: 9.1, mass_source: 'SCALE', density_factor: 0.91 });
+  });
+
+  it('keeps both manually entered liters and kilograms without overwriting either value', async () => {
+    await prepareContainer(containerTwoId);
+    const merchantToken = await login('zalo_merchant_01', '0900000001');
+    const collectorToken = await login('zalo_collector_01', '0910000001');
+    const order = await createOrder(merchantToken, containerTwoId, 10);
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/collections')
+      .set('Authorization', 'Bearer ' + collectorToken)
+      .send({ client_uuid: randomUUID(), order_id: order.body.id, container_code: 'ECO-UCO-Q3-P7-002', actual_liters: 10, actual_kg: 8.7, quality: 'PASS', geo: { lat: 10.78255, lng: 106.68475 }, photos: [] })
+      .expect(201);
+    expect(response.body).toMatchObject({ actual_liters: 10, actual_kg: 8.7, mass_source: 'SCALE', density_factor: null });
+  });
+
+  it('rejects a collection when neither liters nor kilograms is provided', async () => {
+    await prepareContainer(containerFourId);
+    const merchantToken = await login('zalo_merchant_02', '0900000002');
+    const collectorToken = await login('zalo_collector_01', '0910000001');
+    const order = await createOrder(merchantToken, containerFourId, 10);
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/collections')
+      .set('Authorization', 'Bearer ' + collectorToken)
+      .send({ client_uuid: randomUUID(), order_id: order.body.id, container_code: 'ECO-UCO-Q3-P7-004', quality: 'PASS', geo: { lat: 10.78255, lng: 106.68475 }, photos: [] })
+      .expect(422);
+    expect(response.body).toMatchObject({ code: 'INVALID_MASS_INPUT' });
+    expect(response.body.message).toContain('Vui lòng nhập số kg hoặc số lít');
+  });
+
+  it('rejects kilogram-only input when its derived liters exceed container capacity', async () => {
+    await prepareContainer(containerFiveId);
+    const merchantToken = await login('zalo_merchant_03', '0900000003');
+    const collectorToken = await login('zalo_collector_01', '0910000001');
+    const order = await createOrder(merchantToken, containerFiveId, 10);
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/collections')
+      .set('Authorization', 'Bearer ' + collectorToken)
+      .send({ client_uuid: randomUUID(), order_id: order.body.id, container_code: 'ECO-UCO-Q3-P7-005', actual_kg: 31, quality: 'PASS', geo: { lat: 10.78255, lng: 106.68475 }, photos: [] })
+      .expect(422);
+    expect(response.body.code).toBe('INVALID_LITERS');
+    expect(response.body.message).toContain('Số lít suy ra từ khối lượng');
   });
 
   it('returns collection history for the collector', async () => {

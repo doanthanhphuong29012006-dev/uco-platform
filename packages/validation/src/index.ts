@@ -251,8 +251,8 @@ export const collectionCreateSchema = z.object({
   client_uuid: uuidSchema,
   order_id: uuidSchema,
   container_code: z.string().trim().min(1).max(100),
-  actual_liters: z.number().finite().positive().max(100000),
-  actual_kg: z.number().finite().positive().max(100000).optional(),
+  actual_liters: z.number().finite().max(100000).optional(),
+  actual_kg: z.number().finite().max(100000).optional(),
   quality: z.nativeEnum(Quality),
   geo: z.object({
     lat: z.number().finite().min(-90).max(90),

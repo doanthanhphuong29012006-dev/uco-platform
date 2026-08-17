@@ -283,7 +283,7 @@ export interface CollectionCreateRequest {
   client_uuid: string;
   order_id: string;
   container_code: string;
-  actual_liters: number;
+  actual_liters?: number;
   actual_kg?: number;
   quality: Quality;
   geo: GeoPoint;
@@ -293,6 +293,7 @@ export interface CollectionCreateRequest {
 
 export interface CollectionTransactionResponse extends CollectionCreateRequest {
   id: string;
+  actual_liters: number;
   container_id: string;
   merchant_id: string;
   collector_id: string;

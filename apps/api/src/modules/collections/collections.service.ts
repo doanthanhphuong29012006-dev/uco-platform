@@ -90,12 +90,27 @@ export class CollectionsService {
       if (!order.containerId || !order.container || order.container.qrCode !== input.container_code) {
         throw new ConflictException({ code: 'CONTAINER_MISMATCH', message: 'Container does not match order', details: { order_id: order.id } });
       }
+      const densityFactor = getDensityKgPerLiter(this.config);
+      const hasLiters = input.actual_liters !== undefined && input.actual_liters > 0;
+      const hasKilograms = input.actual_kg !== undefined && input.actual_kg > 0;
+      if ((input.actual_liters !== undefined && input.actual_liters < 0) || (input.actual_kg !== undefined && input.actual_kg < 0) || (!hasLiters && !hasKilograms)) {
+        throw new UnprocessableEntityException({
+          code: 'INVALID_MASS_INPUT',
+          message: 'Vui lòng nhập số kg hoặc số lít lớn hơn 0',
+          details: null,
+        });
+      }
+      const actualLiters = hasLiters ? input.actual_liters as number : (input.actual_kg as number) / densityFactor;
+      const actualKg = hasKilograms ? input.actual_kg as number : actualLiters * densityFactor;
+      const litersDerivedFromKilograms = !hasLiters && hasKilograms;
       const capacity = Number(order.container.capacityLiters ?? 0);
-      if (input.actual_liters <= 0 || input.actual_liters > capacity * 1.1) {
+      if (actualLiters > capacity * 1.1) {
         throw new UnprocessableEntityException({
           code: 'INVALID_LITERS',
-          message: 'actual_liters is outside the allowed container range',
-          details: { capacity_l: capacity, max_liters: capacity * 1.1 },
+          message: litersDerivedFromKilograms
+            ? `Số lít suy ra từ khối lượng (${actualLiters.toFixed(2)} lít) vượt dung tích cho phép ${ (capacity * 1.1).toFixed(1) } lít`
+            : `Số lít phải lớn hơn 0 và không vượt quá dung tích can ${capacity} lít`,
+          details: { capacity_l: capacity, max_liters: capacity * 1.1, derived_from_kg: litersDerivedFromKilograms },
         });
       }
       if (input.quality === Quality.FLAG && input.photos.length === 0) {
@@ -106,10 +121,8 @@ export class CollectionsService {
         });
       }
 
-      const densityFactor = getDensityKgPerLiter(this.config);
-      const massSource = input.actual_kg === undefined ? MassSource.ESTIMATED_FROM_VOLUME : MassSource.SCALE;
-      const actualKg = input.actual_kg ?? input.actual_liters * densityFactor;
-      const storedDensityFactor = massSource === MassSource.ESTIMATED_FROM_VOLUME ? densityFactor : null;
+      const massSource = hasKilograms ? MassSource.SCALE : MassSource.ESTIMATED_FROM_VOLUME;
+      const storedDensityFactor = !hasLiters || !hasKilograms ? densityFactor : null;
 
       const collectedAt = input.collected_at ?? new Date();
       const threshold = this.config.get<number>('GEO_MISMATCH_THRESHOLD_M', 500);
@@ -138,7 +151,7 @@ export class CollectionsService {
             ${order.containerId}::uuid,
             ${order.merchantId}::uuid,
             ${collector.id}::uuid,
-            ${input.actual_liters},
+            ${actualLiters},
             ${effectiveQuality}::"Quality",
             ST_SetSRID(ST_MakePoint(${input.geo.lng}, ${input.geo.lat}), 4326)::geography,
             ${JSON.stringify(input.photos)}::jsonb,
@@ -201,7 +214,7 @@ export class CollectionsService {
         where: { id: order.merchantId },
         data: {
           lastCollectedAt: collectedAt,
-          avgDailyLiters: averageRows[0]?.averageLiters ?? input.actual_liters,
+          avgDailyLiters: averageRows[0]?.averageLiters ?? actualLiters,
         },
       });
 
@@ -218,17 +231,17 @@ export class CollectionsService {
       }
       const expectedLiters = Number(order.expectedLiters ?? 0);
       if (expectedLiters > 0) {
-        const deviationPct = Math.abs(input.actual_liters - expectedLiters) / expectedLiters;
+        const deviationPct = Math.abs(actualLiters - expectedLiters) / expectedLiters;
         if (deviationPct > COLLECTION_LITERS_DEVIATION_THRESHOLD_PCT) {
           await tx.alert.create({
             data: {
               transactionId: transaction.id,
               type: AlertType.COLLECTION_LITERS_DEVIATION,
               severity: AlertSeverity.MEDIUM,
-              message: `Merchant reported ${expectedLiters} L; collector recorded ${input.actual_liters} L; deviation ${(deviationPct * 100).toFixed(1)}%.`,
+              message: `Merchant reported ${expectedLiters} L; collector recorded ${actualLiters} L; deviation ${(deviationPct * 100).toFixed(1)}%.`,
               details: {
                 expected_liters: expectedLiters,
-                actual_liters: input.actual_liters,
+                actual_liters: actualLiters,
                 deviation_pct: deviationPct,
                 threshold_pct: COLLECTION_LITERS_DEVIATION_THRESHOLD_PCT,
               },
@@ -242,8 +255,8 @@ export class CollectionsService {
             transactionId: transaction.id,
             type: AlertType.MASS_ESTIMATED_NOT_WEIGHED,
             severity: AlertSeverity.LOW,
-            message: `Giao dịch chưa được cân: ${input.actual_liters.toFixed(2)} lít được quy đổi thành ${actualKg.toFixed(2)} kg với hệ số ${densityFactor} kg/lít.`,
-            details: { actual_liters: input.actual_liters, actual_kg: actualKg, density_factor: densityFactor },
+            message: `Giao dịch chưa được cân: ${actualLiters.toFixed(2)} lít được quy đổi thành ${actualKg.toFixed(2)} kg với hệ số ${densityFactor} kg/lít.`,
+            details: { actual_liters: actualLiters, actual_kg: actualKg, density_factor: densityFactor },
           },
         });
       }

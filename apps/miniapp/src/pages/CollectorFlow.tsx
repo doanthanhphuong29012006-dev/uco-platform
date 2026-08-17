@@ -322,11 +322,16 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
   const [locationFallback, setLocationFallback] = useState(false);
   const [clientUuid] = useState(() => crypto.randomUUID());
   const capacity = Number(container.capacity_liters ?? 0);
-  const actualLiters = Number(liters);
+  const enteredLiters = liters.trim() === '' ? null : Number(liters);
   const actualKg = kilograms.trim() === '' ? null : Number(kilograms);
+  const hasLiters = enteredLiters !== null && Number.isFinite(enteredLiters) && enteredLiters > 0;
+  const hasKilograms = actualKg !== null && Number.isFinite(actualKg) && actualKg > 0;
+  const litersDerivedFromKilograms = !hasLiters && hasKilograms;
+  const actualLiters = litersDerivedFromKilograms ? (actualKg as number) / DEFAULT_DENSITY_KG_PER_LITER : enteredLiters ?? 0;
   const maxLiters = capacity * 1.1;
-  const invalidLiters = !Number.isFinite(actualLiters) || actualLiters <= 0 || actualLiters > maxLiters;
-  const invalidKg = actualKg !== null && (!Number.isFinite(actualKg) || actualKg <= 0);
+  const invalidLiters = actualLiters > maxLiters || (hasLiters && (!Number.isFinite(actualLiters) || actualLiters <= 0));
+  const invalidKg = actualKg !== null && (!Number.isFinite(actualKg) || actualKg < 0);
+  const invalidMass = (!hasLiters && !hasKilograms) || invalidLiters || invalidKg;
 
   function adjustLiters(amount: number): void {
     const next = Math.max(0, (Number(liters) || 0) + amount);
@@ -352,8 +357,8 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
   }
 
   async function submit(): Promise<void> {
-    if (invalidLiters || invalidKg) {
-      setError(`Số lít phải lớn hơn 0 và không vượt ${maxLiters.toFixed(1)} lít.`);
+    if (invalidMass) {
+      setError(!hasLiters && !hasKilograms ? 'Vui lòng nhập số kg hoặc số lít lớn hơn 0.' : litersDerivedFromKilograms && invalidLiters ? `Số lít suy ra từ khối lượng (${actualLiters.toFixed(2)} lít) vượt dung tích cho phép ${maxLiters.toFixed(1)} lít.` : `Số lít phải lớn hơn 0 và không vượt ${maxLiters.toFixed(1)} lít.`);
       return;
     }
     if (quality === Quality.FLAG && photos.length === 0) {
@@ -386,7 +391,7 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
       client_uuid: clientUuid,
       order_id: stop.order_id,
        container_code: containerCode,
-      actual_liters: actualLiters,
+      ...(hasLiters ? { actual_liters: actualLiters } : {}),
       ...(actualKg === null ? {} : { actual_kg: actualKg }),
       quality,
       geo: currentGeo,
@@ -415,17 +420,17 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
        <header className="collector-screen-heading"><p className="eyebrow">GHI NHẬN THU GOM</p><h1>{container.merchant.name}</h1><p>{containerCode}</p></header>
       <section className="entry-target-card"><span>Số lít dự kiến</span><strong>{formatLiters(stop.expected_liters)}</strong><small>Mã giao dịch: {clientUuid.slice(0, 8)}…</small>{locationFallback ? <p className="location-banner">Không lấy được vị trí GPS, đang dùng vị trí trung tâm phường. Giao dịch có thể bị đánh dấu cần kiểm tra.</p> : null}</section>
       <section className="liter-entry-card">
-        <label htmlFor="actual-kilograms">Khá»‘i lÆ°á»£ng (kg Ä‘Ã£ cÃ¢n)</label>
+        <label htmlFor="actual-kilograms">Khối lượng (kg đã cân)</label>
         <div className="large-number-input"><button onClick={() => adjustKilograms(-0.5)} disabled={saving}>âˆ’</button><input id="actual-kilograms" type="number" inputMode="decimal" step="0.5" min="0" value={kilograms} onChange={(event) => setKilograms(event.target.value)} placeholder="0.0" /><span>kg</span><button onClick={() => adjustKilograms(0.5)} disabled={saving}>+</button></div>
-        <p className={invalidKg ? 'error-text' : 'field-help'}>{actualKg === null ? 'KhÃ´ng cÃ³ sá»‘ cÃ¢n? Há»‡ thá»‘ng sáº½ Æ°á»›c lÆ°á»£ng kg tá»« sá»‘ lÃ­t bÃªn dÆ°á»›i.' : 'SCALE â€” sá»‘ kg nÃ y lÃ  sá»‘ cÃ¢n thá»±c táº¿.'}</p>
+        <p className={invalidKg ? 'error-text' : 'field-help'}>{actualKg === null ? 'Không có số cân? Hệ thống sẽ ước lượng kg từ số lít bên dưới.' : 'SCALE — số kg này là số cân thực tế.'}</p>
         <label htmlFor="actual-liters">Số lít thực tế</label>
         <div className="large-number-input"><button onClick={() => adjustLiters(-0.5)} disabled={saving}>−</button><input id="actual-liters" type="number" inputMode="decimal" step="0.5" min="0" value={liters} onChange={(event) => setLiters(event.target.value)} placeholder="0.0" /><span>lít</span><button onClick={() => adjustLiters(0.5)} disabled={saving}>+</button></div>
-        <p className={invalidLiters && liters ? 'error-text' : 'field-help'}>Dung tích {formatLiters(capacity)} · tối đa {maxLiters.toFixed(1)} lít</p>
+        <p className={invalidLiters && (liters || litersDerivedFromKilograms) ? 'error-text' : 'field-help'}>{litersDerivedFromKilograms ? `Số lít ước tính từ khối lượng: ${actualLiters.toFixed(2)} lít · dung tích tối đa ${maxLiters.toFixed(1)} lít` : `Dung tích ${formatLiters(capacity)} · tối đa ${maxLiters.toFixed(1)} lít`}</p>
       </section>
       <section className="quality-card"><p className="section-label">Chất lượng dầu</p><div className="quality-options"><button className={quality === Quality.PASS ? 'quality-option selected' : 'quality-option'} onClick={() => setQuality(Quality.PASS)} disabled={saving}>✓ Đạt</button><button className={quality === Quality.FLAG ? 'quality-option selected flag-selected' : 'quality-option'} onClick={() => setQuality(Quality.FLAG)} disabled={saving}>⚠ Cần kiểm tra</button></div></section>
       {quality === Quality.FLAG ? <section className="photo-card"><div><strong>Ảnh kiểm tra</strong><p>{photos.length > 0 ? `${photos.length} ảnh đã chụp` : 'Cần ít nhất 1 ảnh'}</p></div><button className="secondary-button" onClick={() => { void takePhoto(); }} disabled={takingPhoto || saving}>{takingPhoto ? 'Đang chụp…' : 'Chụp ảnh'}</button></section> : null}
       {error ? <div className="error-panel">{error}</div> : null}
-      <button className="submit-collection-button" onClick={() => { void submit(); }} disabled={saving || invalidLiters || invalidKg || (quality === Quality.FLAG && photos.length === 0)}>{saving ? 'Đang lưu trên máy…' : 'Xác nhận thu gom'}</button>
+      <button className="submit-collection-button" onClick={() => { void submit(); }} disabled={saving || invalidMass || (quality === Quality.FLAG && photos.length === 0)}>{saving ? 'Đang lưu trên máy…' : 'Xác nhận thu gom'}</button>
     </div>
   );
 }
@@ -475,7 +480,7 @@ function OutboxRow({ row, retrying, onRetry }: { row: OutboxRecord; retrying: bo
   const payload = row.payload as Partial<CollectionCreateRequest>;
   return (
     <article className="outbox-row">
-      <div className="outbox-row-top"><span className={`outbox-dot outbox-dot-${row.status}`} /><strong>{formatLiters(payload.actual_liters)} · {statusLabel(row.status)}</strong></div>
+      <div className="outbox-row-top"><span className={`outbox-dot outbox-dot-${row.status}`} /><strong>{formatLiters(Number(payload.actual_liters ?? Number(payload.actual_kg ?? 0) / DEFAULT_DENSITY_KG_PER_LITER))} lít · {statusLabel(row.status)}</strong></div>
       <p>UUID: {row.client_uuid}</p>
       <p>Tạo lúc {formatTime(row.created_at)} · Lần thử {row.attempts}</p>
       {row.last_error ? <div className="outbox-error">{row.last_error}</div> : null}
