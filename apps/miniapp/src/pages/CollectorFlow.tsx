@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ContainerState, DEFAULT_DENSITY_KG_PER_LITER, Quality } from '@eco-oil/shared-types';
+import { ContainerState, DEFAULT_DENSITY_KG_PER_LITER, OilGrade, Quality } from '@eco-oil/shared-types';
 import type { CollectionCreateRequest, ContainerLookupResponse, CurrentRouteResponse, GeoPoint, RouteStop } from '@eco-oil/shared-types';
 import { ApiError } from '../lib/api';
 import { formatLiters } from '../lib/formatters';
@@ -313,6 +313,9 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
   const [liters, setLiters] = useState(stop.expected_liters > 0 ? stop.expected_liters.toFixed(1) : '');
   const [kilograms, setKilograms] = useState('');
   const [quality, setQuality] = useState<Quality>(Quality.PASS);
+  const [grade, setGrade] = useState<OilGrade | null>(null);
+  const [suspectedAdulteration, setSuspectedAdulteration] = useState(false);
+  const [gradeNote, setGradeNote] = useState('');
   const [photos, setPhotos] = useState<PhotoAsset[]>([]);
   const [geo, setGeo] = useState<GeoPoint | null>(null);
   const [saving, setSaving] = useState(false);
@@ -332,6 +335,17 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
   const invalidLiters = actualLiters > maxLiters || (hasLiters && (!Number.isFinite(actualLiters) || actualLiters <= 0));
   const invalidKg = actualKg !== null && (!Number.isFinite(actualKg) || actualKg < 0);
   const invalidMass = (!hasLiters && !hasKilograms) || invalidLiters || invalidKg;
+  const gradeRequiresPhoto = grade === OilGrade.B || grade === OilGrade.C || suspectedAdulteration;
+  const gradePhotoMissing = gradeRequiresPhoto && photos.length === 0;
+  const submitBlockReason = grade === null
+    ? 'Vui lòng chọn phân hạng dầu trước khi xác nhận.'
+    : invalidMass
+      ? (!hasLiters && !hasKilograms ? 'Vui lòng nhập số kg hoặc số lít lớn hơn 0.' : litersDerivedFromKilograms && invalidLiters ? `Số lít suy ra từ khối lượng (${actualLiters.toFixed(2)} lít) vượt dung tích cho phép ${maxLiters.toFixed(1)} lít.` : `Số lít phải lớn hơn 0 và không vượt ${maxLiters.toFixed(1)} lít.`)
+      : gradePhotoMissing
+        ? 'Hạng B, hạng C hoặc nghi ngờ pha lẫn cần ít nhất 1 ảnh trước khi gửi.'
+        : quality === Quality.FLAG && photos.length === 0
+          ? 'Giao dịch cần kiểm tra bắt buộc có ít nhất 1 ảnh.'
+          : null;
 
   function adjustLiters(amount: number): void {
     const next = Math.max(0, (Number(liters) || 0) + amount);
@@ -357,6 +371,10 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
   }
 
   async function submit(): Promise<void> {
+    if (grade === null) {
+      setError('Vui lòng chọn phân hạng dầu trước khi xác nhận.');
+      return;
+    }
     if (invalidMass) {
       setError(!hasLiters && !hasKilograms ? 'Vui lòng nhập số kg hoặc số lít lớn hơn 0.' : litersDerivedFromKilograms && invalidLiters ? `Số lít suy ra từ khối lượng (${actualLiters.toFixed(2)} lít) vượt dung tích cho phép ${maxLiters.toFixed(1)} lít.` : `Số lít phải lớn hơn 0 và không vượt ${maxLiters.toFixed(1)} lít.`);
       return;
@@ -394,6 +412,10 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
       ...(hasLiters ? { actual_liters: actualLiters } : {}),
       ...(actualKg === null ? {} : { actual_kg: actualKg }),
       quality,
+      grade,
+      ...(photos[0]?.url ? { grade_photo_url: photos[0].url } : {}),
+      ...(gradeNote.trim() ? { grade_note: gradeNote.trim() } : {}),
+      suspected_adulteration: suspectedAdulteration,
       geo: currentGeo,
       photos: photos.map((photo) => photo.url),
       collected_at: new Date().toISOString(),
@@ -419,6 +441,18 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
       <button className="back-button" onClick={onBack} disabled={saving}>← Quay lại quét mã</button>
        <header className="collector-screen-heading"><p className="eyebrow">GHI NHẬN THU GOM</p><h1>{container.merchant.name}</h1><p>{containerCode}</p></header>
       <section className="entry-target-card"><span>Số lít dự kiến</span><strong>{formatLiters(stop.expected_liters)}</strong><small>Mã giao dịch: {clientUuid.slice(0, 8)}…</small>{locationFallback ? <p className="location-banner">Không lấy được vị trí GPS, đang dùng vị trí trung tâm phường. Giao dịch có thể bị đánh dấu cần kiểm tra.</p> : null}</section>
+      <section className="quality-card">
+        <p className="section-label">Phân hạng dầu</p>
+        <div className="grade-options">
+          <button className={grade === OilGrade.A ? 'grade-option selected' : 'grade-option'} onClick={() => setGrade(OilGrade.A)} disabled={saving}><strong>A</strong><small>Vàng đến nâu nhạt, trong, không lắng cặn, không mùi khét nặng.</small></button>
+          <button className={grade === OilGrade.B ? 'grade-option selected' : 'grade-option'} onClick={() => setGrade(OilGrade.B)} disabled={saving}><strong>B</strong><small>Nâu sẫm, hơi đục hoặc có ít cặn lắng, mùi khét rõ.</small></button>
+          <button className={grade === OilGrade.C ? 'grade-option selected' : 'grade-option'} onClick={() => setGrade(OilGrade.C)} disabled={saving}><strong>C</strong><small>Đen đặc, nhiều cặn, có nước hoặc vụn thức ăn, mùi hắc.</small></button>
+        </div>
+        <label className="toggle-row"><input type="checkbox" checked={suspectedAdulteration} onChange={(event) => setSuspectedAdulteration(event.target.checked)} disabled={saving} /><span>Nghi ngờ pha lẫn</span></label>
+        <p className="field-help">Bật nếu thấy có nước, dầu nhớt hoặc mùi lạ không phải dầu ăn.</p>
+        <label htmlFor="grade-note">Ghi chú phân hạng (không bắt buộc)</label>
+        <textarea id="grade-note" value={gradeNote} onChange={(event) => setGradeNote(event.target.value)} disabled={saving} placeholder="Ghi chú thêm nếu cần" />
+      </section>
       <section className="liter-entry-card">
         <label htmlFor="actual-kilograms">Khối lượng (kg đã cân)</label>
         <div className="large-number-input"><button onClick={() => adjustKilograms(-0.5)} disabled={saving}>−</button><input id="actual-kilograms" type="number" inputMode="decimal" step="0.5" min="0" value={kilograms} onChange={(event) => setKilograms(event.target.value)} placeholder="0.0" /><span>kg</span><button onClick={() => adjustKilograms(0.5)} disabled={saving}>+</button></div>
@@ -428,9 +462,10 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
         <p className={invalidLiters && (liters || litersDerivedFromKilograms) ? 'error-text' : 'field-help'}>{litersDerivedFromKilograms ? `Số lít ước tính từ khối lượng: ${actualLiters.toFixed(2)} lít · dung tích tối đa ${maxLiters.toFixed(1)} lít` : `Dung tích ${formatLiters(capacity)} · tối đa ${maxLiters.toFixed(1)} lít`}</p>
       </section>
       <section className="quality-card"><p className="section-label">Chất lượng dầu</p><div className="quality-options"><button className={quality === Quality.PASS ? 'quality-option selected' : 'quality-option'} onClick={() => setQuality(Quality.PASS)} disabled={saving}>✓ Đạt</button><button className={quality === Quality.FLAG ? 'quality-option selected flag-selected' : 'quality-option'} onClick={() => setQuality(Quality.FLAG)} disabled={saving}>⚠ Cần kiểm tra</button></div></section>
-      {quality === Quality.FLAG ? <section className="photo-card"><div><strong>Ảnh kiểm tra</strong><p>{photos.length > 0 ? `${photos.length} ảnh đã chụp` : 'Cần ít nhất 1 ảnh'}</p></div><button className="secondary-button" onClick={() => { void takePhoto(); }} disabled={takingPhoto || saving}>{takingPhoto ? 'Đang chụp…' : 'Chụp ảnh'}</button></section> : null}
+      {quality === Quality.FLAG || gradeRequiresPhoto ? <section className="photo-card"><div><strong>{gradeRequiresPhoto ? 'Ảnh phân hạng / kiểm tra' : 'Ảnh kiểm tra'}</strong><p>{photos.length > 0 ? `${photos.length} ảnh đã chụp` : 'Cần ít nhất 1 ảnh'}</p></div><button className="secondary-button" onClick={() => { void takePhoto(); }} disabled={takingPhoto || saving}>{takingPhoto ? 'Đang chụp…' : 'Chụp ảnh'}</button></section> : null}
       {error ? <div className="error-panel">{error}</div> : null}
-      <button className="submit-collection-button" onClick={() => { void submit(); }} disabled={saving || invalidMass || (quality === Quality.FLAG && photos.length === 0)}>{saving ? 'Đang lưu trên máy…' : 'Xác nhận thu gom'}</button>
+      {submitBlockReason ? <p className="error-text submit-block-reason">{submitBlockReason}</p> : null}
+      <button className="submit-collection-button" onClick={() => { void submit(); }} disabled={saving || Boolean(submitBlockReason)}>{saving ? 'Đang lưu trên máy…' : 'Xác nhận thu gom'}</button>
     </div>
   );
 }

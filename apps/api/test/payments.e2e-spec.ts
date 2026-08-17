@@ -65,9 +65,9 @@ describe('Weekly merchant payments (e2e)', () => {
     });
     await prisma.collectionTransaction.createMany({
       data: [
-        { id: transactionAId, clientUuid: randomUUID(), containerId: '60000000-0000-4000-8000-000000000001', merchantId: merchantAId, collectorId: '50000000-0000-4000-8000-000000000001', actualLiters: 10, quality: 'PASS', collectedAt: boundaryCollectedAt },
-        { id: transactionBId, clientUuid: randomUUID(), containerId: '60000000-0000-4000-8000-000000000001', merchantId: merchantBId, collectorId: '50000000-0000-4000-8000-000000000001', actualLiters: 5.5, quality: 'PASS', collectedAt: new Date('2030-01-08T03:00:00.000Z') },
-        { id: flaggedTransactionId, clientUuid: randomUUID(), containerId: '60000000-0000-4000-8000-000000000001', merchantId: merchantAId, collectorId: '50000000-0000-4000-8000-000000000001', actualLiters: 9, quality: 'FLAG', collectedAt: new Date('2030-01-09T03:00:00.000Z') },
+        { id: transactionAId, clientUuid: randomUUID(), containerId: '60000000-0000-4000-8000-000000000001', merchantId: merchantAId, collectorId: '50000000-0000-4000-8000-000000000001', actualLiters: 10, grade: 'A', quality: 'PASS', collectedAt: boundaryCollectedAt },
+        { id: transactionBId, clientUuid: randomUUID(), containerId: '60000000-0000-4000-8000-000000000001', merchantId: merchantBId, collectorId: '50000000-0000-4000-8000-000000000001', actualLiters: 5.5, grade: 'C', quality: 'PASS', collectedAt: new Date('2030-01-08T03:00:00.000Z') },
+        { id: flaggedTransactionId, clientUuid: randomUUID(), containerId: '60000000-0000-4000-8000-000000000001', merchantId: merchantAId, collectorId: '50000000-0000-4000-8000-000000000001', actualLiters: 9, grade: 'A', quality: 'FLAG', collectedAt: new Date('2030-01-09T03:00:00.000Z') },
       ],
     });
     merchantAToken = await login(`zalo_payment_a_${suffix}`, `0961${suffix}`);
@@ -114,6 +114,8 @@ describe('Weekly merchant payments (e2e)', () => {
     const listed = await request(app.getHttpServer()).get(`/api/v1/admin/payments?period=${period}`).set('Authorization', `Bearer ${adminToken}`).expect(200);
     const oldPayment = (listed.body.data as Array<{ transaction_id: string; unit_price: number; amount: number }>).find((payment) => payment.transaction_id === transactionAId);
     expect(oldPayment).toMatchObject({ unit_price: 6000, amount: 60000 });
+    const gradeCPayment = (listed.body.data as Array<{ transaction_id: string; unit_price: number; amount: number }>).find((payment) => payment.transaction_id === transactionBId);
+    expect(gradeCPayment).toMatchObject({ unit_price: 6000, amount: 33000 });
   });
 
   it('calculates a payment from kilograms when the effective price unit is PER_KG', async () => {

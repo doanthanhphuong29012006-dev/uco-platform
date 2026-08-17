@@ -128,12 +128,14 @@ export class AdminService {
           'actual_liters', recent."actual_liters",
           'actual_kg', recent."actual_kg",
           'mass_source', recent."mass_source",
+          'grade', recent."grade",
+          'suspected_adulteration', recent."suspected_adulteration",
           'quality', recent."quality",
           'collected_at', recent."collected_at"
         ) ORDER BY recent."collected_at" DESC), '[]'::json) AS recent_transactions
         FROM (
           SELECT ct."id", m."business_name" AS "merchant_name", u."name" AS "collector_name",
-            ct."actual_liters"::float8 AS "actual_liters", ct."actual_kg"::float8 AS "actual_kg", ct."mass_source"::text AS "mass_source", ct."quality"::text AS "quality", ct."collected_at"
+            ct."actual_liters"::float8 AS "actual_liters", ct."actual_kg"::float8 AS "actual_kg", ct."mass_source"::text AS "mass_source", ct."grade"::text AS "grade", ct."suspected_adulteration", ct."quality"::text AS "quality", ct."collected_at"
           FROM "collection_transactions" ct
           JOIN "merchants" m ON m."id" = ct."merchant_id"
           LEFT JOIN "collectors" co ON co."id" = ct."collector_id"
@@ -198,6 +200,8 @@ export class AdminService {
             'liters', ct."actual_liters"::float8,
             'kilograms', ct."actual_kg"::float8,
             'mass_source', ct."mass_source"::text,
+            'grade', ct."grade"::text,
+            'suspected_adulteration', ct."suspected_adulteration",
             'collected_at', ct."collected_at"
           ) ORDER BY ct."collected_at"), '[]'::json) AS transactions
         FROM "collection_transactions" ct
@@ -233,6 +237,8 @@ export class AdminService {
           'liters', ct."actual_liters"::float8,
           'kilograms', ct."actual_kg"::float8,
           'mass_source', ct."mass_source"::text,
+          'grade', ct."grade"::text,
+          'suspected_adulteration', ct."suspected_adulteration",
           'collected_at', ct."collected_at"
         ) ORDER BY ct."collected_at"), '[]'::json) AS items
         FROM "collection_transactions" ct

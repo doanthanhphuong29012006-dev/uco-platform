@@ -1,6 +1,6 @@
 import { ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AlertSeverity, AlertType, ContainerState, EntityStatus, MassSource, OrderStatus, Quality } from '@prisma/client';
+import { AlertSeverity, AlertType, ContainerState, EntityStatus, MassSource, OilGrade, OrderStatus, Quality } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import type { CollectionCreateInput, CollectionListQueryInput } from '@eco-oil/validation';
@@ -19,6 +19,10 @@ type InsertedTransaction = {
   actual_kg: number;
   mass_source: MassSource;
   density_factor: number | null;
+  grade: OilGrade | null;
+  grade_photo_url: string | null;
+  grade_note: string | null;
+  suspected_adulteration: boolean;
   quality: Quality;
   photos: Prisma.JsonValue;
   collected_at: Date;
@@ -37,6 +41,10 @@ type CollectionRow = {
   actual_kg: number;
   mass_source: MassSource;
   density_factor: number | null;
+  grade: OilGrade | null;
+  grade_photo_url: string | null;
+  grade_note: string | null;
+  suspected_adulteration: boolean;
   quality: Quality;
   photos: Prisma.JsonValue;
   collected_at: Date;
@@ -121,6 +129,16 @@ export class CollectionsService {
         });
       }
 
+      const gradePhotoUrl = input.grade_photo_url ?? input.photos[0] ?? null;
+      const gradeRequiresPhoto = input.grade === OilGrade.B || input.grade === OilGrade.C || input.suspected_adulteration;
+      if (gradeRequiresPhoto && !gradePhotoUrl) {
+        throw new UnprocessableEntityException({
+          code: 'PHOTO_REQUIRED_FOR_GRADE',
+          message: 'Hạng B, hạng C hoặc nghi ngờ pha lẫn bắt buộc phải có ít nhất 1 ảnh.',
+          details: { grade: input.grade, suspected_adulteration: input.suspected_adulteration },
+        });
+      }
+
       const massSource = hasKilograms ? MassSource.SCALE : MassSource.ESTIMATED_FROM_VOLUME;
       const storedDensityFactor = !hasLiters || !hasKilograms ? densityFactor : null;
 
@@ -143,7 +161,7 @@ export class CollectionsService {
           INSERT INTO "collection_transactions" (
             "id", "client_uuid", "order_id", "container_id", "merchant_id", "collector_id",
             "actual_liters", "quality", "geo_point", "photos", "collected_at", "created_at"
-            , "synced_at", "actual_kg", "mass_source", "density_factor"
+            , "synced_at", "actual_kg", "mass_source", "density_factor", "grade", "grade_photo_url", "grade_note", "suspected_adulteration"
           ) VALUES (
             ${randomUUID()}::uuid,
             ${input.client_uuid},
@@ -160,7 +178,11 @@ export class CollectionsService {
             ${synced ? new Date() : null},
             ${actualKg},
             ${massSource}::"MassSource",
-            ${storedDensityFactor}
+            ${storedDensityFactor},
+            ${input.grade}::"OilGrade",
+            ${gradePhotoUrl},
+            ${input.grade_note ?? null},
+            ${input.suspected_adulteration}
           )
           ON CONFLICT ("client_uuid") DO NOTHING
           RETURNING *
@@ -168,6 +190,7 @@ export class CollectionsService {
         SELECT inserted."id", inserted."client_uuid", inserted."order_id", inserted."container_id",
           inserted."merchant_id", inserted."collector_id", inserted."actual_liters"::float8 AS "actual_liters",
           inserted."actual_kg"::float8 AS "actual_kg", inserted."mass_source"::text AS "mass_source", inserted."density_factor"::float8 AS "density_factor",
+          inserted."grade"::text AS "grade", inserted."grade_photo_url", inserted."grade_note", inserted."suspected_adulteration",
           inserted."quality"::text AS "quality", inserted."photos", inserted."collected_at", inserted."created_at",
           inserted."deleted_at", ST_Y(inserted."geo_point"::geometry)::float8 AS "geo_lat",
           ST_X(inserted."geo_point"::geometry)::float8 AS "geo_lng"
@@ -260,6 +283,28 @@ export class CollectionsService {
           },
         });
       }
+      if (input.suspected_adulteration) {
+        await tx.alert.create({
+          data: {
+            transactionId: transaction.id,
+            type: AlertType.SUSPECTED_ADULTERATION,
+            severity: AlertSeverity.HIGH,
+            message: `Nghi ngờ pha lẫn tại quán ${order.merchant.businessName}: ${actualKg.toFixed(2)} kg, hạng ${input.grade}.`,
+            details: { merchant_id: order.merchantId, actual_kg: actualKg, grade: input.grade },
+          },
+        });
+      }
+      if (input.grade === OilGrade.C) {
+        await tx.alert.create({
+          data: {
+            transactionId: transaction.id,
+            type: AlertType.OIL_GRADE_C,
+            severity: AlertSeverity.MEDIUM,
+            message: `Dầu hạng C tại quán ${order.merchant.businessName}: ${actualKg.toFixed(2)} kg.`,
+            details: { merchant_id: order.merchantId, actual_kg: actualKg, grade: input.grade },
+          },
+        });
+      }
       return { row: await this.loadById(tx, transaction.id), replayed: false };
       });
 
@@ -279,7 +324,7 @@ export class CollectionsService {
     const [rows, countRows] = await Promise.all([
       this.prisma.$queryRaw<CollectionRow[]>`
         SELECT ct."id", ct."client_uuid", ct."order_id", ct."container_id", ct."merchant_id", ct."collector_id",
-          ct."actual_liters"::float8 AS "actual_liters", ct."actual_kg"::float8 AS "actual_kg", ct."mass_source"::text AS "mass_source", ct."density_factor"::float8 AS "density_factor", ct."quality"::text AS "quality", ct."photos",
+          ct."actual_liters"::float8 AS "actual_liters", ct."actual_kg"::float8 AS "actual_kg", ct."mass_source"::text AS "mass_source", ct."density_factor"::float8 AS "density_factor", ct."grade"::text AS "grade", ct."grade_photo_url", ct."grade_note", ct."suspected_adulteration", ct."quality"::text AS "quality", ct."photos",
           ct."collected_at", ct."created_at", c."qr_code" AS "container_code",
           ST_Y(ct."geo_point"::geometry)::float8 AS "geo_lat", ST_X(ct."geo_point"::geometry)::float8 AS "geo_lng"
         FROM "collection_transactions" ct
@@ -306,7 +351,7 @@ export class CollectionsService {
   private async loadByClientUuid(tx: Prisma.TransactionClient, clientUuid: string): Promise<CollectionRow | null> {
     const rows = await tx.$queryRaw<CollectionRow[]>`
       SELECT ct."id", ct."client_uuid", ct."order_id", ct."container_id", ct."merchant_id", ct."collector_id",
-        ct."actual_liters"::float8 AS "actual_liters", ct."actual_kg"::float8 AS "actual_kg", ct."mass_source"::text AS "mass_source", ct."density_factor"::float8 AS "density_factor", ct."quality"::text AS "quality", ct."photos",
+        ct."actual_liters"::float8 AS "actual_liters", ct."actual_kg"::float8 AS "actual_kg", ct."mass_source"::text AS "mass_source", ct."density_factor"::float8 AS "density_factor", ct."grade"::text AS "grade", ct."grade_photo_url", ct."grade_note", ct."suspected_adulteration", ct."quality"::text AS "quality", ct."photos",
         ct."collected_at", ct."created_at", c."qr_code" AS "container_code",
         ST_Y(ct."geo_point"::geometry)::float8 AS "geo_lat", ST_X(ct."geo_point"::geometry)::float8 AS "geo_lng"
       FROM "collection_transactions" ct
@@ -320,7 +365,7 @@ export class CollectionsService {
   private async loadById(tx: Prisma.TransactionClient, id: string): Promise<CollectionRow | null> {
     const rows = await tx.$queryRaw<CollectionRow[]>`
       SELECT ct."id", ct."client_uuid", ct."order_id", ct."container_id", ct."merchant_id", ct."collector_id",
-        ct."actual_liters"::float8 AS "actual_liters", ct."actual_kg"::float8 AS "actual_kg", ct."mass_source"::text AS "mass_source", ct."density_factor"::float8 AS "density_factor", ct."quality"::text AS "quality", ct."photos",
+        ct."actual_liters"::float8 AS "actual_liters", ct."actual_kg"::float8 AS "actual_kg", ct."mass_source"::text AS "mass_source", ct."density_factor"::float8 AS "density_factor", ct."grade"::text AS "grade", ct."grade_photo_url", ct."grade_note", ct."suspected_adulteration", ct."quality"::text AS "quality", ct."photos",
         ct."collected_at", ct."created_at", c."qr_code" AS "container_code",
         ST_Y(ct."geo_point"::geometry)::float8 AS "geo_lat", ST_X(ct."geo_point"::geometry)::float8 AS "geo_lng"
       FROM "collection_transactions" ct
@@ -344,6 +389,10 @@ export class CollectionsService {
       actual_kg: Number(row.actual_kg),
       mass_source: row.mass_source,
       density_factor: row.density_factor === null ? null : Number(row.density_factor),
+      grade: row.grade,
+      grade_photo_url: row.grade_photo_url,
+      grade_note: row.grade_note,
+      suspected_adulteration: row.suspected_adulteration,
       quality: row.quality,
       geo: row.geo_lat === null || row.geo_lng === null ? null : { lat: row.geo_lat, lng: row.geo_lng },
       photos: row.photos,

@@ -53,6 +53,12 @@ enum MassSource {
   ESTIMATED_FROM_VOLUME
 }
 
+enum OilGrade {
+  A
+  B
+  C
+}
+
 enum PriceUnit {
   PER_LITER
   PER_KG
@@ -77,6 +83,8 @@ enum AlertType {
   COLLECTION_LITERS_DEVIATION
   CONTAINER_TRANSIT_CANCELLED
   MASS_ESTIMATED_NOT_WEIGHED
+  SUSPECTED_ADULTERATION
+  OIL_GRADE_C
 }
 
 enum AlertSeverity {
@@ -273,6 +281,10 @@ model CollectionTransaction {
   actualKg    Decimal?            @map("actual_kg") @db.Decimal(10, 3)
   massSource  MassSource           @default(ESTIMATED_FROM_VOLUME) @map("mass_source")
   densityFactor Decimal?           @map("density_factor") @db.Decimal(10, 6)
+  grade        OilGrade?
+  gradePhotoUrl String?             @map("grade_photo_url") @db.Text
+  gradeNote    String?              @map("grade_note") @db.Text
+  suspectedAdulteration Boolean     @default(false) @map("suspected_adulteration")
   quality      Quality
   geoPoint     Unsupported("geography(Point, 4326)")? @map("geo_point")
   photos       Json               @default("[]")

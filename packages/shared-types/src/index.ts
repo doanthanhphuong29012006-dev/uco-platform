@@ -57,11 +57,19 @@ export enum AlertType {
   COLLECTION_LITERS_DEVIATION = 'COLLECTION_LITERS_DEVIATION',
   CONTAINER_TRANSIT_CANCELLED = 'CONTAINER_TRANSIT_CANCELLED',
   MASS_ESTIMATED_NOT_WEIGHED = 'MASS_ESTIMATED_NOT_WEIGHED',
+  SUSPECTED_ADULTERATION = 'SUSPECTED_ADULTERATION',
+  OIL_GRADE_C = 'OIL_GRADE_C',
 }
 
 export enum MassSource {
   SCALE = 'SCALE',
   ESTIMATED_FROM_VOLUME = 'ESTIMATED_FROM_VOLUME',
+}
+
+export enum OilGrade {
+  A = 'A',
+  B = 'B',
+  C = 'C',
 }
 
 export enum PriceUnit {
@@ -194,6 +202,10 @@ export interface MerchantTransaction {
   actual_kg: number | null;
   mass_source: MassSource;
   density_factor: number | null;
+  grade: OilGrade | null;
+  grade_photo_url: string | null;
+  grade_note: string | null;
+  suspected_adulteration: boolean;
   quality: Quality;
   geo: { lat: number; lng: number } | null;
   photos: unknown;
@@ -285,13 +297,17 @@ export interface CollectionCreateRequest {
   container_code: string;
   actual_liters?: number;
   actual_kg?: number;
+  grade?: OilGrade;
+  grade_photo_url?: string;
+  grade_note?: string;
+  suspected_adulteration?: boolean;
   quality: Quality;
   geo: GeoPoint;
   photos: string[];
   collected_at?: string;
 }
 
-export interface CollectionTransactionResponse extends CollectionCreateRequest {
+export interface CollectionTransactionResponse extends Omit<CollectionCreateRequest, 'grade' | 'grade_photo_url' | 'grade_note' | 'suspected_adulteration'> {
   id: string;
   actual_liters: number;
   container_id: string;
@@ -301,6 +317,10 @@ export interface CollectionTransactionResponse extends CollectionCreateRequest {
   created_at: string;
   mass_source: MassSource;
   density_factor: number | null;
+  grade: OilGrade | null;
+  grade_photo_url: string | null;
+  grade_note: string | null;
+  suspected_adulteration: boolean;
 }
 
 export interface SyncBatchResult {
@@ -360,6 +380,8 @@ export interface AdminRecentTransaction {
   actual_liters: number;
   actual_kg: number | null;
   mass_source: MassSource;
+  grade: OilGrade | null;
+  suspected_adulteration: boolean;
   quality: Quality;
   collected_at: string;
 }
@@ -409,6 +431,8 @@ export interface AdminReconciliationTransaction {
   liters: number;
   kilograms: number | null;
   mass_source: MassSource;
+  grade: OilGrade | null;
+  suspected_adulteration: boolean;
   collected_at: string;
 }
 
@@ -444,6 +468,8 @@ export interface AdminReconciliationResponse {
     liters: number;
     kilograms: number | null;
     mass_source: MassSource;
+    grade: OilGrade | null;
+    suspected_adulteration: boolean;
     collected_at: string;
   }>;
 }

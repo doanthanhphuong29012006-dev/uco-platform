@@ -97,6 +97,7 @@ describe('Collections idempotency and geo validation (e2e)', () => {
       container_code: 'ECO-UCO-Q3-P7-007',
       actual_liters: 18.5,
       quality: 'PASS',
+      grade: 'A',
       geo: { lat: 10.78095, lng: 106.68425 },
       photos: ['https://example.com/collection-1.jpg'],
       collected_at: '2026-08-11T13:00:00Z',
@@ -140,6 +141,7 @@ describe('Collections idempotency and geo validation (e2e)', () => {
       container_code: 'ECO-UCO-Q3-P7-009',
       actual_liters: 18,
       quality: 'PASS',
+      grade: 'A',
       geo: { lat: 10.78155, lng: 106.68375 },
       photos: [],
       collected_at: '2026-08-11T13:01:00Z',
@@ -168,6 +170,7 @@ describe('Collections idempotency and geo validation (e2e)', () => {
         container_code: 'ECO-UCO-Q3-P7-002',
         actual_liters: 999,
         quality: 'PASS',
+        grade: 'A',
         geo: { lat: 10.78255, lng: 106.68475 },
         photos: [],
       })
@@ -188,6 +191,7 @@ describe('Collections idempotency and geo validation (e2e)', () => {
         container_code: 'ECO-UCO-Q3-P7-004',
         actual_liters: 18,
         quality: 'PASS',
+        grade: 'A',
         geo: { lat: 10.828, lng: 106.7009 },
         photos: [],
       })
@@ -212,6 +216,7 @@ describe('Collections idempotency and geo validation (e2e)', () => {
         container_code: 'ECO-UCO-Q3-P7-001',
         actual_liters: 30,
         quality: 'PASS',
+        grade: 'A',
         geo: { lat: 10.78255, lng: 106.68475 },
         photos: [],
       })
@@ -237,6 +242,7 @@ describe('Collections idempotency and geo validation (e2e)', () => {
         container_code: 'ECO-UCO-Q3-P7-003',
         actual_liters: 22,
         quality: 'PASS',
+        grade: 'A',
         geo: { lat: 10.78195, lng: 106.68535 },
         photos: [],
       })
@@ -257,6 +263,7 @@ describe('Collections idempotency and geo validation (e2e)', () => {
         container_code: 'ECO-UCO-Q3-P7-005',
         actual_liters: 30,
         quality: 'PASS',
+        grade: 'A',
         geo: { lat: 10.78305, lng: 106.68615 },
         photos: [],
       })
@@ -277,6 +284,7 @@ describe('Collections idempotency and geo validation (e2e)', () => {
         container_code: 'ECO-UCO-Q3-P7-006',
         actual_liters: 20,
         quality: 'PASS',
+        grade: 'A',
         geo: { lat: 10.78305, lng: 106.68615 },
         photos: [],
       })
@@ -297,7 +305,7 @@ describe('Collections idempotency and geo validation (e2e)', () => {
     const response = await request(app.getHttpServer())
       .post('/api/v1/collections')
       .set('Authorization', 'Bearer ' + collectorToken)
-      .send({ client_uuid: randomUUID(), order_id: order.body.id, container_code: 'ECO-UCO-Q3-P7-001', actual_liters: 10, actual_kg: 9.2, quality: 'PASS', geo: { lat: 10.78255, lng: 106.68475 }, photos: [] })
+      .send({ client_uuid: randomUUID(), order_id: order.body.id, container_code: 'ECO-UCO-Q3-P7-001', actual_liters: 10, actual_kg: 9.2, quality: 'PASS', grade: 'A', geo: { lat: 10.78255, lng: 106.68475 }, photos: [] })
       .expect(201);
     expect(response.body).toMatchObject({ actual_kg: 9.2, mass_source: 'SCALE', density_factor: null });
   });
@@ -310,7 +318,7 @@ describe('Collections idempotency and geo validation (e2e)', () => {
     const response = await request(app.getHttpServer())
       .post('/api/v1/collections')
       .set('Authorization', 'Bearer ' + collectorToken)
-      .send({ client_uuid: randomUUID(), order_id: order.body.id, container_code: 'ECO-UCO-Q3-P7-003', actual_liters: 10, quality: 'PASS', geo: { lat: 10.78195, lng: 106.68535 }, photos: [] })
+      .send({ client_uuid: randomUUID(), order_id: order.body.id, container_code: 'ECO-UCO-Q3-P7-003', actual_liters: 10, quality: 'PASS', grade: 'A', geo: { lat: 10.78195, lng: 106.68535 }, photos: [] })
       .expect(201);
     expect(response.body).toMatchObject({ actual_kg: 9.1, mass_source: 'ESTIMATED_FROM_VOLUME', density_factor: 0.91 });
     expect(await prisma.alert.findFirst({ where: { transactionId: response.body.id, type: 'MASS_ESTIMATED_NOT_WEIGHED', severity: 'LOW' } })).not.toBeNull();
@@ -324,7 +332,7 @@ describe('Collections idempotency and geo validation (e2e)', () => {
     const response = await request(app.getHttpServer())
       .post('/api/v1/collections')
       .set('Authorization', 'Bearer ' + collectorToken)
-      .send({ client_uuid: randomUUID(), order_id: order.body.id, container_code: 'ECO-UCO-Q3-P7-001', actual_kg: 9.1, quality: 'PASS', geo: { lat: 10.78255, lng: 106.68475 }, photos: [] })
+      .send({ client_uuid: randomUUID(), order_id: order.body.id, container_code: 'ECO-UCO-Q3-P7-001', actual_kg: 9.1, quality: 'PASS', grade: 'A', geo: { lat: 10.78255, lng: 106.68475 }, photos: [] })
       .expect(201);
     expect(response.body).toMatchObject({ actual_liters: 10, actual_kg: 9.1, mass_source: 'SCALE', density_factor: 0.91 });
   });
@@ -337,7 +345,7 @@ describe('Collections idempotency and geo validation (e2e)', () => {
     const response = await request(app.getHttpServer())
       .post('/api/v1/collections')
       .set('Authorization', 'Bearer ' + collectorToken)
-      .send({ client_uuid: randomUUID(), order_id: order.body.id, container_code: 'ECO-UCO-Q3-P7-002', actual_liters: 10, actual_kg: 8.7, quality: 'PASS', geo: { lat: 10.78255, lng: 106.68475 }, photos: [] })
+      .send({ client_uuid: randomUUID(), order_id: order.body.id, container_code: 'ECO-UCO-Q3-P7-002', actual_liters: 10, actual_kg: 8.7, quality: 'PASS', grade: 'A', geo: { lat: 10.78255, lng: 106.68475 }, photos: [] })
       .expect(201);
     expect(response.body).toMatchObject({ actual_liters: 10, actual_kg: 8.7, mass_source: 'SCALE', density_factor: null });
   });
@@ -350,7 +358,7 @@ describe('Collections idempotency and geo validation (e2e)', () => {
     const response = await request(app.getHttpServer())
       .post('/api/v1/collections')
       .set('Authorization', 'Bearer ' + collectorToken)
-      .send({ client_uuid: randomUUID(), order_id: order.body.id, container_code: 'ECO-UCO-Q3-P7-004', quality: 'PASS', geo: { lat: 10.78255, lng: 106.68475 }, photos: [] })
+      .send({ client_uuid: randomUUID(), order_id: order.body.id, container_code: 'ECO-UCO-Q3-P7-004', grade: 'A', quality: 'PASS', geo: { lat: 10.78255, lng: 106.68475 }, photos: [] })
       .expect(422);
     expect(response.body).toMatchObject({ code: 'INVALID_MASS_INPUT' });
     expect(response.body.message).toContain('Vui lòng nhập số kg hoặc số lít');
@@ -364,10 +372,71 @@ describe('Collections idempotency and geo validation (e2e)', () => {
     const response = await request(app.getHttpServer())
       .post('/api/v1/collections')
       .set('Authorization', 'Bearer ' + collectorToken)
-      .send({ client_uuid: randomUUID(), order_id: order.body.id, container_code: 'ECO-UCO-Q3-P7-005', actual_kg: 31, quality: 'PASS', geo: { lat: 10.78255, lng: 106.68475 }, photos: [] })
+      .send({ client_uuid: randomUUID(), order_id: order.body.id, container_code: 'ECO-UCO-Q3-P7-005', actual_kg: 31, grade: 'A', quality: 'PASS', geo: { lat: 10.78255, lng: 106.68475 }, photos: [] })
       .expect(422);
     expect(response.body.code).toBe('INVALID_LITERS');
     expect(response.body.message).toContain('Số lít suy ra từ khối lượng');
+  });
+
+  it('rejects grade B without a photo with PHOTO_REQUIRED_FOR_GRADE', async () => {
+    await prepareContainer(containerOneId);
+    const merchantToken = await login('zalo_merchant_01', '0900000001');
+    const collectorToken = await login('zalo_collector_01', '0910000001');
+    const order = await createOrder(merchantToken, containerOneId, 10);
+    const response = await request(app.getHttpServer()).post('/api/v1/collections').set('Authorization', `Bearer ${collectorToken}`).send({
+      client_uuid: randomUUID(), order_id: order.body.id, container_code: 'ECO-UCO-Q3-P7-001', actual_liters: 10, grade: 'B', quality: 'PASS', geo: { lat: 10.78255, lng: 106.68475 }, photos: [],
+    }).expect(422);
+    expect(response.body.code).toBe('PHOTO_REQUIRED_FOR_GRADE');
+  });
+
+  it('accepts grade A without a photo', async () => {
+    await prepareContainer(containerTwoId);
+    const merchantToken = await login('zalo_merchant_01', '0900000001');
+    const collectorToken = await login('zalo_collector_01', '0910000001');
+    const order = await createOrder(merchantToken, containerTwoId, 10);
+    const response = await request(app.getHttpServer()).post('/api/v1/collections').set('Authorization', `Bearer ${collectorToken}`).send({
+      client_uuid: randomUUID(), order_id: order.body.id, container_code: 'ECO-UCO-Q3-P7-002', actual_liters: 10, grade: 'A', quality: 'PASS', geo: { lat: 10.78255, lng: 106.68475 }, photos: [],
+    }).expect(201);
+    expect(response.body.grade).toBe('A');
+    expect(response.body.grade_photo_url).toBeNull();
+  });
+
+  it('rejects grade A with suspected adulteration when no photo is provided', async () => {
+    await prepareContainer(containerThreeId);
+    const merchantToken = await login('zalo_merchant_02', '0900000002');
+    const collectorToken = await login('zalo_collector_01', '0910000001');
+    const order = await createOrder(merchantToken, containerThreeId, 10);
+    const response = await request(app.getHttpServer()).post('/api/v1/collections').set('Authorization', `Bearer ${collectorToken}`).send({
+      client_uuid: randomUUID(), order_id: order.body.id, container_code: 'ECO-UCO-Q3-P7-003', actual_liters: 10, grade: 'A', suspected_adulteration: true, quality: 'PASS', geo: { lat: 10.78195, lng: 106.68535 }, photos: [],
+    }).expect(422);
+    expect(response.body.code).toBe('PHOTO_REQUIRED_FOR_GRADE');
+  });
+
+  it('creates an OIL_GRADE_C alert for a grade C transaction', async () => {
+    await prepareContainer(containerFourId);
+    const merchantToken = await login('zalo_merchant_02', '0900000002');
+    const collectorToken = await login('zalo_collector_01', '0910000001');
+    const order = await createOrder(merchantToken, containerFourId, 10);
+    const response = await request(app.getHttpServer()).post('/api/v1/collections').set('Authorization', `Bearer ${collectorToken}`).send({
+      client_uuid: randomUUID(), order_id: order.body.id, container_code: 'ECO-UCO-Q3-P7-004', actual_liters: 10, grade: 'C', quality: 'PASS', geo: { lat: 10.78195, lng: 106.68535 }, photos: ['https://example.com/grade-c.jpg'],
+    }).expect(201);
+    expect(await prisma.alert.findFirst({ where: { transactionId: response.body.id, type: 'OIL_GRADE_C', severity: 'MEDIUM' } })).not.toBeNull();
+    expect(response.body.quality).toBe('PASS');
+  });
+
+  it('creates a HIGH SUSPECTED_ADULTERATION alert with the selected grade and kilograms', async () => {
+    await prepareContainer(containerFiveId);
+    const merchantToken = await login('zalo_merchant_03', '0900000003');
+    const collectorToken = await login('zalo_collector_01', '0910000001');
+    const order = await createOrder(merchantToken, containerFiveId, 10);
+    const response = await request(app.getHttpServer()).post('/api/v1/collections').set('Authorization', `Bearer ${collectorToken}`).send({
+      client_uuid: randomUUID(), order_id: order.body.id, container_code: 'ECO-UCO-Q3-P7-005', actual_liters: 10, actual_kg: 9.1, grade: 'A', suspected_adulteration: true, quality: 'PASS', geo: { lat: 10.78305, lng: 106.68615 }, photos: ['https://example.com/adulteration.jpg'],
+    }).expect(201);
+    const alert = await prisma.alert.findFirst({ where: { transactionId: response.body.id, type: 'SUSPECTED_ADULTERATION' } });
+    expect(alert).toMatchObject({ severity: 'HIGH' });
+    expect(alert?.message).toContain('9.10 kg');
+    expect(alert?.message).toContain('hạng A');
+    expect(response.body.quality).toBe('PASS');
   });
 
   it('returns collection history for the collector', async () => {

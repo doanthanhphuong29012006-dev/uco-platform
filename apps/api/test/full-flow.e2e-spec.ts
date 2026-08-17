@@ -98,6 +98,7 @@ describe('Full merchant-to-station working shift (e2e)', () => {
         container_code: stop.container_code,
         actual_liters: stop.expected_liters,
         quality: 'PASS',
+        grade: 'A',
         geo: { lat: container.body.merchant.lat ?? stop.merchant.lat, lng: container.body.merchant.lng ?? stop.merchant.lng },
         photos: ['https://example.com/full-flow.jpg'],
         collected_at: collectedAt,

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { AlertType, ContainerState, EntityStatus, MerchantApprovalStatus, OrderStatus, PaymentStatus, PriceUnit, Quality } from '@eco-oil/shared-types';
+import { AlertType, ContainerState, EntityStatus, MerchantApprovalStatus, OilGrade, OrderStatus, PaymentStatus, PriceUnit, Quality } from '@eco-oil/shared-types';
 
 export const uuidSchema = z.string().uuid();
 export const phoneSchema = z.string().min(8).max(20);
@@ -253,6 +253,10 @@ export const collectionCreateSchema = z.object({
   container_code: z.string().trim().min(1).max(100),
   actual_liters: z.number().finite().max(100000).optional(),
   actual_kg: z.number().finite().max(100000).optional(),
+  grade: z.nativeEnum(OilGrade),
+  grade_photo_url: z.string().url().optional(),
+  grade_note: z.string().trim().max(1000).optional(),
+  suspected_adulteration: z.boolean().default(false),
   quality: z.nativeEnum(Quality),
   geo: z.object({
     lat: z.number().finite().min(-90).max(90),

@@ -159,7 +159,7 @@ export class MerchantsService {
       this.prisma.$queryRaw<Array<Record<string, unknown>>>`
         SELECT ct."id", ct."client_uuid", ct."order_id", ct."container_id",
           ct."merchant_id", ct."collector_id", u."name" AS "collector_name",
-          ct."actual_liters"::float8 AS "actual_liters", ct."actual_kg"::float8 AS "actual_kg", ct."mass_source"::text AS "mass_source", ct."density_factor"::float8 AS "density_factor", ct."quality"::text AS "quality",
+          ct."actual_liters"::float8 AS "actual_liters", ct."actual_kg"::float8 AS "actual_kg", ct."mass_source"::text AS "mass_source", ct."density_factor"::float8 AS "density_factor", ct."grade"::text AS "grade", ct."grade_photo_url", ct."grade_note", ct."suspected_adulteration", ct."quality"::text AS "quality",
           ct."photos", ct."collected_at", ct."created_at", c."qr_code" AS "container_code",
           ST_Y(ct."geo_point"::geometry)::float8 AS "geo_lat",
           ST_X(ct."geo_point"::geometry)::float8 AS "geo_lng"
@@ -197,6 +197,10 @@ export class MerchantsService {
         actual_kg: row.actual_kg === null ? null : Number(row.actual_kg),
         mass_source: row.mass_source,
         density_factor: row.density_factor === null ? null : Number(row.density_factor),
+        grade: row.grade ?? null,
+        grade_photo_url: row.grade_photo_url ?? null,
+        grade_note: row.grade_note ?? null,
+        suspected_adulteration: Boolean(row.suspected_adulteration),
         quality: row.quality,
         geo: row.geo_lat === null || row.geo_lng === null ? null : { lat: Number(row.geo_lat), lng: Number(row.geo_lng) },
         photos: row.photos,

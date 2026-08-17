@@ -48,6 +48,7 @@ describe('Sync batch and station delivery reconciliation (e2e)', () => {
       container_code: container.code,
       actual_liters: actualLiters,
       quality: 'PASS',
+      grade: 'A',
       geo: { lat: container.lat, lng: container.lng },
       photos: ['https://example.com/sync.jpg'],
       collected_at: '2026-08-11T13:00:00Z',

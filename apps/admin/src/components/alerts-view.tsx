@@ -14,6 +14,8 @@ const ALERT_LABELS: Record<string, string> = {
   COLLECTION_LITERS_DEVIATION: 'Lệch số lít so với quán báo',
   CONTAINER_TRANSIT_CANCELLED: 'Đã huỷ ca vận chuyển của can',
   MASS_ESTIMATED_NOT_WEIGHED: 'Giao dịch chưa được cân, dùng số kg ước lượng',
+  SUSPECTED_ADULTERATION: 'Nghi ngờ pha lẫn dầu',
+  OIL_GRADE_C: 'Dầu hạng C',
 };
 
 function alertLabel(type: string): string {
@@ -66,6 +68,8 @@ export function AlertsView() {
         <option value="COLLECTION_LITERS_DEVIATION">Lệch số lít so với quán báo</option>
         <option value="CONTAINER_TRANSIT_CANCELLED">Đã huỷ ca vận chuyển của can</option>
         <option value="MASS_ESTIMATED_NOT_WEIGHED">Giao dịch chưa được cân, dùng số kg ước lượng</option>
+        <option value="SUSPECTED_ADULTERATION">Nghi ngờ pha lẫn dầu</option>
+        <option value="OIL_GRADE_C">Dầu hạng C</option>
       </select>
       <select className="min-h-11 rounded-xl border border-slate-300 bg-white px-3" value={resolved} onChange={(event) => setResolved(event.target.value)}>
         <option value="false">Chưa xử lý</option>
