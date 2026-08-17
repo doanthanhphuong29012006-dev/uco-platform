@@ -14,6 +14,7 @@ import { submitContainerCode } from '../lib/container-code';
 import { zaloClient } from '../lib/zalo-client';
 import type { PhotoAsset } from '../lib/zalo-client';
 import { StatusView } from '../components/StatusView';
+import { OilGradeSelector } from '../components/OilGradeSelector';
 import { StationDeliveryFlow } from './StationDeliveryFlow';
 
 type CollectorScreen =
@@ -443,15 +444,11 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
       <section className="entry-target-card"><span>Số lít dự kiến</span><strong>{formatLiters(stop.expected_liters)}</strong><small>Mã giao dịch: {clientUuid.slice(0, 8)}…</small>{locationFallback ? <p className="location-banner">Không lấy được vị trí GPS, đang dùng vị trí trung tâm phường. Giao dịch có thể bị đánh dấu cần kiểm tra.</p> : null}</section>
       <section className="quality-card">
         <p className="section-label">Phân hạng dầu</p>
-        <div className="grade-options">
-          <button className={grade === OilGrade.A ? 'grade-option selected' : 'grade-option'} onClick={() => setGrade(OilGrade.A)} disabled={saving}><strong>A</strong><small>Vàng đến nâu nhạt, trong, không lắng cặn, không mùi khét nặng.</small></button>
-          <button className={grade === OilGrade.B ? 'grade-option selected' : 'grade-option'} onClick={() => setGrade(OilGrade.B)} disabled={saving}><strong>B</strong><small>Nâu sẫm, hơi đục hoặc có ít cặn lắng, mùi khét rõ.</small></button>
-          <button className={grade === OilGrade.C ? 'grade-option selected' : 'grade-option'} onClick={() => setGrade(OilGrade.C)} disabled={saving}><strong>C</strong><small>Đen đặc, nhiều cặn, có nước hoặc vụn thức ăn, mùi hắc.</small></button>
-        </div>
+        <OilGradeSelector value={grade} disabled={saving} onChange={setGrade} />
         <label className="toggle-row"><input type="checkbox" checked={suspectedAdulteration} onChange={(event) => setSuspectedAdulteration(event.target.checked)} disabled={saving} /><span>Nghi ngờ pha lẫn</span></label>
         <p className="field-help">Bật nếu thấy có nước, dầu nhớt hoặc mùi lạ không phải dầu ăn.</p>
-        <label htmlFor="grade-note">Ghi chú phân hạng (không bắt buộc)</label>
-        <textarea id="grade-note" value={gradeNote} onChange={(event) => setGradeNote(event.target.value)} disabled={saving} placeholder="Ghi chú thêm nếu cần" />
+        <label className="grade-note-label" htmlFor="grade-note">Ghi chú phân hạng (không bắt buộc)</label>
+        <textarea className="grade-note-input" id="grade-note" value={gradeNote} onChange={(event) => setGradeNote(event.target.value)} disabled={saving} placeholder="Ghi chú thêm nếu cần" />
       </section>
       <section className="liter-entry-card">
         <label htmlFor="actual-kilograms">Khối lượng (kg đã cân)</label>

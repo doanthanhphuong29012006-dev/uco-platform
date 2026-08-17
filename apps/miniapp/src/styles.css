@@ -206,6 +206,16 @@ select, input { width: 100%; min-height: 48px; border: 1px solid #cfe0d7; border
 .quality-option { min-height: 51px; border: 2px solid var(--line); border-radius: 13px; color: var(--muted); background: white; font-weight: 800; }
 .quality-option.selected { border-color: var(--green); color: var(--green); background: var(--mint); }
 .quality-option.flag-selected { border-color: #d49b2f; color: #8a631c; background: #fff5dc; }
+.grade-options { grid-template-columns: 1fr; gap: 10px; }
+.grade-option { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 5px; min-height: 73px; padding: 12px 14px; text-align: left; }
+.grade-option strong { font-size: 1.25rem; line-height: 1; }
+.grade-option small { color: var(--muted); font-size: .78rem; font-weight: 550; line-height: 1.35; }
+.grade-option.selected small { color: #276d50; }
+.toggle-row { display: flex; align-items: center; gap: 9px; margin-top: 14px; cursor: pointer; font-size: .88rem; font-weight: 800; }
+.toggle-row input { flex: 0 0 auto; width: 20px; min-height: 20px; margin: 0; padding: 0; accent-color: var(--green); }
+.toggle-row span { flex: 1; }
+.grade-note-label { display: block; margin: 14px 0 7px; font-size: .82rem; font-weight: 750; }
+.grade-note-input { width: 100%; }
 .photo-card { margin-top: 13px; }
 .photo-card strong { display: block; font-size: .9rem; }
 .photo-card p { margin: 4px 0 0; color: var(--muted); font-size: .78rem; }
