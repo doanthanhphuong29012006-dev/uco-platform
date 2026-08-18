@@ -19,7 +19,8 @@ export function ReconciliationView() {
     setExportError(null);
     try {
       const csv = await api.reconciliationCsv(date);
-      const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+      const excelCsv = csv.charCodeAt(0) === 0xfeff ? csv : `\uFEFF${csv}`;
+      const url = URL.createObjectURL(new Blob([excelCsv], { type: 'text/csv;charset=utf-8' }));
       const anchor = document.createElement('a');
       anchor.href = url;
       anchor.download = `eco-oil-reconciliation-${date}.csv`;
