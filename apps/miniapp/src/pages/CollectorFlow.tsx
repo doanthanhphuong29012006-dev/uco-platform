@@ -13,8 +13,10 @@ import { startOutboxSyncWorker, syncOutbox } from '../lib/outbox-sync';
 import { submitContainerCode } from '../lib/container-code';
 import { zaloClient } from '../lib/zalo-client';
 import type { PhotoAsset } from '../lib/zalo-client';
+import { compressImageBlob } from '../lib/zalo-client';
 import { StatusView } from '../components/StatusView';
 import { OilGradeSelector } from '../components/OilGradeSelector';
+import { GradePhotoPicker, isGradePhotoMissing } from '../components/GradePhotoPicker';
 import { StationDeliveryFlow } from './StationDeliveryFlow';
 
 type CollectorScreen =
@@ -337,7 +339,7 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
   const invalidKg = actualKg !== null && (!Number.isFinite(actualKg) || actualKg < 0);
   const invalidMass = (!hasLiters && !hasKilograms) || invalidLiters || invalidKg;
   const gradeRequiresPhoto = grade === OilGrade.B || grade === OilGrade.C || suspectedAdulteration;
-  const gradePhotoMissing = gradeRequiresPhoto && photos.length === 0;
+  const gradePhotoMissing = isGradePhotoMissing(grade, suspectedAdulteration, photos.length);
   const submitBlockReason = grade === null
     ? 'Vui lòng chọn phân hạng dầu trước khi xác nhận.'
     : invalidMass
@@ -358,17 +360,39 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
     setKilograms(next.toFixed(1));
   }
 
+  function addPhoto(photo: PhotoAsset): void {
+    if (!photo.url.trim()) {
+      throw new Error('Ảnh không hợp lệ');
+    }
+    setPhotos((current) => [...current, photo]);
+  }
+
   async function takePhoto(): Promise<void> {
     setTakingPhoto(true);
     setError(null);
     try {
-      const photo = await zaloClient.chooseImage();
-      setPhotos((current) => [...current, photo]);
+      addPhoto(await zaloClient.chooseImage());
     } catch {
-      setError('Chưa chụp được ảnh, thử lại nhé.');
+      setError('Không mở được camera. Hãy kiểm tra quyền camera, hoặc bấm “Chọn ảnh có sẵn”.');
     } finally {
       setTakingPhoto(false);
     }
+  }
+
+  async function choosePhotoFile(file: File): Promise<void> {
+    setTakingPhoto(true);
+    setError(null);
+    try {
+      addPhoto(await compressImageBlob(file));
+    } catch {
+      setError('Không đọc được ảnh. Hãy chọn một ảnh khác.');
+    } finally {
+      setTakingPhoto(false);
+    }
+  }
+
+  function removePhoto(index: number): void {
+    setPhotos((current) => current.filter((_, photoIndex) => photoIndex !== index));
   }
 
   async function submit(): Promise<void> {
@@ -459,7 +483,7 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
         <p className={invalidLiters && (liters || litersDerivedFromKilograms) ? 'error-text' : 'field-help'}>{litersDerivedFromKilograms ? `Số lít ước tính từ khối lượng: ${actualLiters.toFixed(2)} lít · dung tích tối đa ${maxLiters.toFixed(1)} lít` : `Dung tích ${formatLiters(capacity)} · tối đa ${maxLiters.toFixed(1)} lít`}</p>
       </section>
       <section className="quality-card"><p className="section-label">Chất lượng dầu</p><div className="quality-options"><button className={quality === Quality.PASS ? 'quality-option selected' : 'quality-option'} onClick={() => setQuality(Quality.PASS)} disabled={saving}>✓ Đạt</button><button className={quality === Quality.FLAG ? 'quality-option selected flag-selected' : 'quality-option'} onClick={() => setQuality(Quality.FLAG)} disabled={saving}>⚠ Cần kiểm tra</button></div></section>
-      {quality === Quality.FLAG || gradeRequiresPhoto ? <section className="photo-card"><div><strong>{gradeRequiresPhoto ? 'Ảnh phân hạng / kiểm tra' : 'Ảnh kiểm tra'}</strong><p>{photos.length > 0 ? `${photos.length} ảnh đã chụp` : 'Cần ít nhất 1 ảnh'}</p></div><button className="secondary-button" onClick={() => { void takePhoto(); }} disabled={takingPhoto || saving}>{takingPhoto ? 'Đang chụp…' : 'Chụp ảnh'}</button></section> : null}
+      {quality === Quality.FLAG || gradeRequiresPhoto ? <GradePhotoPicker photos={photos} busy={takingPhoto} disabled={saving} onTakePhoto={() => { void takePhoto(); }} onChooseFile={(file) => { void choosePhotoFile(file); }} onRemovePhoto={removePhoto} /> : null}
       {error ? <div className="error-panel">{error}</div> : null}
       {submitBlockReason ? <p className="error-text submit-block-reason">{submitBlockReason}</p> : null}
       <button className="submit-collection-button" onClick={() => { void submit(); }} disabled={saving || Boolean(submitBlockReason)}>{saving ? 'Đang lưu trên máy…' : 'Xác nhận thu gom'}</button>

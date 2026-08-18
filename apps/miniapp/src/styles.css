@@ -220,6 +220,14 @@ select, input { width: 100%; min-height: 48px; border: 1px solid #cfe0d7; border
 .photo-card strong { display: block; font-size: .9rem; }
 .photo-card p { margin: 4px 0 0; color: var(--muted); font-size: .78rem; }
 .photo-card .secondary-button { min-height: 42px; }
+.grade-photo-card { display: grid; gap: 11px; }
+.photo-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.file-picker-button { display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.photo-preview-list { display: flex; flex-wrap: wrap; gap: 10px; }
+.photo-preview { display: grid; gap: 5px; width: 92px; margin: 0; }
+.photo-preview img { width: 92px; height: 92px; border: 1px solid var(--line); border-radius: 12px; object-fit: cover; background: #edf5f0; }
+.photo-remove-button { min-height: 30px; padding: 0 5px; border: 0; border-radius: 8px; color: var(--danger); background: #fff0f0; font-size: .7rem; font-weight: 800; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .submit-collection-button { margin-top: 18px; }
 .success-screen { min-height: 80vh; display: grid; place-content: center; padding: 30px; text-align: center; }
 .success-icon { display: grid; place-items: center; width: 82px; height: 82px; margin: 0 auto 22px; border-radius: 50%; color: white; background: var(--green); font-size: 3rem; box-shadow: 0 12px 25px #0b6b4f32; }
