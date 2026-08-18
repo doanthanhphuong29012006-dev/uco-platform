@@ -1,5 +1,6 @@
-import { Body, Controller, Get, Inject, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Param, Patch, Post, Query, Res } from '@nestjs/common';
 import { Role } from '@prisma/client';
+import type { Response } from 'express';
 import {
   adminAlertListQuerySchema,
   adminCollectorListQuerySchema,
@@ -39,6 +40,17 @@ export class AdminController {
   @Get('reconciliation')
   reconciliation(@Query() query: Record<string, unknown>) {
     return this.service.reconciliation(adminReconciliationQuerySchema.parse(query));
+  }
+
+  @Roles(Role.ADMIN)
+  @Get('reconciliation/export')
+  async exportReconciliation(@Query() query: Record<string, unknown>, @Res() response: Response) {
+    const file = await this.service.reconciliationCsv(adminReconciliationQuerySchema.parse(query));
+    response
+      .status(200)
+      .setHeader('Content-Type', 'text/csv; charset=utf-8')
+      .setHeader('Content-Disposition', `attachment; filename="${file.filename}"`)
+      .send(file.content);
   }
 
   @Roles(Role.ADMIN)

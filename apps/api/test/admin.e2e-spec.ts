@@ -117,6 +117,34 @@ describe('Admin KPIs, reconciliation and access control (e2e)', () => {
     expect(after.body.undelivered_transactions.some((item: { id: string }) => item.id === transactionId)).toBe(false);
   });
 
+  it('allows admin to export reconciliation as UTF-8 CSV with current delivery data', async () => {
+    const transaction = await prisma.collectionTransaction.findUniqueOrThrow({
+      where: { id: transactionId },
+      include: { merchant: true, collector: true, stationDelivery: { include: { station: true } } },
+    });
+    const response = await request(app.getHttpServer())
+      .get('/api/v1/admin/reconciliation/export?date=2026-08-11')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+
+    expect(response.headers['content-type']).toContain('text/csv');
+    expect(response.headers['content-disposition']).toContain('eco-oil-reconciliation-2026-08-11.csv');
+    expect(response.text.charCodeAt(0)).toBe(0xfeff);
+    expect(response.text).toContain('"Thời gian","Quán","Người thu gom","Trạm"');
+    expect(response.text).toContain(`"${transaction.merchant.businessName}"`);
+    expect(response.text).toContain(`"${transaction.collector.displayName}"`);
+    expect(response.text).toContain(`"${transaction.stationDelivery?.station.name}"`);
+    expect(response.text).toContain('"9.100","9.100","0.000","0.00%","OK"');
+  });
+
+  it('rejects reconciliation CSV export for collector role', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/api/v1/admin/reconciliation/export?date=2026-08-11')
+      .set('Authorization', `Bearer ${collectorToken}`)
+      .expect(403);
+    expect(response.body).toEqual({ code: 'FORBIDDEN', message: 'Insufficient role', details: null });
+  });
+
   it('protects all admin routes from collector tokens', async () => {
     const response = await request(app.getHttpServer())
       .get('/api/v1/admin/overview')

@@ -50,6 +50,7 @@ export const api = {
   logout: (refreshToken: string) => client.request('/auth/logout', { method: 'POST', body: { refresh_token: refreshToken } }),
   overview: (from?: string, to?: string) => client.request<AdminOverviewResponse>(`/admin/overview${query({ from, to })}`),
   reconciliation: (date: string) => client.request<AdminReconciliationResponse>(`/admin/reconciliation?date=${date}`),
+  reconciliationCsv: (date: string) => client.request<string>(`/admin/reconciliation/export?date=${date}`),
   alerts: (params: { type?: string; resolved?: boolean; page?: number; limit?: number }) =>
     client.request<PagedResponse<AdminAlert>>(`/admin/alerts${query(params)}`),
   resolveAlert: (id: string) => client.request<AdminAlert>(`/admin/alerts/${id}/resolve`, { method: 'PATCH' }),

@@ -55,6 +55,18 @@ type ReconciliationRow = {
   undelivered_transactions: unknown;
 };
 
+type ReconciliationCsvRow = {
+  occurred_at: Date;
+  merchant_names: string;
+  collector_name: string;
+  station_name: string | null;
+  expected_kg: number | null;
+  actual_kg: number | null;
+  variance_kg: number | null;
+  variance_pct: number | null;
+  status: string;
+};
+
 @Injectable()
 export class AdminService {
   constructor(
@@ -350,6 +362,81 @@ export class AdminService {
       })),
       meta: { page: query.page, limit: query.limit, total },
     };
+  }
+
+  async reconciliationCsv(query: AdminReconciliationQueryInput) {
+    const day = this.startOfDay(query.date);
+    const nextDay = new Date(day.getTime() + DAY_MS);
+    const rows = await this.prisma.$queryRaw<ReconciliationCsvRow[]>`
+      WITH delivered_rows AS (
+        SELECT
+          sd."delivered_at" AS occurred_at,
+          string_agg(DISTINCT m."business_name", ' | ' ORDER BY m."business_name") AS merchant_names,
+          c."display_name" AS collector_name,
+          s."name" AS station_name,
+          sd."expected_kg"::float8 AS expected_kg,
+          sd."actual_kg"::float8 AS actual_kg,
+          sd."variance_kg"::float8 AS variance_kg,
+          sd."variance_pct"::float8 AS variance_pct,
+          sd."status"::text AS status
+        FROM "station_deliveries" sd
+        JOIN "collectors" c ON c."id" = sd."collector_id"
+        JOIN "stations" s ON s."id" = sd."station_id"
+        JOIN "collection_transactions" ct ON ct."station_delivery_id" = sd."id" AND ct."deleted_at" IS NULL
+        JOIN "merchants" m ON m."id" = ct."merchant_id"
+        WHERE sd."deleted_at" IS NULL
+          AND sd."delivered_at" >= ${day}
+          AND sd."delivered_at" < ${nextDay}
+        GROUP BY sd."id", c."display_name", s."name"
+      ),
+      undelivered_rows AS (
+        SELECT
+          ct."collected_at" AS occurred_at,
+          m."business_name" AS merchant_names,
+          c."display_name" AS collector_name,
+          NULL::text AS station_name,
+          ct."actual_kg"::float8 AS expected_kg,
+          NULL::float8 AS actual_kg,
+          ct."actual_kg"::float8 AS variance_kg,
+          CASE WHEN ct."actual_kg" > 0 THEN 1::float8 ELSE NULL::float8 END AS variance_pct,
+          'CHƯA NỘP'::text AS status
+        FROM "collection_transactions" ct
+        JOIN "collectors" c ON c."id" = ct."collector_id"
+        JOIN "merchants" m ON m."id" = ct."merchant_id"
+        WHERE ct."deleted_at" IS NULL
+          AND ct."station_delivery_id" IS NULL
+          AND ct."collected_at" >= ${day}
+          AND ct."collected_at" < ${nextDay}
+      )
+      SELECT * FROM delivered_rows
+      UNION ALL
+      SELECT * FROM undelivered_rows
+      ORDER BY occurred_at, collector_name, merchant_names
+    `;
+    const header = [
+      'Thời gian',
+      'Quán',
+      'Người thu gom',
+      'Trạm',
+      'Khối lượng dự kiến (kg)',
+      'Khối lượng thực tế (kg)',
+      'Chênh lệch (kg)',
+      'Phần trăm chênh lệch',
+      'Trạng thái',
+    ];
+    const records = rows.map((row) => [
+      row.occurred_at.toISOString(),
+      row.merchant_names,
+      row.collector_name,
+      row.station_name ?? 'Chưa nộp trạm',
+      this.csvNumber(row.expected_kg, 3),
+      this.csvNumber(row.actual_kg, 3),
+      this.csvNumber(row.variance_kg, 3),
+      row.variance_pct === null ? '' : `${(row.variance_pct * 100).toFixed(2)}%`,
+      row.status,
+    ]);
+    const content = `\uFEFF${[header, ...records].map((record) => record.map((cell) => this.csvCell(cell)).join(',')).join('\r\n')}\r\n`;
+    return { filename: `eco-oil-reconciliation-${day.toISOString().slice(0, 10)}.csv`, content };
   }
 
   async listMerchants(query: AdminMerchantListQueryInput) {
@@ -1008,6 +1095,14 @@ export class AdminService {
 
   private startOfDay(value: Date) {
     return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()));
+  }
+
+  private csvNumber(value: number | null, digits: number): string {
+    return value === null ? '' : Number(value).toFixed(digits);
+  }
+
+  private csvCell(value: unknown): string {
+    return `"${String(value ?? '').replace(/"/g, '""')}"`;
   }
 
   private serializeAlert(row: {
