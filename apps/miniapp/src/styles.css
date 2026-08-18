@@ -248,6 +248,9 @@ select, input { width: 100%; min-height: 48px; border: 1px solid #cfe0d7; border
 .collector-header-actions { display: flex; align-items: center; gap: 7px; }
 .outbox-badge { min-height: 38px; max-width: 145px; padding: 0 10px; border: 1px solid #b9dfca; border-radius: 12px; color: var(--green); background: var(--mint); font-size: .68rem; font-weight: 800; }
 .outbox-badge-failed { color: #8d3030; border-color: #efbcbc; background: #fff0f0; }
+.outbox-issue-banner { display: grid; gap: 6px; margin: 12px 0; padding: 13px; border: 1px solid #efbcbc; border-radius: 14px; color: #7d2929; background: #fff0f0; }
+.outbox-issue-banner strong { font-size: .9rem; }
+.outbox-issue-banner span { font-size: .8rem; line-height: 1.4; }
 .start-shift-button { width: 100%; min-height: 50px; margin-bottom: 13px; border: 1px solid #a9c9b9; border-radius: 15px; color: var(--green-dark); background: white; font-weight: 800; }
 .shift-ready-note { margin: 0 0 13px; padding: 11px 13px; border-radius: 13px; color: #28623e; background: #ecf9ef; font-size: .82rem; font-weight: 700; }
 .offline-cache-banner, .offline-cache-note { margin: 0 0 13px; padding: 10px 12px; border-radius: 11px; color: #694f16; background: #fff8df; font-size: .78rem; font-weight: 700; }

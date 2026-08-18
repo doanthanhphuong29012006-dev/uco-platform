@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
+import { configureBodyParser } from '../src/http/body-parser';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 const collectorUserId = '40000000-0000-4000-8000-000000000201';
@@ -57,7 +58,8 @@ describe('Sync batch and station delivery reconciliation (e2e)', () => {
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleFixture.createNestApplication();
+    app = moduleFixture.createNestApplication({ bodyParser: false });
+    configureBodyParser(app, '10mb');
     app.setGlobalPrefix('api/v1', { exclude: ['health'] });
     app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
     await app.init();
@@ -164,5 +166,37 @@ describe('Sync batch and station delivery reconciliation (e2e)', () => {
     const flagged = await request(app.getHttpServer()).post('/api/v1/station-deliveries').set('Authorization', `Bearer ${collectorToken}`).send({ client_uuid: randomUUID(), station_id: stationId, transaction_ids: [flaggedTransactionId], actual_liters: 10, actual_kg: 9.283, delivered_at: '2026-08-11T15:01:00Z' }).expect(201);
     expect(flagged.body.status).toBe('FLAGGED');
     expect(await prisma.alert.count({ where: { stationDeliveryId: flagged.body.id, type: 'DELIVERY_VARIANCE' } })).toBe(1);
+  });
+
+  it('accepts a real-sized Base64 grade photo through sync/batch and stores it once', async () => {
+    await prisma.collectionOrder.updateMany({
+      where: { containerId: containers[0].id, status: { in: ['READY', 'ASSIGNED'] } },
+      data: { status: 'CANCELLED', cancelledAt: new Date() },
+    });
+    await prisma.container.update({ where: { id: containers[0].id }, data: { state: 'AT_MERCHANT', lastSeenAt: null } });
+    const orderId = await orderFor(containers[0]);
+    const jpegBytes = Buffer.concat([
+      Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00]),
+      Buffer.alloc(180_000, 0xaa),
+      Buffer.from([0xff, 0xd9]),
+    ]);
+    const photo = `data:image/jpeg;base64,${jpegBytes.toString('base64')}`;
+    const item = {
+      ...collection(orderId, containers[0], randomUUID()),
+      grade: 'C',
+      photos: [photo],
+    };
+
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/sync/batch')
+      .set('Authorization', `Bearer ${collectorToken}`)
+      .send({ items: [item] })
+      .expect(200);
+
+    expect(response.body.summary).toEqual({ created: 1, duplicate: 0, failed: 0 });
+    const saved = await prisma.collectionTransaction.findUniqueOrThrow({ where: { clientUuid: item.client_uuid } });
+    expect(saved.grade).toBe('C');
+    expect(saved.gradePhotoUrl).toBe(photo);
+    expect(saved.photos).toEqual([photo]);
   });
 });

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { CollectionCreateRequest, StationDeliveryCreateRequest, StationDeliveryResponse, SyncBatchResponse } from '@eco-oil/shared-types';
 import { syncOutbox, type SyncBatchClient } from '../src/lib/outbox-sync';
+import { outboxErrorMessage } from '../src/lib/outbox-errors';
 import type { OutboxRecord, OutboxStats, OutboxStore } from '../src/lib/outbox-db';
 
 class MemoryOutboxStore implements OutboxStore {
@@ -193,4 +194,11 @@ test('station delivery rows use the delivery endpoint and retain the server rece
   assert.equal(saved?.status, 'synced');
   assert.equal(saved?.server_id, 'delivery-1');
   assert.deepEqual(saved?.server_response, serverResponse);
+});
+
+test('payload-too-large sync errors are translated to a Vietnamese actionable message', () => {
+  assert.equal(
+    outboxErrorMessage('PAYLOAD_TOO_LARGE: Request body exceeds 10mb'),
+    'Ảnh hoặc dữ liệu giao dịch vượt giới hạn máy chủ. Hãy giảm kích thước ảnh rồi thử lại.',
+  );
 });

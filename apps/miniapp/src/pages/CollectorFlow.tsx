@@ -10,6 +10,7 @@ import { useOnlineStatus, useOutboxRows, useOutboxStats } from '../lib/outbox-ho
 import { loadRouteWithCache, lookupContainerWithCache, prefetchRouteData, type RouteLoadResult } from '../lib/offline-cache';
 import { enqueueCollection } from '../lib/outbox-db';
 import { startOutboxSyncWorker, syncOutbox } from '../lib/outbox-sync';
+import { outboxErrorMessage } from '../lib/outbox-errors';
 import { submitContainerCode } from '../lib/container-code';
 import { zaloClient } from '../lib/zalo-client';
 import type { PhotoAsset } from '../lib/zalo-client';
@@ -192,6 +193,7 @@ function CollectorRouteScreen({ stops, route, location, locationDenied, complete
       {!location && !locationDenied ? <div className="location-banner">Đang xin quyền vị trí để tính tuyến gần nhất…</div> : null}
       {locationDenied ? <div className="location-banner">Không lấy được vị trí GPS, đang dùng vị trí trung tâm phường. Giao dịch có thể bị đánh dấu cần kiểm tra.</div> : null}
       {route.fromCache ? <div className="offline-cache-banner">Đang dùng dữ liệu lúc {formatTime(route.cachedAt)}</div> : null}
+      <OutboxIssueNotice rows={outboxRows} stats={outboxStats} onOpen={onOpenOutbox} />
       {!shiftStarted ? <button className="start-shift-button" onClick={onStartShift} disabled={prefetching}>{prefetching ? 'Đang lưu tuyến và mã QR…' : 'Bắt đầu ca — lưu tuyến offline'}</button> : <div className="shift-ready-note">✓ Tuyến và mã QR đã sẵn sàng khi mất sóng</div>}
       <section className="route-capacity-card">
         <div className="route-capacity-top"><span>Tổng lít dự kiến</span><strong>{formatLiters(route.route.total_expected_liters)} / {formatLiters(vehicleCapacity)}</strong></div>
@@ -211,9 +213,22 @@ function CollectorRouteScreen({ stops, route, location, locationDenied, complete
 }
 
 function OutboxBadge({ stats, onClick }: { stats: ReturnType<typeof useOutboxStats>; onClick: () => void }) {
-  const waiting = stats.pending + stats.syncing;
-  const label = stats.failed > 0 ? `${stats.failed} giao dịch lỗi` : waiting > 0 ? `Đang chờ đồng bộ (${waiting})` : 'Đã đồng bộ hết';
+  const waiting = stats.pending + stats.syncing + stats.failed;
+  const label = waiting > 0 ? `${waiting} giao dịch chưa đồng bộ` : 'Đã đồng bộ hết';
   return <button className={`outbox-badge ${stats.failed > 0 ? 'outbox-badge-failed' : ''}`} onClick={onClick}>{label}</button>;
+}
+
+function OutboxIssueNotice({ rows, stats, onOpen }: { rows: OutboxRecord[]; stats: ReturnType<typeof useOutboxStats>; onOpen?: () => void }) {
+  const unsynced = stats.pending + stats.syncing + stats.failed;
+  const latestError = rows.find((row) => row.last_error)?.last_error ?? null;
+  if (unsynced === 0 && !latestError) return null;
+  return (
+    <div className="outbox-issue-banner" role="alert">
+      <strong>{unsynced} giao dịch chưa đồng bộ</strong>
+      <span>{latestError ? outboxErrorMessage(latestError) : 'Đang gửi dữ liệu, vui lòng giữ mạng và không xoá hàng chờ.'}</span>
+      {onOpen ? <button className="text-button" onClick={onOpen}>Xem hàng chờ đồng bộ</button> : null}
+    </div>
+  );
 }
 
 function CollectorStopCard({ stop, outboxRow, onOpenQr }: { stop: RouteStop; outboxRow: OutboxRecord | undefined; onOpenQr: () => void }) {
@@ -438,7 +453,7 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
       ...(actualKg === null ? {} : { actual_kg: actualKg }),
       quality,
       grade,
-      ...(photos[0]?.url ? { grade_photo_url: photos[0].url } : {}),
+      // The API derives grade_photo_url from photos[0]; do not duplicate a Base64 image in JSON.
       ...(gradeNote.trim() ? { grade_note: gradeNote.trim() } : {}),
       suspected_adulteration: suspectedAdulteration,
       geo: currentGeo,
@@ -526,6 +541,7 @@ function OutboxQueueScreen({ onBack }: { onBack: () => void }) {
     <div className="page-content collector-content outbox-page">
       <button className="back-button" onClick={onBack}>← Về tuyến hôm nay</button>
       <header className="collector-screen-heading"><p className="eyebrow">AN TOÀN DỮ LIỆU</p><h1>Hàng chờ đồng bộ</h1><p>{formatBytes(stats.bytes)} đang lưu trên máy</p></header>
+      <OutboxIssueNotice rows={rows} stats={stats} />
       {stats.over_limit ? <div className="warning-panel"><strong>Hàng chờ đang vượt 50MB</strong><span>Hãy bật mạng để đồng bộ bớt dữ liệu ảnh.</span></div> : null}
       {rows.length === 0 ? <StatusView title="Hàng chờ đang trống" message="Mọi giao dịch đã được đồng bộ hoặc chưa phát sinh." /> : <section className="outbox-list">{rows.map((row) => <OutboxRow key={row.client_uuid} row={row} retrying={retrying === row.client_uuid} onRetry={() => { void retry(row.client_uuid); }} />)}</section>}
     </div>
@@ -539,7 +555,7 @@ function OutboxRow({ row, retrying, onRetry }: { row: OutboxRecord; retrying: bo
       <div className="outbox-row-top"><span className={`outbox-dot outbox-dot-${row.status}`} /><strong>{formatLiters(Number(payload.actual_liters ?? Number(payload.actual_kg ?? 0) / DEFAULT_DENSITY_KG_PER_LITER))} lít · {statusLabel(row.status)}</strong></div>
       <p>UUID: {row.client_uuid}</p>
       <p>Tạo lúc {formatTime(row.created_at)} · Lần thử {row.attempts}</p>
-      {row.last_error ? <div className="outbox-error">{row.last_error}</div> : null}
+      {row.last_error ? <div className="outbox-error">{outboxErrorMessage(row.last_error)}</div> : null}
       {row.status === 'failed' ? <button className="secondary-button" onClick={onRetry} disabled={retrying}>{retrying ? 'Đang thử lại…' : 'Thử lại thủ công'}</button> : null}
     </article>
   );
