@@ -51,8 +51,7 @@ export function LoginScreen() {
     const account = devAccounts.find((item) => item.zalo_id === selectedId);
     if (!account?.phone) return;
     zaloClient.setSeedAccount({ zaloId: account.zalo_id, phone: account.phone, name: account.name ?? undefined });
-    const identity = await zaloClient.login();
-    await loginSeed(identity.zaloId, identity.phone);
+    await loginSeed(account.zalo_id, account.phone);
   }
 
   async function handleRegister() {
