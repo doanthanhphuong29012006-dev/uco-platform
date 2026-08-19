@@ -1,10 +1,10 @@
-import { ForbiddenException, Inject, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Role } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import type { AdminLoginInput, ZaloAuthInput } from '@eco-oil/validation';
+import type { AdminLoginInput, RealZaloAuthInput, SeedZaloAuthInput, ZaloAuthInput } from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   ACCESS_TOKEN_TTL_SECONDS,
@@ -36,23 +36,59 @@ export class AuthService {
     refresh_token: string;
     user: AuthUserResponse;
   }> {
-    if (this.isMockMode() && input.zalo_id.startsWith('mock-access-token:')) {
-      throw new UnauthorizedException({
-        code: 'INVALID_ZALO_ID',
-        message: 'Mã Zalo không hợp lệ cho đăng nhập mô phỏng',
-        details: null,
-      });
+    let zaloId: string;
+    let phone: string;
+    let requestedName: string | undefined;
+
+    if (this.isMockMode()) {
+      if (!this.isSeedZaloAuthInput(input)) {
+        throw new BadRequestException({
+          code: 'SEED_LOGIN_PAYLOAD_REQUIRED',
+          message: 'Chế độ mô phỏng chỉ chấp nhận tài khoản thử nghiệm',
+          details: null,
+        });
+      }
+      if (input.zalo_id.startsWith('mock-access-token:')) {
+        throw new UnauthorizedException({
+          code: 'INVALID_ZALO_ID',
+          message: 'Mã Zalo không hợp lệ cho đăng nhập mô phỏng',
+          details: null,
+        });
+      }
+
+      const verified = await this.zaloProvider.verify(input.zalo_id);
+      zaloId = verified.zaloId;
+      if (!zaloId || zaloId.startsWith('mock-access-token:')) {
+        throw new UnauthorizedException({
+          code: 'INVALID_ZALO_ID',
+          message: 'Mã Zalo không hợp lệ cho đăng nhập mô phỏng',
+          details: null,
+        });
+      }
+      phone = input.phone || verified.phone;
+      requestedName = input.name ?? verified.name;
+    } else {
+      if (!this.isRealZaloAuthInput(input)) {
+        throw new BadRequestException({
+          code: 'ZALO_ACCESS_TOKEN_REQUIRED',
+          message: 'Đăng nhập Zalo thật yêu cầu access token hợp lệ',
+          details: null,
+        });
+      }
+
+      const verified = await this.zaloProvider.verify(input.access_token);
+      if (!verified.zaloId) {
+        throw new UnauthorizedException({
+          code: 'INVALID_ZALO_ACCESS_TOKEN',
+          message: 'Không xác minh được tài khoản Zalo',
+          details: null,
+        });
+      }
+      zaloId = verified.zaloId;
+      phone = verified.phone;
+      requestedName = verified.name;
     }
-    const verified = await this.zaloProvider.verify(input.zalo_id);
-    const zaloId = verified.zaloId || input.zalo_id;
-    if (this.isMockMode() && zaloId.startsWith('mock-access-token:')) {
-      throw new UnauthorizedException({
-        code: 'INVALID_ZALO_ID',
-        message: 'Mã Zalo không hợp lệ cho đăng nhập mô phỏng',
-        details: null,
-      });
-    }
-    const phone = input.phone || verified.phone;
+
     let user = await this.prisma.user.findUnique({ where: { zaloId } });
 
     if (this.isDemoMode() && this.isMockMode() && user?.role === Role.ADMIN) {
@@ -64,7 +100,7 @@ export class AuthService {
         data: {
           zaloId,
           phone,
-          name: input.name ?? verified.name ?? null,
+          name: requestedName ?? null,
           role: Role.MERCHANT,
         },
       });
@@ -73,7 +109,7 @@ export class AuthService {
         where: { id: user.id },
         data: {
           phone,
-          ...(input.name || verified.name ? { name: input.name ?? verified.name } : {}),
+          ...(requestedName ? { name: requestedName } : {}),
           deletedAt: null,
         },
       });
@@ -260,5 +296,13 @@ export class AuthService {
 
   private isMockMode(): boolean {
     return this.config.get<string>('ZALO_AUTH_MODE', 'mock') === 'mock';
+  }
+
+  private isSeedZaloAuthInput(input: ZaloAuthInput): input is SeedZaloAuthInput {
+    return 'zalo_id' in input;
+  }
+
+  private isRealZaloAuthInput(input: ZaloAuthInput): input is RealZaloAuthInput {
+    return 'access_token' in input;
   }
 }

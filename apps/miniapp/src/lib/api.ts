@@ -144,7 +144,7 @@ export const api = {
   loginWithZaloAccessToken: (accessToken: string) =>
     request<{ access_token: string; refresh_token: string; user: AuthUser }>('/auth/zalo', {
       method: 'POST',
-      body: { zalo_id: accessToken, phone: 'zmp-user' },
+      body: { access_token: accessToken },
       retry: false,
     }),
   logout: (refreshToken: string) => request<{ success: true }>('/auth/logout', { method: 'POST', body: { refresh_token: refreshToken }, retry: false }),

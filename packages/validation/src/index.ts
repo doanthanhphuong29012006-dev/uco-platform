@@ -4,12 +4,21 @@ import { AlertType, ContainerState, EntityStatus, MerchantApprovalStatus, OilGra
 export const uuidSchema = z.string().uuid();
 export const phoneSchema = z.string().min(8).max(20);
 
-export const zaloAuthSchema = z.object({
+export const realZaloAuthSchema = z.object({
+  access_token: z.string().min(1),
+  phone_token: z.string().min(1).optional(),
+}).strict();
+
+export const seedZaloAuthSchema = z.object({
   zalo_id: z.string().min(1),
   phone: phoneSchema,
   name: z.string().trim().min(1).max(120).optional(),
-});
+}).strict();
 
+export const zaloAuthSchema = z.union([realZaloAuthSchema, seedZaloAuthSchema]);
+
+export type RealZaloAuthInput = z.infer<typeof realZaloAuthSchema>;
+export type SeedZaloAuthInput = z.infer<typeof seedZaloAuthSchema>;
 export type ZaloAuthInput = z.infer<typeof zaloAuthSchema>;
 
 export const adminLoginSchema = z.object({
