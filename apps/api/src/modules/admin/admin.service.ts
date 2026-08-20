@@ -23,6 +23,11 @@ import type {
   MerchantApprovalInput,
 } from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  scoreTransactionAnomaly,
+  type TransactionAnomalyInput,
+  type TransactionAnomalyResult,
+} from '../collections/transaction-anomaly-scorer';
 import { buildContainerQrCode, containerQrPrefix, normalizeWardCode, wardLookupKey } from '../containers/qr-code';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -54,6 +59,14 @@ type ReconciliationRow = {
   by_collector: unknown;
   undelivered_transactions: unknown;
 };
+
+type ReconciliationTransaction = Record<string, unknown> & {
+  id: string;
+  merchant_id: string;
+  collected_at: Date | string;
+};
+
+type ReconciliationAnomaly = TransactionAnomalyResult & { historySize: number };
 
 type ReconciliationCsvRow = {
   occurred_at: Date;
@@ -208,6 +221,7 @@ export class AdminService {
           BOOL_OR(ct."mass_source" <> 'SCALE') AS collected_estimated,
           COALESCE(json_agg(json_build_object(
             'id', ct."id",
+            'merchant_id', ct."merchant_id",
             'merchant_name', m."business_name",
             'liters', ct."actual_liters"::float8,
             'kilograms', ct."actual_kg"::float8,
@@ -245,6 +259,7 @@ export class AdminService {
       undelivered AS (
         SELECT COALESCE(json_agg(json_build_object(
           'id', ct."id",
+          'merchant_id', ct."merchant_id",
           'merchant_name', m."business_name",
           'liters', ct."actual_liters"::float8,
           'kilograms', ct."actual_kg"::float8,
@@ -283,6 +298,22 @@ export class AdminService {
         (SELECT items FROM undelivered) AS undelivered_transactions
     `;
     const row = rows[0];
+    const byCollector = this.records(row?.by_collector);
+    const undeliveredTransactions = this.records(row?.undelivered_transactions);
+    const candidates = this.uniqueReconciliationTransactions([
+      ...byCollector.flatMap((collector) => this.records(collector.transactions)),
+      ...undeliveredTransactions,
+    ]);
+    const anomalyByTransactionId = await this.scoreReconciliationTransactions(candidates);
+    const enrichedByCollector = byCollector.map((collector) => ({
+      ...collector,
+      transactions: this.records(collector.transactions).map((transaction) =>
+        this.withReconciliationAnomaly(transaction, anomalyByTransactionId),
+      ),
+    }));
+    const enrichedUndelivered = undeliveredTransactions.map((transaction) =>
+      this.withReconciliationAnomaly(transaction, anomalyByTransactionId),
+    );
     const collected = Number(row?.collected_liters ?? 0);
     const delivered = Number(row?.delivered_liters ?? 0);
     const variance = collected - delivered;
@@ -300,9 +331,108 @@ export class AdminService {
       variance_kg: varianceKg,
       variance_kg_pct: collectedKg === 0 ? 0 : varianceKg / collectedKg,
       has_estimated_mass: Boolean(row?.has_estimated_mass),
-      by_collector: row?.by_collector ?? [],
-      undelivered_transactions: row?.undelivered_transactions ?? [],
+      by_collector: enrichedByCollector,
+      undelivered_transactions: enrichedUndelivered,
     };
+  }
+
+  private records(value: unknown): Array<Record<string, unknown>> {
+    return Array.isArray(value)
+      ? value.filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+      : [];
+  }
+
+  private uniqueReconciliationTransactions(rows: Array<Record<string, unknown>>): ReconciliationTransaction[] {
+    const transactions = new Map<string, ReconciliationTransaction>();
+    for (const row of rows) {
+      if (
+        typeof row.id === 'string' &&
+        typeof row.merchant_id === 'string' &&
+        (typeof row.collected_at === 'string' || row.collected_at instanceof Date)
+      ) {
+        transactions.set(row.id, row as ReconciliationTransaction);
+      }
+    }
+    return [...transactions.values()];
+  }
+
+  private async scoreReconciliationTransactions(
+    transactions: ReconciliationTransaction[],
+  ): Promise<Map<string, ReconciliationAnomaly>> {
+    const result = new Map<string, ReconciliationAnomaly>();
+    if (transactions.length === 0) return result;
+
+    const merchantIds = [...new Set(transactions.map((transaction) => transaction.merchant_id))];
+    const latestCollectedAt = new Date(
+      Math.max(...transactions.map((transaction) => new Date(transaction.collected_at).getTime()).filter(Number.isFinite)),
+    );
+    const historyRows = Number.isFinite(latestCollectedAt.getTime())
+      ? await this.prisma.collectionTransaction.findMany({
+          where: {
+            merchantId: { in: merchantIds },
+            deletedAt: null,
+            collectedAt: { lt: latestCollectedAt },
+          },
+          select: { id: true, merchantId: true, actualKg: true, actualLiters: true, collectedAt: true },
+          orderBy: [{ merchantId: 'asc' }, { collectedAt: 'asc' }],
+        })
+      : [];
+    const historyByMerchant = new Map<string, Array<TransactionAnomalyInput & { id: string }>>();
+    for (const row of historyRows) {
+      const merchantHistory = historyByMerchant.get(row.merchantId) ?? [];
+      merchantHistory.push({
+        id: row.id,
+        merchantId: row.merchantId,
+        actualKg: row.actualKg === null ? null : Number(row.actualKg),
+        actualLiters: Number(row.actualLiters),
+        collectedAt: row.collectedAt,
+      });
+      historyByMerchant.set(row.merchantId, merchantHistory);
+    }
+
+    for (const transaction of transactions) {
+      const collectedAt = new Date(transaction.collected_at);
+      const collectedTimestamp = collectedAt.getTime();
+      const history = Number.isFinite(collectedTimestamp)
+        ? (historyByMerchant.get(transaction.merchant_id) ?? []).filter(
+            (item) => item.id !== transaction.id && new Date(item.collectedAt).getTime() < collectedTimestamp,
+          )
+        : [];
+      const anomaly = scoreTransactionAnomaly(history, {
+        merchantId: transaction.merchant_id,
+        actualKg: this.numberOrNull(transaction.kilograms),
+        actualLiters: this.numberOrNull(transaction.liters),
+        collectedAt: transaction.collected_at,
+      });
+      result.set(transaction.id, { ...anomaly, historySize: history.length });
+    }
+    return result;
+  }
+
+  private withReconciliationAnomaly(
+    transaction: Record<string, unknown>,
+    anomalyByTransactionId: Map<string, ReconciliationAnomaly>,
+  ) {
+    const { merchant_id: merchantId, ...publicTransaction } = transaction;
+    const id = typeof transaction.id === 'string' ? transaction.id : '';
+    const anomaly = anomalyByTransactionId.get(id) ?? {
+      ...scoreTransactionAnomaly([], {
+        merchantId: typeof merchantId === 'string' ? merchantId : null,
+        actualKg: this.numberOrNull(transaction.kilograms),
+        actualLiters: this.numberOrNull(transaction.liters),
+        collectedAt:
+          typeof transaction.collected_at === 'string' || transaction.collected_at instanceof Date
+            ? transaction.collected_at
+            : 'invalid-date',
+      }),
+      historySize: 0,
+    };
+    return { ...publicTransaction, anomaly };
+  }
+
+  private numberOrNull(value: unknown): number | null {
+    const numeric = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN;
+    return Number.isFinite(numeric) ? numeric : null;
   }
 
   async listAlerts(query: AdminAlertListQueryInput) {
