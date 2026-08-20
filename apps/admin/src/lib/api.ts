@@ -21,6 +21,26 @@ import { browserTokenStorage } from './storage';
 
 export { ApiError };
 
+export type StationFillForecast = {
+  average_daily_incoming_liters: number;
+  remaining_capacity_liters: number;
+  estimated_days_until_full: number | null;
+  projected_volumes: Array<{ day: number; volume_liters: number }>;
+  status: 'INSUFFICIENT_DATA' | 'FULL' | 'CRITICAL' | 'WATCH' | 'STABLE';
+  history_size: number;
+  reason_codes: string[];
+  explanation: {
+    summary: string;
+    used_daily_incoming_liters: number[];
+    calculation_window_days: number;
+    formula: string;
+  };
+};
+
+export type StationSummaryWithForecast = AdminStationSummary & {
+  fill_forecast?: StationFillForecast;
+};
+
 export const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? '/api/v1').replace(/\/$/, '');
 
 const client = createApiClient({
@@ -54,7 +74,20 @@ export const api = {
   alerts: (params: { type?: string; resolved?: boolean; page?: number; limit?: number }) =>
     client.request<PagedResponse<AdminAlert>>(`/admin/alerts${query(params)}`),
   resolveAlert: (id: string) => client.request<AdminAlert>(`/admin/alerts/${id}/resolve`, { method: 'PATCH' }),
-  stations: () => client.request<PagedResponse<AdminStationSummary>>('/admin/stations?page=1&limit=100'),
+  stations: async (): Promise<PagedResponse<StationSummaryWithForecast>> => {
+    const response = await client.request<
+      PagedResponse<Omit<StationSummaryWithForecast, 'fill_pct'> & { fill_pct?: number }>
+    >('/stations?page=1&limit=100');
+    return {
+      ...response,
+      data: response.data.map((station) => ({
+        ...station,
+        fill_pct:
+          station.fill_pct ??
+          (station.capacity_l > 0 ? (station.current_volume_l / station.capacity_l) * 100 : 0),
+      })),
+    };
+  },
   merchants: (params: { search?: string; anomaly?: boolean; status?: string }) =>
     client.request<PagedResponse<AdminMerchantSummary>>(`/admin/merchants${query({ page: 1, limit: 100, ...params })}`),
   collectors: () => client.request<PagedResponse<AdminCollectorSummary>>('/admin/collectors?page=1&limit=100'),
