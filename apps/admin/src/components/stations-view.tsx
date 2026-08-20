@@ -37,6 +37,14 @@ const FORECAST_PRIORITY: Record<StationFillForecast['status'], number> = {
   INSUFFICIENT_DATA: 4,
 };
 
+const FORECAST_DETAIL_STATUS_LABEL: Record<StationFillForecast['status'], string> = {
+  FULL: 'Đã đầy',
+  CRITICAL: 'Nguy cấp',
+  WATCH: 'Theo dõi',
+  STABLE: 'Ổn định',
+  INSUFFICIENT_DATA: 'Chưa đủ dữ liệu',
+};
+
 export type StationPriorityFilter = 'ALL' | 'ACTION_REQUIRED' | 'WATCH' | 'STABLE' | 'INSUFFICIENT_DATA';
 
 const FILTER_OPTIONS: Array<{ value: StationPriorityFilter; label: string }> = [
@@ -133,8 +141,39 @@ export function StationForecastStatus({
   );
 }
 
+const forecastLiters = (value: number | undefined) =>
+  typeof value === 'number' && Number.isFinite(value) ? formatLiters(value) : 'Chưa xác định';
+
+export function StationForecastDetails({ forecast }: { forecast?: StationFillForecast }) {
+  if (!forecast || forecast.status === 'INSUFFICIENT_DATA') {
+    return <p className="text-sm text-slate-600">Chưa đủ dữ liệu để lập dự báo chi tiết.</p>;
+  }
+
+  const projections = Array.isArray(forecast.projected_volumes) ? forecast.projected_volumes : [];
+  return (
+    <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-700">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div><p className="text-xs text-slate-500">Trạng thái dự báo</p><p className="font-semibold">{FORECAST_DETAIL_STATUS_LABEL[forecast.status]}</p></div>
+        <div><p className="text-xs text-slate-500">Dự kiến đến khi đầy</p><p className="font-semibold">{typeof forecast.estimated_days_until_full === 'number' ? `${forecast.estimated_days_until_full} ngày` : 'Chưa xác định'}</p></div>
+        <div><p className="text-xs text-slate-500">Dung tích còn lại</p><p className="font-semibold">{forecastLiters(forecast.remaining_capacity_liters)}</p></div>
+        <div><p className="text-xs text-slate-500">Dầu vào trung bình/ngày</p><p className="font-semibold">{forecastLiters(forecast.average_daily_incoming_liters)}</p></div>
+        <div><p className="text-xs text-slate-500">Lịch sử đã dùng</p><p className="font-semibold">{typeof forecast.history_size === 'number' ? `${forecast.history_size} ngày` : 'Chưa xác định'}</p></div>
+      </div>
+      <p className="mt-3 text-slate-600">{forecast.explanation?.summary ?? 'Chưa có diễn giải dự báo.'}</p>
+      {projections.length ? (
+        <ul className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-600">
+          {projections.map((projection, index) => (
+            <li key={`${projection.day}-${index}`}>Ngày {projection.day}: {forecastLiters(projection.volume_liters)}</li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 export function StationsTable({ stations }: { stations: readonly StationSummaryWithForecast[] }) {
   const [filter, setFilter] = useState<StationPriorityFilter>('ALL');
+  const [expandedStationId, setExpandedStationId] = useState<string | null>(null);
   const counts = countStationsByFillForecast(stations);
   const sortedStations = sortStationsByFillForecast(stations);
   const visibleStations = filterStationsByFillForecast(sortedStations, filter);
@@ -206,14 +245,34 @@ export function StationsTable({ stations }: { stations: readonly StationSummaryW
             </thead>
             <tbody>{visibleStations.map((station) => {
               const tone = station.fill_pct > 95 ? 'bg-red-600' : station.fill_pct > 80 ? 'bg-orange-500' : 'bg-emerald-600';
+              const isExpanded = expandedStationId === station.id;
+              const detailsId = `station-forecast-${station.id}`;
               return (
-                <tr key={station.id} className="border-b last:border-0">
-                  <td className="py-4 font-semibold">{station.name}</td>
-                  <td className="py-4 text-slate-600">{station.address ?? '—'}</td>
-                  <td className="py-4">{formatLiters(station.current_volume_l)} / {formatLiters(station.capacity_l)}</td>
-                  <td className="py-4"><div className="flex items-center gap-3"><div className="h-2 w-32 rounded-full bg-slate-200"><div className={`h-2 rounded-full ${tone}`} style={{ width: `${Math.min(station.fill_pct, 100)}%` }} /></div><span className="font-semibold">{station.fill_pct.toFixed(1)}%</span></div></td>
-                  <td className="py-4"><StationForecastStatus forecast={station.fill_forecast} fillPct={station.fill_pct} /></td>
-                </tr>
+                <React.Fragment key={station.id}>
+                  <tr className="border-b last:border-0">
+                    <td className="py-4 font-semibold">{station.name}</td>
+                    <td className="py-4 text-slate-600">{station.address ?? '—'}</td>
+                    <td className="py-4">{formatLiters(station.current_volume_l)} / {formatLiters(station.capacity_l)}</td>
+                    <td className="py-4"><div className="flex items-center gap-3"><div className="h-2 w-32 rounded-full bg-slate-200"><div className={`h-2 rounded-full ${tone}`} style={{ width: `${Math.min(station.fill_pct, 100)}%` }} /></div><span className="font-semibold">{station.fill_pct.toFixed(1)}%</span></div></td>
+                    <td className="py-4">
+                      <StationForecastStatus forecast={station.fill_forecast} fillPct={station.fill_pct} />
+                      <button
+                        type="button"
+                        aria-expanded={isExpanded}
+                        aria-controls={detailsId}
+                        className="mt-2 text-xs font-semibold text-emerald-700 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                        onClick={() => setExpandedStationId(isExpanded ? null : station.id)}
+                      >
+                        Xem dự báo
+                      </button>
+                    </td>
+                  </tr>
+                  {isExpanded ? (
+                    <tr id={detailsId} data-testid={`station-forecast-details-${station.id}`} className="border-b">
+                      <td colSpan={5} className="pb-4"><StationForecastDetails forecast={station.fill_forecast} /></td>
+                    </tr>
+                  ) : null}
+                </React.Fragment>
               );
             })}</tbody>
           </table>

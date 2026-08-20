@@ -305,3 +305,61 @@ test('bấm ô thống kê không làm thay đổi các số tổng', () => {
   fireEvent.click(view.getByTestId('station-count-action-required'));
   expect(countTexts()).toEqual(before);
 });
+
+test('mở và đóng chi tiết dự báo của một trạm', () => {
+  const { container } = render(createElement(StationsTable, { stations: [station('watch', 'WATCH', 5)] }));
+  const view = within(container);
+  const button = view.getByRole('button', { name: 'Xem dự báo' });
+  expect(button).toHaveAttribute('aria-expanded', 'false');
+  fireEvent.click(button);
+  expect(button).toHaveAttribute('aria-expanded', 'true');
+  expect(view.getByTestId('station-forecast-details-watch')).toBeInTheDocument();
+  fireEvent.click(button);
+  expect(button).toHaveAttribute('aria-expanded', 'false');
+  expect(view.queryByTestId('station-forecast-details-watch')).not.toBeInTheDocument();
+});
+
+test('mở trạm thứ hai thì chi tiết trạm thứ nhất đóng', () => {
+  const { container } = render(createElement(StationsTable, {
+    stations: [station('full', 'FULL', 0), station('watch', 'WATCH', 5)],
+  }));
+  const view = within(container);
+  const buttons = view.getAllByRole('button', { name: 'Xem dự báo' });
+  fireEvent.click(buttons[0]!);
+  expect(view.getByTestId('station-forecast-details-full')).toBeInTheDocument();
+  fireEvent.click(buttons[1]!);
+  expect(view.queryByTestId('station-forecast-details-full')).not.toBeInTheDocument();
+  expect(view.getByTestId('station-forecast-details-watch')).toBeInTheDocument();
+  expect(buttons[0]).toHaveAttribute('aria-expanded', 'false');
+  expect(buttons[1]).toHaveAttribute('aria-expanded', 'true');
+});
+
+test('hiển thị đầy đủ dữ liệu chi tiết forecast', () => {
+  const forecast = {
+    ...stationForecast('WATCH', 4, 7),
+    remaining_capacity_liters: 80,
+    average_daily_incoming_liters: 20,
+    projected_volumes: [{ day: 1, volume_liters: 40 }, { day: 2, volume_liters: 60 }],
+    explanation: { ...stationForecast('WATCH', 4).explanation, summary: 'Trạm có thể đầy trong bốn ngày.' },
+  };
+  const item = { ...station('detailed', 'WATCH', 4), fill_forecast: forecast };
+  const { container } = render(createElement(StationsTable, { stations: [item] }));
+  const view = within(container);
+  fireEvent.click(view.getByRole('button', { name: 'Xem dự báo' }));
+  const details = within(view.getByTestId('station-forecast-details-detailed'));
+  expect(details.getByText('Theo dõi')).toBeInTheDocument();
+  expect(details.getByText('4 ngày')).toBeInTheDocument();
+  expect(details.getByText('80,0 lít')).toBeInTheDocument();
+  expect(details.getByText('20,0 lít')).toBeInTheDocument();
+  expect(details.getByText('7 ngày')).toBeInTheDocument();
+  expect(details.getByText('Trạm có thể đầy trong bốn ngày.')).toBeInTheDocument();
+  expect(details.getByText('Ngày 1: 40,0 lít')).toBeInTheDocument();
+  expect(details.getByText('Ngày 2: 60,0 lít')).toBeInTheDocument();
+});
+
+test('fallback an toàn khi response cũ thiếu fill_forecast', () => {
+  const { container } = render(createElement(StationsTable, { stations: [station('legacy')] }));
+  const view = within(container);
+  fireEvent.click(view.getByRole('button', { name: 'Xem dự báo' }));
+  expect(view.getByText('Chưa đủ dữ liệu để lập dự báo chi tiết.')).toBeInTheDocument();
+});
