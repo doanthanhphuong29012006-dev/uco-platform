@@ -258,3 +258,50 @@ test('thay đổi bộ lọc không làm thay đổi số lượng tổng theo m
   expect(countTexts()).toEqual(before);
   expect(countTexts()).toEqual(['Cần xử lý2', 'Theo dõi1', 'Ổn định1', 'Chưa đủ dữ liệu2']);
 });
+
+test('bấm từng ô thống kê cập nhật dropdown, trạng thái active và danh sách', () => {
+  const { container } = render(createElement(StationsTable, { stations: summaryStations }));
+  const view = within(container);
+  const select = view.getByLabelText('Lọc mức độ ưu tiên');
+  const cases = [
+    { testId: 'station-count-action-required', value: 'ACTION_REQUIRED', stations: ['full', 'critical'] },
+    { testId: 'station-count-watch', value: 'WATCH', stations: ['watch'] },
+    { testId: 'station-count-stable', value: 'STABLE', stations: ['stable'] },
+    { testId: 'station-count-insufficient', value: 'INSUFFICIENT_DATA', stations: ['insufficient', 'legacy'] },
+  ];
+
+  for (const item of cases) {
+    const card = view.getByTestId(item.testId);
+    fireEvent.click(card);
+    expect(select).toHaveValue(item.value);
+    expect(card).toHaveAttribute('aria-pressed', 'true');
+    expect(renderedStationNames(container)).toEqual(item.stations);
+  }
+
+  const activeCard = view.getByTestId('station-count-insufficient');
+  fireEvent.click(activeCard);
+  expect(select).toHaveValue('INSUFFICIENT_DATA');
+  expect(activeCard).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('đổi dropdown cập nhật ô thống kê active', () => {
+  const { container } = render(createElement(StationsTable, { stations: summaryStations }));
+  const view = within(container);
+  fireEvent.change(view.getByLabelText('Lọc mức độ ưu tiên'), { target: { value: 'WATCH' } });
+  expect(view.getByTestId('station-count-watch')).toHaveAttribute('aria-pressed', 'true');
+  expect(view.getByTestId('station-count-action-required')).toHaveAttribute('aria-pressed', 'false');
+});
+
+test('bấm ô thống kê không làm thay đổi các số tổng', () => {
+  const { container } = render(createElement(StationsTable, { stations: summaryStations }));
+  const view = within(container);
+  const countTexts = () => [
+    view.getByTestId('station-count-action-required').textContent,
+    view.getByTestId('station-count-watch').textContent,
+    view.getByTestId('station-count-stable').textContent,
+    view.getByTestId('station-count-insufficient').textContent,
+  ];
+  const before = countTexts();
+  fireEvent.click(view.getByTestId('station-count-action-required'));
+  expect(countTexts()).toEqual(before);
+});

@@ -142,22 +142,46 @@ export function StationsTable({ stations }: { stations: readonly StationSummaryW
   return (
     <>
       <div aria-label="Số lượng trạm theo mức ưu tiên" className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <div data-testid="station-count-action-required" className="rounded-lg bg-red-50 px-3 py-2 text-red-700">
+        <button
+          type="button"
+          aria-pressed={filter === 'ACTION_REQUIRED'}
+          data-testid="station-count-action-required"
+          className={`rounded-lg bg-red-50 px-3 py-2 text-left text-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${filter === 'ACTION_REQUIRED' ? 'ring-2 ring-red-500 ring-offset-1' : ''}`}
+          onClick={() => setFilter('ACTION_REQUIRED')}
+        >
           <p className="text-xs font-medium">Cần xử lý</p>
           <p className="text-xl font-bold">{counts.actionRequired}</p>
-        </div>
-        <div data-testid="station-count-watch" className="rounded-lg bg-amber-50 px-3 py-2 text-amber-800">
+        </button>
+        <button
+          type="button"
+          aria-pressed={filter === 'WATCH'}
+          data-testid="station-count-watch"
+          className={`rounded-lg bg-amber-50 px-3 py-2 text-left text-amber-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 ${filter === 'WATCH' ? 'ring-2 ring-amber-500 ring-offset-1' : ''}`}
+          onClick={() => setFilter('WATCH')}
+        >
           <p className="text-xs font-medium">Theo dõi</p>
           <p className="text-xl font-bold">{counts.watch}</p>
-        </div>
-        <div data-testid="station-count-stable" className="rounded-lg bg-emerald-50 px-3 py-2 text-emerald-700">
+        </button>
+        <button
+          type="button"
+          aria-pressed={filter === 'STABLE'}
+          data-testid="station-count-stable"
+          className={`rounded-lg bg-emerald-50 px-3 py-2 text-left text-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${filter === 'STABLE' ? 'ring-2 ring-emerald-500 ring-offset-1' : ''}`}
+          onClick={() => setFilter('STABLE')}
+        >
           <p className="text-xs font-medium">Ổn định</p>
           <p className="text-xl font-bold">{counts.stable}</p>
-        </div>
-        <div data-testid="station-count-insufficient" className="rounded-lg bg-slate-100 px-3 py-2 text-slate-600">
+        </button>
+        <button
+          type="button"
+          aria-pressed={filter === 'INSUFFICIENT_DATA'}
+          data-testid="station-count-insufficient"
+          className={`rounded-lg bg-slate-100 px-3 py-2 text-left text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 ${filter === 'INSUFFICIENT_DATA' ? 'ring-2 ring-slate-500 ring-offset-1' : ''}`}
+          onClick={() => setFilter('INSUFFICIENT_DATA')}
+        >
           <p className="text-xs font-medium">Chưa đủ dữ liệu</p>
           <p className="text-xl font-bold">{counts.insufficientData}</p>
-        </div>
+        </button>
       </div>
       <label className="mb-4 flex w-fit items-center gap-3 text-sm font-medium text-slate-700">
         <span>Mức ưu tiên</span>
