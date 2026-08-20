@@ -1,10 +1,10 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { Role, type AuthUser } from '@eco-oil/shared-types';
 import { createElement } from 'react';
 import { expect, test } from 'vitest';
 import { KpiCards } from './components/kpi-cards';
 import { TransactionAnomalySummary } from './components/reconciliation-view';
-import { sortStationsByFillForecast, StationForecastStatus } from './components/stations-view';
+import { sortStationsByFillForecast, StationForecastStatus, StationsTable } from './components/stations-view';
 import { calculateVariancePct, isAdminUser } from './lib/dashboard-utils';
 import type { StationFillForecast, StationSummaryWithForecast } from './lib/api';
 
@@ -184,4 +184,37 @@ test('giữ nguyên thứ tự API khi trạm có cùng mức ưu tiên và số
     station('third', 'CRITICAL', 2),
   ]);
   expect(result.map(({ id }) => id)).toEqual(['first', 'second', 'third']);
+});
+
+const renderedStationNames = (container: HTMLElement) => within(container).getAllByRole('row').slice(1).map((row) => within(row).getAllByRole('cell')[0]?.textContent);
+
+test('bộ lọc mặc định hiển thị tất cả trạm theo thứ tự ưu tiên', () => {
+  const { container } = render(createElement(StationsTable, {
+    stations: [station('stable', 'STABLE', 10), station('full', 'FULL', 0), station('watch', 'WATCH', 5)],
+  }));
+  expect(within(container).getByLabelText('Lọc mức độ ưu tiên')).toHaveValue('ALL');
+  expect(renderedStationNames(container)).toEqual(['full', 'watch', 'stable']);
+});
+
+test('bộ lọc Cần xử lý chỉ hiện FULL và CRITICAL, vẫn đúng thứ tự ưu tiên', () => {
+  const { container } = render(createElement(StationsTable, {
+    stations: [station('watch', 'WATCH', 4), station('critical', 'CRITICAL', 2), station('full', 'FULL', 0)],
+  }));
+  fireEvent.change(within(container).getByLabelText('Lọc mức độ ưu tiên'), { target: { value: 'ACTION_REQUIRED' } });
+  expect(renderedStationNames(container)).toEqual(['full', 'critical']);
+  expect(within(container).queryByText('watch')).not.toBeInTheDocument();
+});
+
+test('bộ lọc Chưa đủ dữ liệu nhận forecast thiếu lịch sử và response cũ', () => {
+  const { container } = render(createElement(StationsTable, {
+    stations: [station('legacy'), station('stable', 'STABLE', 10), station('insufficient', 'INSUFFICIENT_DATA')],
+  }));
+  fireEvent.change(within(container).getByLabelText('Lọc mức độ ưu tiên'), { target: { value: 'INSUFFICIENT_DATA' } });
+  expect(renderedStationNames(container)).toEqual(['insufficient', 'legacy']);
+});
+
+test('hiển thị empty state khi không có trạm phù hợp với bộ lọc', () => {
+  const { container } = render(createElement(StationsTable, { stations: [station('watch', 'WATCH', 4)] }));
+  fireEvent.change(within(container).getByLabelText('Lọc mức độ ưu tiên'), { target: { value: 'STABLE' } });
+  expect(within(container).getByText('Không có trạm phù hợp với bộ lọc.')).toBeInTheDocument();
 });
