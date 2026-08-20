@@ -89,6 +89,20 @@ export function filterStationsByFillForecast(
   });
 }
 
+export function countStationsByFillForecast(stations: readonly StationSummaryWithForecast[]) {
+  return stations.reduce(
+    (counts, station) => {
+      const status = station.fill_forecast?.status;
+      if (status === 'FULL' || status === 'CRITICAL') counts.actionRequired += 1;
+      else if (status === 'WATCH') counts.watch += 1;
+      else if (status === 'STABLE') counts.stable += 1;
+      else counts.insufficientData += 1;
+      return counts;
+    },
+    { actionRequired: 0, watch: 0, stable: 0, insufficientData: 0 },
+  );
+}
+
 export function StationForecastStatus({
   forecast,
   fillPct,
@@ -121,11 +135,30 @@ export function StationForecastStatus({
 
 export function StationsTable({ stations }: { stations: readonly StationSummaryWithForecast[] }) {
   const [filter, setFilter] = useState<StationPriorityFilter>('ALL');
+  const counts = countStationsByFillForecast(stations);
   const sortedStations = sortStationsByFillForecast(stations);
   const visibleStations = filterStationsByFillForecast(sortedStations, filter);
 
   return (
     <>
+      <div aria-label="Số lượng trạm theo mức ưu tiên" className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div data-testid="station-count-action-required" className="rounded-lg bg-red-50 px-3 py-2 text-red-700">
+          <p className="text-xs font-medium">Cần xử lý</p>
+          <p className="text-xl font-bold">{counts.actionRequired}</p>
+        </div>
+        <div data-testid="station-count-watch" className="rounded-lg bg-amber-50 px-3 py-2 text-amber-800">
+          <p className="text-xs font-medium">Theo dõi</p>
+          <p className="text-xl font-bold">{counts.watch}</p>
+        </div>
+        <div data-testid="station-count-stable" className="rounded-lg bg-emerald-50 px-3 py-2 text-emerald-700">
+          <p className="text-xs font-medium">Ổn định</p>
+          <p className="text-xl font-bold">{counts.stable}</p>
+        </div>
+        <div data-testid="station-count-insufficient" className="rounded-lg bg-slate-100 px-3 py-2 text-slate-600">
+          <p className="text-xs font-medium">Chưa đủ dữ liệu</p>
+          <p className="text-xl font-bold">{counts.insufficientData}</p>
+        </div>
+      </div>
       <label className="mb-4 flex w-fit items-center gap-3 text-sm font-medium text-slate-700">
         <span>Mức ưu tiên</span>
         <select

@@ -4,7 +4,7 @@ import { createElement } from 'react';
 import { expect, test } from 'vitest';
 import { KpiCards } from './components/kpi-cards';
 import { TransactionAnomalySummary } from './components/reconciliation-view';
-import { sortStationsByFillForecast, StationForecastStatus, StationsTable } from './components/stations-view';
+import { countStationsByFillForecast, sortStationsByFillForecast, StationForecastStatus, StationsTable } from './components/stations-view';
 import { calculateVariancePct, isAdminUser } from './lib/dashboard-utils';
 import type { StationFillForecast, StationSummaryWithForecast } from './lib/api';
 
@@ -217,4 +217,44 @@ test('hiển thị empty state khi không có trạm phù hợp với bộ lọc
   const { container } = render(createElement(StationsTable, { stations: [station('watch', 'WATCH', 4)] }));
   fireEvent.change(within(container).getByLabelText('Lọc mức độ ưu tiên'), { target: { value: 'STABLE' } });
   expect(within(container).getByText('Không có trạm phù hợp với bộ lọc.')).toBeInTheDocument();
+});
+
+const summaryStations = [
+  station('full', 'FULL', 0),
+  station('critical', 'CRITICAL', 2),
+  station('watch', 'WATCH', 5),
+  station('stable', 'STABLE', 12),
+  station('insufficient', 'INSUFFICIENT_DATA'),
+  station('legacy'),
+];
+
+test('đếm FULL và CRITICAL vào nhóm Cần xử lý', () => {
+  expect(countStationsByFillForecast(summaryStations).actionRequired).toBe(2);
+});
+
+test('đếm WATCH vào nhóm Theo dõi', () => {
+  expect(countStationsByFillForecast(summaryStations).watch).toBe(1);
+});
+
+test('đếm STABLE vào nhóm Ổn định', () => {
+  expect(countStationsByFillForecast(summaryStations).stable).toBe(1);
+});
+
+test('đếm INSUFFICIENT_DATA và response cũ vào nhóm Chưa đủ dữ liệu', () => {
+  expect(countStationsByFillForecast(summaryStations).insufficientData).toBe(2);
+});
+
+test('thay đổi bộ lọc không làm thay đổi số lượng tổng theo mức ưu tiên', () => {
+  const { container } = render(createElement(StationsTable, { stations: summaryStations }));
+  const view = within(container);
+  const countTexts = () => [
+    view.getByTestId('station-count-action-required').textContent,
+    view.getByTestId('station-count-watch').textContent,
+    view.getByTestId('station-count-stable').textContent,
+    view.getByTestId('station-count-insufficient').textContent,
+  ];
+  const before = countTexts();
+  fireEvent.change(view.getByLabelText('Lọc mức độ ưu tiên'), { target: { value: 'WATCH' } });
+  expect(countTexts()).toEqual(before);
+  expect(countTexts()).toEqual(['Cần xử lý2', 'Theo dõi1', 'Ổn định1', 'Chưa đủ dữ liệu2']);
 });
