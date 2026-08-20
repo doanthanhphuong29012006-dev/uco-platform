@@ -1,8 +1,11 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import type { Prisma} from '@prisma/client';
-import { EntityStatus, Role } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
+import { DeliveryStatus, EntityStatus, Role } from '@prisma/client';
 import type { EntityStatusInput, PersonListQueryInput, StationCreateInput, StationPatchInput, StationRecommendInput } from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
+import { forecastStationFill, type StationFillForecastResult } from './station-fill-forecast';
+
+const FORECAST_HISTORY_DAYS = 7;
 
 @Injectable()
 export class StationsService {
@@ -70,9 +73,16 @@ export class StationsService {
       }),
       this.prisma.station.count({ where }),
     ]);
-    const points = await this.prisma.getGeographyPoints('stations', rows.map((row) => row.id));
+    const stationIds = rows.map((row) => row.id);
+    const [points, dailyIncomingByStation] = await Promise.all([
+      this.prisma.getGeographyPoints('stations', stationIds),
+      this.dailyIncomingByStation(stationIds),
+    ]);
     const pointMap = new Map(points.map((point) => [point.id, point]));
-    return { data: rows.map((row) => this.serialize(row, pointMap.get(row.id))), meta: { page: query.page, limit: query.limit, total } };
+    return {
+      data: rows.map((row) => this.serialize(row, pointMap.get(row.id), dailyIncomingByStation.get(row.id) ?? [])),
+      meta: { page: query.page, limit: query.limit, total },
+    };
   }
 
   async recommend(query: StationRecommendInput) {
@@ -119,7 +129,68 @@ export class StationsService {
 
   async findOne(id: string) {
     const row = await this.getRequired(id);
-    return this.serialize(row, (await this.prisma.getGeographyPoint('stations', id)) ?? undefined);
+    const [point, dailyIncomingByStation] = await Promise.all([
+      this.prisma.getGeographyPoint('stations', id),
+      this.dailyIncomingByStation([id]),
+    ]);
+    return this.serialize(row, point ?? undefined, dailyIncomingByStation.get(id) ?? []);
+  }
+
+  private async dailyIncomingByStation(stationIds: string[], now = new Date()): Promise<Map<string, number[]>> {
+    const result = new Map<string, number[]>();
+    if (stationIds.length === 0) return result;
+
+    const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const historyStart = new Date(today);
+    historyStart.setUTCDate(historyStart.getUTCDate() - (FORECAST_HISTORY_DAYS - 1));
+    const completedStatuses = [DeliveryStatus.OK, DeliveryStatus.FLAGGED];
+    const deliveries = await this.prisma.stationDelivery.findMany({
+      where: {
+        stationId: { in: stationIds },
+        status: { in: completedStatuses },
+        deletedAt: null,
+        deliveredAt: { gte: historyStart, lte: now },
+      },
+      select: { stationId: true, actualLiters: true, deliveredAt: true, status: true, deletedAt: true },
+      orderBy: [{ stationId: 'asc' }, { deliveredAt: 'asc' }],
+    });
+    const completedStatusSet = new Set<DeliveryStatus>(completedStatuses);
+    const totalsByStation = new Map<string, Map<string, number>>();
+    for (const delivery of deliveries) {
+      const deliveredAt = delivery.deliveredAt.getTime();
+      const actualLiters = Number(delivery.actualLiters);
+      if (
+        delivery.deletedAt !== null ||
+        !completedStatusSet.has(delivery.status) ||
+        !Number.isFinite(deliveredAt) ||
+        deliveredAt < historyStart.getTime() ||
+        deliveredAt > now.getTime() ||
+        !Number.isFinite(actualLiters) ||
+        actualLiters < 0
+      ) {
+        continue;
+      }
+      const day = delivery.deliveredAt.toISOString().slice(0, 10);
+      const stationTotals = totalsByStation.get(delivery.stationId) ?? new Map<string, number>();
+      stationTotals.set(day, (stationTotals.get(day) ?? 0) + actualLiters);
+      totalsByStation.set(delivery.stationId, stationTotals);
+    }
+
+    const todayTimestamp = today.getTime();
+    for (const [stationId, dailyTotals] of totalsByStation) {
+      const firstDay = [...dailyTotals.keys()].sort()[0];
+      if (!firstDay) continue;
+      const dailyIncoming: number[] = [];
+      for (
+        let cursor = new Date(`${firstDay}T00:00:00.000Z`);
+        cursor.getTime() <= todayTimestamp;
+        cursor = new Date(cursor.getTime() + 24 * 60 * 60 * 1_000)
+      ) {
+        dailyIncoming.push(dailyTotals.get(cursor.toISOString().slice(0, 10)) ?? 0);
+      }
+      result.set(stationId, dailyIncoming.slice(-FORECAST_HISTORY_DAYS));
+    }
+    return result;
   }
 
   private async requireUser(id: string): Promise<void> {
@@ -144,7 +215,16 @@ export class StationsService {
     return row;
   }
 
-  private serialize(row: Awaited<ReturnType<StationsService['getRequired']>>, point?: { lat: number; lng: number }) {
+  private serialize(
+    row: Awaited<ReturnType<StationsService['getRequired']>>,
+    point?: { lat: number; lng: number },
+    dailyIncomingLiters: number[] = [],
+  ) {
+    const fillForecast = forecastStationFill({
+      capacityLiters: Number(row.capacityLiters),
+      currentVolumeLiters: Number(row.currentVolumeLiters),
+      dailyIncomingLiters,
+    });
     return {
       id: row.id,
       user_id: row.userId,
@@ -159,6 +239,28 @@ export class StationsService {
       is_active: row.isActive,
       ward: { id: row.ward.id, code: row.ward.code, name: row.ward.name },
       user: { id: row.user.id, name: row.user.name, phone: row.user.phone },
+      fill_forecast: this.serializeFillForecast(fillForecast),
+    };
+  }
+
+  private serializeFillForecast(forecast: StationFillForecastResult) {
+    return {
+      average_daily_incoming_liters: forecast.averageDailyIncomingLiters,
+      remaining_capacity_liters: forecast.remainingCapacityLiters,
+      estimated_days_until_full: forecast.estimatedDaysUntilFull,
+      projected_volumes: forecast.projectedVolumes.map((projection) => ({
+        day: projection.day,
+        volume_liters: projection.volumeLiters,
+      })),
+      status: forecast.status,
+      history_size: forecast.historySize,
+      reason_codes: forecast.reasonCodes,
+      explanation: {
+        summary: forecast.explanation.summary,
+        used_daily_incoming_liters: forecast.explanation.usedDailyIncomingLiters,
+        calculation_window_days: forecast.explanation.calculationWindowDays,
+        formula: forecast.explanation.formula,
+      },
     };
   }
 }
