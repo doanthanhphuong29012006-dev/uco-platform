@@ -425,6 +425,14 @@ export interface AdminOverviewResponse {
   recent_transactions: AdminRecentTransaction[];
 }
 
+export interface AdminTransactionAnomaly {
+  score: number;
+  level: 'NORMAL' | 'REVIEW' | 'HIGH_RISK';
+  reasons: string[];
+  explanation: Record<string, unknown>;
+  historySize: number;
+}
+
 export interface AdminReconciliationTransaction {
   id: string;
   merchant_name: string;
@@ -434,6 +442,7 @@ export interface AdminReconciliationTransaction {
   grade: OilGrade | null;
   suspected_adulteration: boolean;
   collected_at: string;
+  anomaly?: AdminTransactionAnomaly;
 }
 
 export interface AdminReconciliationCollector {
@@ -462,16 +471,7 @@ export interface AdminReconciliationResponse {
   variance_kg_pct: number;
   has_estimated_mass: boolean;
   by_collector: AdminReconciliationCollector[];
-  undelivered_transactions: Array<{
-    id: string;
-    merchant_name: string;
-    liters: number;
-    kilograms: number | null;
-    mass_source: MassSource;
-    grade: OilGrade | null;
-    suspected_adulteration: boolean;
-    collected_at: string;
-  }>;
+  undelivered_transactions: AdminReconciliationTransaction[];
 }
 
 export interface AdminAlert {
