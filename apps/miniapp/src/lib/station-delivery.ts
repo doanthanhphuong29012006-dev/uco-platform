@@ -1,3 +1,4 @@
+import type { StationRecommendation } from '@eco-oil/shared-types';
 import type { SyncSummary } from './outbox-sync';
 
 export interface StationDeliverySubmitState {
@@ -29,6 +30,40 @@ export async function retryStationDeliverySync(
     setError(error instanceof Error ? error.message : 'Không thể đồng bộ giao dịch. Vui lòng thử lại.');
     return false;
   } finally {
+    setLoading(false);
+  }
+}
+
+export type StationRecommendationLoadResult =
+  | { status: 'success'; stations: StationRecommendation[]; error: null }
+  | { status: 'empty'; stations: []; error: null }
+  | { status: 'error'; stations: []; error: string };
+
+export async function loadStationRecommendations(
+  request: () => Promise<StationRecommendation[]>,
+  setLoading: (loading: boolean) => void,
+  timeoutMs = 15_000,
+): Promise<StationRecommendationLoadResult> {
+  setLoading(true);
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const stations = await Promise.race([
+      request(),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error('Yêu cầu tìm trạm đã quá thời gian chờ.')), timeoutMs);
+      }),
+    ]);
+    return stations.length > 0
+      ? { status: 'success', stations, error: null }
+      : { status: 'empty', stations: [], error: null };
+  } catch (error) {
+    return {
+      status: 'error',
+      stations: [],
+      error: error instanceof Error ? error.message : 'Không thể tải danh sách trạm.',
+    };
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
     setLoading(false);
   }
 }

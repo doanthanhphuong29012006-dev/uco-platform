@@ -12,12 +12,14 @@ import { enqueueCollection } from '../lib/outbox-db';
 import { startOutboxSyncWorker, syncOutbox } from '../lib/outbox-sync';
 import { outboxErrorMessage } from '../lib/outbox-errors';
 import { submitContainerCode } from '../lib/container-code';
+import { pendingStationDeliveryStorage } from '../lib/storage';
 import { zaloClient } from '../lib/zalo-client';
 import type { PhotoAsset } from '../lib/zalo-client';
 import { compressImageBlob } from '../lib/zalo-client';
 import { StatusView } from '../components/StatusView';
 import { OilGradeSelector } from '../components/OilGradeSelector';
 import { GradePhotoPicker, isGradePhotoMissing } from '../components/GradePhotoPicker';
+import { useAuthStore } from '../stores/auth-store';
 import { StationDeliveryFlow } from './StationDeliveryFlow';
 
 type CollectorScreen =
@@ -37,11 +39,13 @@ export interface CompletedStop {
 
 export function CollectorFlow() {
   const queryClient = useQueryClient();
-  const [screen, setScreen] = useState<CollectorScreen>({ name: 'route' });
+  const collectorStorageId = useAuthStore((state) => state.user?.collectorId ?? state.user?.id ?? null);
+  const [restoredShift] = useState(() => collectorStorageId ? pendingStationDeliveryStorage.load(collectorStorageId) : null);
+  const [screen, setScreen] = useState<CollectorScreen>(() => Object.keys(restoredShift?.completed ?? {}).length > 0 ? { name: 'summary' } : { name: 'route' });
   const [location, setLocation] = useState<GeoPoint | null>(null);
   const [locationDenied, setLocationDenied] = useState(false);
-  const [completed, setCompleted] = useState<Record<string, CompletedStop>>({});
-  const [initialStopCount, setInitialStopCount] = useState<number | null>(null);
+  const [completed, setCompleted] = useState<Record<string, CompletedStop>>(restoredShift?.completed ?? {});
+  const [initialStopCount, setInitialStopCount] = useState<number | null>(restoredShift?.totalStops ?? null);
   const [shiftStarted, setShiftStarted] = useState(false);
   const [prefetching, setPrefetching] = useState(false);
   const online = useOnlineStatus();
@@ -72,6 +76,25 @@ export function CollectorFlow() {
   });
 
   useEffect(() => {
+    const completedEntries = Object.values(completed);
+    if (completedEntries.length === 0) return;
+    const transactionIds = completedEntries.map((entry) => outboxRows.find((row) => row.type === 'collection' && row.client_uuid === entry.clientUuid)?.server_id);
+    if (transactionIds.some((id) => !id)) return;
+    const delivered = outboxRows.some((row) => {
+      if (row.type !== 'station_delivery' || row.status !== 'synced') return false;
+      const payload = row.payload as { transaction_ids?: string[] };
+      return transactionIds.every((id) => payload.transaction_ids?.includes(id as string));
+    });
+    if (!delivered) return;
+    if (collectorStorageId) pendingStationDeliveryStorage.clear(collectorStorageId);
+    if (screen.name !== 'station-delivery') {
+      setCompleted({});
+      setInitialStopCount(route.data?.route.stops.length ?? 0);
+      setScreen({ name: 'route' });
+    }
+  }, [collectorStorageId, completed, outboxRows, route.data?.route.stops.length, screen.name]);
+
+  useEffect(() => {
     const wardCenter = route.data?.route.stops.find((stop) => stop.ward_center)?.ward_center;
     if (!location && wardCenter) {
       setLocation(wardCenter);
@@ -99,9 +122,30 @@ export function CollectorFlow() {
   }
 
   function onCollectionSaved(stop: RouteStop, liters: number, kilograms: number | null, clientUuid: string): void {
-    setCompleted((current) => ({ ...current, [stop.order_id]: { liters, kilograms, clientUuid, stop } }));
+    const nextCompleted = { ...completed, [stop.order_id]: { liters, kilograms, clientUuid, stop } };
+    const totalStops = Math.max(initialStopCount ?? route.data?.route.stops.length ?? 0, Object.keys(nextCompleted).length);
+    setCompleted(nextCompleted);
+    setInitialStopCount(totalStops);
+    if (collectorStorageId) {
+      pendingStationDeliveryStorage.save(collectorStorageId, {
+        completed: nextCompleted,
+        totalStops,
+        savedAt: new Date().toISOString(),
+      });
+    }
     setScreen({ name: 'route' });
     void queryClient.invalidateQueries({ queryKey: ['collector-route'] });
+  }
+
+  function clearPersistedShift(): void {
+    if (collectorStorageId) pendingStationDeliveryStorage.clear(collectorStorageId);
+  }
+
+  function finishShift(): void {
+    clearPersistedShift();
+    setCompleted({});
+    setInitialStopCount(route.data?.route.stops.length ?? 0);
+    setScreen({ name: 'route' });
   }
 
   let content: ReactNode;
@@ -122,7 +166,7 @@ export function CollectorFlow() {
   } else if (screen.name === 'summary') {
     content = <CollectorSummaryScreen route={route.data?.route} completed={completed} totalStops={initialStopCount ?? route.data?.route.stops.length ?? 0} onBack={() => setScreen({ name: 'route' })} onOpenDelivery={() => setScreen({ name: 'station-delivery' })} />;
   } else if (screen.name === 'station-delivery') {
-    content = <StationDeliveryFlow completed={completed} onBack={() => setScreen({ name: 'route' })} />;
+    content = <StationDeliveryFlow completed={completed} onBack={() => setScreen({ name: 'summary' })} onDeliverySynced={clearPersistedShift} onFinish={finishShift} />;
   } else if (route.isPending) {
     content = <StatusView title="Đang tải tuyến hôm nay…" />;
   } else if (route.isError) {
@@ -508,6 +552,7 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
 
 function CollectorSummaryScreen({ route, completed, totalStops, onBack, onOpenDelivery }: { route: CurrentRouteResponse | undefined; completed: Record<string, CompletedStop>; totalStops: number; onBack: () => void; onOpenDelivery: () => void }) {
   const totalCollected = Object.values(completed).reduce((sum, item) => sum + item.liters, 0);
+  const totalCollectedKg = Object.values(completed).reduce((sum, item) => sum + (item.kilograms ?? item.liters * DEFAULT_DENSITY_KG_PER_LITER), 0);
   const completedCount = Object.keys(completed).length;
   const displayedTotalStops = Math.max(totalStops, completedCount);
   const vehicleCapacity = route ? route.total_expected_liters + route.remaining_capacity_l : 0;
@@ -515,7 +560,7 @@ function CollectorSummaryScreen({ route, completed, totalStops, onBack, onOpenDe
     <div className="page-content collector-content summary-page">
       <button className="back-button" onClick={onBack}>← Về tuyến hôm nay</button>
       <header className="collector-screen-heading"><p className="eyebrow">KẾT QUẢ CA</p><h1>Tóm tắt thu gom</h1></header>
-      <div className="summary-hero"><span>Đã thu hôm nay</span><strong>{formatLiters(totalCollected)}</strong></div>
+      <div className="summary-hero"><span>Đã thu hôm nay</span><strong>{formatLiters(totalCollected)} (~{totalCollectedKg.toFixed(1)} kg)</strong></div>
       <section className="summary-grid"><div><span>Điểm đã thu</span><strong>{completedCount} / {displayedTotalStops}</strong></div><div><span>Dung tích còn lại</span><strong>{formatLiters(Math.max(vehicleCapacity - totalCollected, 0))}</strong></div></section>
       <button className="station-button" onClick={onOpenDelivery} disabled={completedCount === 0}>Đi nộp trạm <small>{completedCount === 0 ? 'Chưa có giao dịch' : 'Đối soát và chọn trạm'}</small></button>
     </div>

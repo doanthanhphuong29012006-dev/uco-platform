@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { DEFAULT_DENSITY_KG_PER_LITER, DeliveryStatus } from '@eco-oil/shared-types';
 import type { CollectionCreateRequest, GeoPoint, StationDeliveryCreateRequest, StationDeliveryResponse, StationRecommendation } from '@eco-oil/shared-types';
-import { ApiError, api } from '../lib/api';
+import { api } from '../lib/api';
 import { formatCurrency, formatLiters } from '../lib/formatters';
 import { enqueueStationDelivery, retryOutbox, type OutboxRecord } from '../lib/outbox-db';
 import { syncOutbox } from '../lib/outbox-sync';
@@ -13,7 +12,7 @@ import type { PhotoAsset } from '../lib/zalo-client';
 import { compressImageBlob } from '../lib/zalo-client';
 import { StatusView } from '../components/StatusView';
 import type { CompletedStop } from './CollectorFlow';
-import { canSubmitStationDelivery, retryStationDeliverySync } from '../lib/station-delivery';
+import { canSubmitStationDelivery, loadStationRecommendations, retryStationDeliverySync } from '../lib/station-delivery';
 
 type DeliveryScreen = 'select' | 'review' | 'receipt' | 'closeout';
 
@@ -25,49 +24,80 @@ interface DeliveryCandidate extends CompletedStop {
 interface StationDeliveryFlowProps {
   completed: Record<string, CompletedStop>;
   onBack: () => void;
+  onDeliverySynced: () => void;
+  onFinish: () => void;
 }
 
 const VARIANCE_THRESHOLD = 0.02;
 const PRICE_PER_LITER = Number(import.meta.env.VITE_ESTIMATED_PRICE_PER_LITER ?? 8000);
 
-export function StationDeliveryFlow({ completed, onBack }: StationDeliveryFlowProps) {
+export function StationDeliveryFlow({ completed, onBack, onDeliverySynced, onFinish }: StationDeliveryFlowProps) {
   const [screen, setScreen] = useState<DeliveryScreen>('select');
   const [location, setLocation] = useState<GeoPoint | null>(null);
   const [locationDenied, setLocationDenied] = useState(false);
+  const [locating, setLocating] = useState(true);
+  const [locationError, setLocationError] = useState<string | null>(null);
+  const [recommendations, setRecommendations] = useState<StationRecommendation[]>([]);
+  const [recommendationStatus, setRecommendationStatus] = useState<'idle' | 'success' | 'empty' | 'error'>('idle');
+  const [recommendationError, setRecommendationError] = useState<string | null>(null);
+  const [loadingRecommendations, setLoadingRecommendations] = useState(false);
   const [selectedStation, setSelectedStation] = useState<StationRecommendation | null>(null);
   const [deliveryClientUuid, setDeliveryClientUuid] = useState<string | null>(null);
   const [retryingWaiting, setRetryingWaiting] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
   const rows = useOutboxRows();
-  const entries = Object.values(completed);
+  const entries = useMemo(() => Object.values(completed), [completed]);
   const candidates = useMemo(() => getCandidates(entries, rows), [entries, rows]);
   const expectedLiters = entries.reduce((sum, item) => sum + item.liters, 0);
-  const expectedKg = candidates.reduce((sum, item) => sum + collectionKilograms(item.collection), 0);
+  const expectedKg = entries.reduce((sum, item) => sum + (item.kilograms ?? item.liters * DEFAULT_DENSITY_KG_PER_LITER), 0);
   const waiting = entries.length - candidates.length;
+  const fallbackLocation = useMemo(() => entries.find((entry) => entry.stop.ward_center)?.stop.ward_center ?? null, [entries]);
 
-  useEffect(() => {
-    let active = true;
-    const fallback = entries.find((entry) => entry.stop.ward_center)?.stop.ward_center ?? null;
-    void zaloClient.getLocation(fallback).then((point) => {
-      if (!active) return;
+  const resolveLocation = useCallback(async (): Promise<void> => {
+    setLocating(true);
+    setLocationError(null);
+    try {
+      const point = await zaloClient.getLocation(fallbackLocation);
       if (point) {
         setLocation(point);
-        if (fallback && point.lat === fallback.lat && point.lng === fallback.lng) setLocationDenied(true);
+        setLocationDenied(Boolean(fallbackLocation && point.lat === fallbackLocation.lat && point.lng === fallbackLocation.lng));
       } else {
         setLocationDenied(true);
+        setLocationError('Không xác định được vị trí. Hãy thử lại hoặc quay về tóm tắt ca.');
+        setRecommendationStatus('error');
       }
-    }).catch(() => {
-      if (active) setLocationDenied(true);
-    });
-    return () => { active = false; };
-  }, []);
+    } catch {
+      setLocationDenied(true);
+      setLocationError('Không lấy được vị trí. Hãy thử lại hoặc quay về tóm tắt ca.');
+      setRecommendationStatus('error');
+    } finally {
+      setLocating(false);
+    }
+  }, [fallbackLocation]);
 
-  const recommendations = useQuery({
-    queryKey: ['station-recommendations', location, expectedLiters],
-    queryFn: () => location ? api.recommendStations(location, expectedLiters) : Promise.reject(new Error('Chưa xác định được vị trí')),
-    enabled: screen === 'select' && expectedLiters > 0 && waiting === 0 && location !== null,
-    staleTime: 15_000,
-  });
+  useEffect(() => { void resolveLocation(); }, [resolveLocation]);
+
+  const findStations = useCallback(async (): Promise<void> => {
+    if (!location) {
+      setRecommendationStatus('error');
+      setRecommendationError('Chưa xác định được vị trí để tìm trạm phù hợp.');
+      return;
+    }
+    setRecommendationError(null);
+    const result = await loadStationRecommendations(
+      () => api.recommendStations(location, expectedLiters),
+      setLoadingRecommendations,
+    );
+    setRecommendations(result.stations);
+    setRecommendationStatus(result.status);
+    setRecommendationError(result.error);
+  }, [expectedLiters, location]);
+
+  useEffect(() => {
+    if (screen === 'select' && waiting === 0 && expectedLiters > 0 && location) {
+      void findStations();
+    }
+  }, [expectedLiters, findStations, location, screen, waiting]);
 
   async function retryWaiting(): Promise<void> {
     await retryStationDeliverySync(async () => {
@@ -84,7 +114,9 @@ export function StationDeliveryFlow({ completed, onBack }: StationDeliveryFlowPr
   }
 
   if (screen === 'select') {
-    return <StationSelectScreen expectedLiters={expectedLiters} expectedKg={expectedKg} waiting={waiting} locationDenied={locationDenied} recommendations={recommendations.data ?? []} loading={recommendations.isPending} error={recommendations.error} retryingWaiting={retryingWaiting} retryError={retryError} onBack={onBack} onRetryWaiting={() => { void retryWaiting(); }} onChoose={(station) => { setSelectedStation(station); setScreen('review'); }} onRetry={() => { void recommendations.refetch(); }} />;
+    const loading = waiting === 0 && (locating || loadingRecommendations);
+    const error = locationError ?? recommendationError;
+    return <StationSelectScreen expectedLiters={expectedLiters} expectedKg={expectedKg} waiting={waiting} locationDenied={locationDenied} recommendations={recommendations} loading={loading} status={recommendationStatus} error={error} retryingWaiting={retryingWaiting} retryError={retryError} onBack={onBack} onRetryWaiting={() => { void retryWaiting(); }} onChoose={(station) => { setSelectedStation(station); setScreen('review'); }} onRetry={() => { if (location) void findStations(); else void resolveLocation(); }} />;
   }
 
   if (screen === 'review' && selectedStation) {
@@ -92,20 +124,21 @@ export function StationDeliveryFlow({ completed, onBack }: StationDeliveryFlowPr
   }
 
   if (screen === 'receipt' && selectedStation && deliveryClientUuid) {
-    return <StationDeliveryReceipt station={selectedStation} clientUuid={deliveryClientUuid} expectedLiters={expectedLiters} rows={rows} onCloseOut={() => setScreen('closeout')} onBack={onBack} />;
+    return <StationDeliveryReceipt station={selectedStation} clientUuid={deliveryClientUuid} expectedLiters={expectedLiters} rows={rows} onDeliverySynced={onDeliverySynced} onCloseOut={() => setScreen('closeout')} onBack={onBack} />;
   }
 
-  return <ShiftCloseout candidates={candidates} onFinish={onBack} />;
+  return <ShiftCloseout candidates={candidates} onFinish={onFinish} />;
 }
 
-function StationSelectScreen({ expectedLiters, expectedKg, waiting, locationDenied, recommendations, loading, error, retryingWaiting, retryError, onBack, onRetryWaiting, onChoose, onRetry }: {
+function StationSelectScreen({ expectedLiters, expectedKg, waiting, locationDenied, recommendations, loading, status, error, retryingWaiting, retryError, onBack, onRetryWaiting, onChoose, onRetry }: {
   expectedLiters: number;
   expectedKg: number;
   waiting: number;
   locationDenied: boolean;
   recommendations: StationRecommendation[];
   loading: boolean;
-  error: unknown;
+  status: 'idle' | 'success' | 'empty' | 'error';
+  error: string | null;
   retryingWaiting: boolean;
   retryError: string | null;
   onBack: () => void;
@@ -120,9 +153,9 @@ function StationSelectScreen({ expectedLiters, expectedKg, waiting, locationDeni
       {locationDenied ? <div className="location-banner">Không lấy được vị trí GPS, đang dùng vị trí trung tâm phường. Giao dịch có thể bị đánh dấu cần kiểm tra.</div> : null}
       {waiting > 0 ? <div className="warning-panel delivery-waiting-panel"><strong>Còn {waiting} giao dịch chưa đồng bộ, đang gửi…</strong><span>Phải đồng bộ xong để server biết chính xác các giao dịch trước khi nộp trạm.</span>{retryError ? <span className="error-text">{retryError}</span> : null}<button className="secondary-button" onClick={onRetryWaiting} disabled={retryingWaiting}>{retryingWaiting ? 'Đang thử lại…' : 'Thử lại đồng bộ'}</button></div> : null}
       {loading ? <StatusView title="Đang tìm trạm còn chỗ…" /> : null}
-      {error ? <StatusView title="Chưa tìm được trạm" message={error instanceof ApiError ? error.message : 'Kiểm tra kết nối rồi thử lại.'} action={{ label: 'Thử lại', onClick: onRetry }} /> : null}
-      {!loading && !error && waiting === 0 && recommendations.length === 0 ? <StatusView title="Không có trạm đủ sức chứa" message="Thử lại sau hoặc liên hệ điều phối để được hướng dẫn." action={{ label: 'Tải lại', onClick: onRetry }} /> : null}
-      {waiting === 0 && recommendations.length > 0 ? <section className="station-list">{recommendations.map((station) => <StationCard key={station.id} station={station} liters={expectedLiters} onChoose={() => onChoose(station)} />)}</section> : null}
+      {!loading && status === 'error' ? <StatusView title="Chưa tìm được trạm" message={error ?? 'Kiểm tra kết nối rồi thử lại.'} action={{ label: 'Thử lại', onClick: onRetry }} /> : null}
+      {!loading && status === 'empty' ? <StatusView title="Hiện chưa có trạm phù hợp để tiếp nhận" message="Thử lại sau hoặc liên hệ điều phối để được hướng dẫn." action={{ label: 'Thử lại', onClick: onRetry }} /> : null}
+      {!loading && waiting === 0 && status === 'success' ? <section className="station-list">{recommendations.map((station) => <StationCard key={station.id} station={station} liters={expectedLiters} onChoose={() => onChoose(station)} />)}</section> : null}
     </div>
   );
 }
@@ -224,12 +257,19 @@ function StationDeliveryReview({ station, candidates, expectedLiters, expectedKg
   );
 }
 
-function StationDeliveryReceipt({ station, clientUuid, expectedLiters, rows, onCloseOut, onBack }: { station: StationRecommendation; clientUuid: string; expectedLiters: number; rows: OutboxRecord[]; onCloseOut: () => void; onBack: () => void }) {
+function StationDeliveryReceipt({ station, clientUuid, expectedLiters, rows, onDeliverySynced, onCloseOut, onBack }: { station: StationRecommendation; clientUuid: string; expectedLiters: number; rows: OutboxRecord[]; onDeliverySynced: () => void; onCloseOut: () => void; onBack: () => void }) {
   const row = rows.find((item) => item.client_uuid === clientUuid);
   const response = row?.server_response as StationDeliveryResponse | undefined;
   const actual = response?.actual_liters ?? Number((row?.payload as StationDeliveryCreateRequest | undefined)?.actual_liters ?? 0);
   const flagged = response?.status === DeliveryStatus.FLAGGED;
-  return <div className="page-content collector-content station-page receipt-page"><header className="collector-screen-heading"><p className="eyebrow">BIÊN NHẬN NỘP TRẠM</p><h1>{flagged ? 'Đã ghi nhận có chênh lệch' : 'Đã lưu phiếu nộp trạm'}</h1><p>{station.name}</p></header><section className="receipt-card"><div className={`receipt-status receipt-status-${response?.status ?? row?.status ?? 'pending'}`}>{flagged ? '⚠ FLAGGED — cần kiểm tra' : row?.status === 'synced' ? '✓ OK — server đã đối soát' : 'Đang chờ đồng bộ server'}</div><dl><div><dt>Mã phiếu</dt><dd>{response?.id ?? clientUuid}</dd></div><div><dt>Trạm</dt><dd>{station.name}</dd></div><div><dt>Tổng server đối soát</dt><dd>{formatLiters(response?.expected_liters ?? expectedLiters)}</dd></div><div><dt>Thực tế đổ</dt><dd>{formatLiters(actual)}</dd></div><div><dt>Chênh lệch</dt><dd>{response ? `${response.variance_l >= 0 ? '+' : ''}${response.variance_l.toFixed(1)} L (${(response.variance_pct * 100).toFixed(1)}%)` : 'Chờ server tính'}</dd></div><div><dt>Giờ ghi nhận</dt><dd>{formatTime(response?.created_at ?? row?.created_at ?? null)}</dd></div></dl></section>{row?.status === 'failed' ? <div className="error-panel">{deliveryErrorMessage(row.last_error ?? '')}</div> : null}<div className="receipt-actions"><button className="secondary-button" onClick={() => window.print()}>Lưu ảnh biên nhận</button><button className="primary-button" onClick={onCloseOut}>Kết ca</button></div><button className="back-button" onClick={onBack}>← Về tuyến</button></div>;
+  const syncNotified = useRef(false);
+  useEffect(() => {
+    if (row?.status === 'synced' && !syncNotified.current) {
+      syncNotified.current = true;
+      onDeliverySynced();
+    }
+  }, [onDeliverySynced, row?.status]);
+  return <div className="page-content collector-content station-page receipt-page"><header className="collector-screen-heading"><p className="eyebrow">BIÊN NHẬN NỘP TRẠM</p><h1>{flagged ? 'Đã ghi nhận có chênh lệch' : 'Đã lưu phiếu nộp trạm'}</h1><p>{station.name}</p></header><section className="receipt-card"><div className={`receipt-status receipt-status-${response?.status ?? row?.status ?? 'pending'}`}>{flagged ? '⚠ FLAGGED — cần kiểm tra' : row?.status === 'synced' ? '✓ OK — server đã đối soát' : 'Đang chờ đồng bộ server'}</div><dl><div><dt>Mã phiếu</dt><dd>{response?.id ?? clientUuid}</dd></div><div><dt>Trạm</dt><dd>{station.name}</dd></div><div><dt>Tổng server đối soát</dt><dd>{formatLiters(response?.expected_liters ?? expectedLiters)}</dd></div><div><dt>Thực tế đổ</dt><dd>{formatLiters(actual)}</dd></div><div><dt>Chênh lệch</dt><dd>{response ? `${response.variance_l >= 0 ? '+' : ''}${response.variance_l.toFixed(1)} L (${(response.variance_pct * 100).toFixed(1)}%)` : 'Chờ server tính'}</dd></div><div><dt>Giờ ghi nhận</dt><dd>{formatTime(response?.created_at ?? row?.created_at ?? null)}</dd></div></dl></section>{row?.status === 'failed' ? <div className="error-panel">{deliveryErrorMessage(row.last_error ?? '')}</div> : null}<div className="receipt-actions"><button className="secondary-button" onClick={() => window.print()}>Lưu ảnh biên nhận</button><button className="primary-button" onClick={onCloseOut} disabled={row?.status !== 'synced'}>{row?.status === 'synced' ? 'Kết ca' : 'Đang chờ giao trạm thành công…'}</button></div><button className="back-button" onClick={onBack}>← Về tóm tắt ca</button></div>;
 }
 
 function ShiftCloseout({ candidates, onFinish }: { candidates: DeliveryCandidate[]; onFinish: () => void }) {

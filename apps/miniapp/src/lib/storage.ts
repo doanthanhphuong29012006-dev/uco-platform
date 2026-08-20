@@ -1,7 +1,11 @@
+import type { RouteStop } from '@eco-oil/shared-types';
+import type { nativeStorage as ZaloNativeStorage } from 'zmp-sdk';
+
 const ACCESS_TOKEN_KEY = 'eco_oil.access_token';
 const REFRESH_TOKEN_KEY = 'eco_oil.refresh_token';
+const PENDING_STATION_DELIVERY_KEY_PREFIX = 'eco_oil.pending_station_delivery.';
 
-type NativeStorageApi = (typeof import('zmp-sdk'))['nativeStorage'];
+type NativeStorageApi = typeof ZaloNativeStorage;
 
 async function loadNativeStorage(): Promise<NativeStorageApi | null> {
   if (typeof window === 'undefined') {
@@ -46,7 +50,7 @@ class PersistentTokenStorage implements TokenStorage {
     this.remove(REFRESH_TOKEN_KEY);
   }
 
-  private read(key: string): string | null {
+  read(key: string): string | null {
     if (nativeStorage) {
       try {
         const value = nativeStorage.getItem(key);
@@ -73,7 +77,7 @@ class PersistentTokenStorage implements TokenStorage {
     return this.memoryStorage.get(key) ?? null;
   }
 
-  private write(key: string, value: string): void {
+  write(key: string, value: string): void {
     if (nativeStorage) {
       try {
         nativeStorage.setItem(key, value);
@@ -96,7 +100,7 @@ class PersistentTokenStorage implements TokenStorage {
     this.memoryStorage.set(key, value);
   }
 
-  private remove(key: string): void {
+  remove(key: string): void {
     if (nativeStorage) {
       try {
         nativeStorage.removeItem(key);
@@ -126,4 +130,50 @@ class PersistentTokenStorage implements TokenStorage {
   }
 }
 
-export const tokenStorage: TokenStorage = new PersistentTokenStorage();
+const persistentStorage = new PersistentTokenStorage();
+export const tokenStorage: TokenStorage = persistentStorage;
+
+export interface PendingStationDeliveryStop {
+  liters: number;
+  kilograms: number | null;
+  clientUuid: string;
+  stop: RouteStop;
+}
+
+export interface PendingStationDeliveryShift {
+  completed: Record<string, PendingStationDeliveryStop>;
+  totalStops: number;
+  savedAt: string;
+}
+
+export interface PendingStationDeliveryStorage {
+  load(collectorId: string): PendingStationDeliveryShift | null;
+  save(collectorId: string, shift: PendingStationDeliveryShift): void;
+  clear(collectorId: string): void;
+}
+
+function pendingShiftKey(collectorId: string): string {
+  return `${PENDING_STATION_DELIVERY_KEY_PREFIX}${collectorId}`;
+}
+
+export const pendingStationDeliveryStorage: PendingStationDeliveryStorage = {
+  load(collectorId) {
+    const value = persistentStorage.read(pendingShiftKey(collectorId));
+    if (!value) return null;
+    try {
+      const parsed = JSON.parse(value) as PendingStationDeliveryShift;
+      if (!parsed || typeof parsed !== 'object' || !parsed.completed || typeof parsed.totalStops !== 'number') {
+        return null;
+      }
+      return parsed;
+    } catch {
+      return null;
+    }
+  },
+  save(collectorId, shift) {
+    persistentStorage.write(pendingShiftKey(collectorId), JSON.stringify(shift));
+  },
+  clear(collectorId) {
+    persistentStorage.remove(pendingShiftKey(collectorId));
+  },
+};
