@@ -4,9 +4,9 @@ import { createElement } from 'react';
 import { expect, test } from 'vitest';
 import { KpiCards } from './components/kpi-cards';
 import { TransactionAnomalySummary } from './components/reconciliation-view';
-import { StationForecastStatus } from './components/stations-view';
+import { sortStationsByFillForecast, StationForecastStatus } from './components/stations-view';
 import { calculateVariancePct, isAdminUser } from './lib/dashboard-utils';
-import type { StationFillForecast } from './lib/api';
+import type { StationFillForecast, StationSummaryWithForecast } from './lib/api';
 
 const user = (role: Role): AuthUser => ({
   id: 'user-1', zalo_id: 'zalo-test', phone: '0900000000', name: 'Test', role, merchantId: null, collectorId: null, merchantApprovalStatus: null, merchantRejectionReason: null,
@@ -117,4 +117,71 @@ test('hiển thị số ngày lịch sử khi chưa đủ dữ liệu dự báo 
 test('fallback về trạng thái mức đầy khi response cũ chưa có fill_forecast', () => {
   render(createElement(StationForecastStatus, { fillPct: 96 }));
   expect(screen.getByText('Gần đầy')).toBeInTheDocument();
+});
+
+const station = (
+  id: string,
+  status?: StationFillForecast['status'],
+  days: number | null = null,
+): StationSummaryWithForecast => ({
+  id,
+  name: id,
+  address: null,
+  current_volume_l: 10,
+  capacity_l: 100,
+  fill_pct: 10,
+  ...(status ? { fill_forecast: stationForecast(status, days) } : {}),
+});
+
+test('sắp xếp FULL trước CRITICAL, WATCH, STABLE và INSUFFICIENT_DATA', () => {
+  const input = [
+    station('insufficient', 'INSUFFICIENT_DATA'),
+    station('stable', 'STABLE', 12),
+    station('watch', 'WATCH', 6),
+    station('critical', 'CRITICAL', 2),
+    station('full', 'FULL', 0),
+  ];
+
+  expect(sortStationsByFillForecast(input).map(({ id }) => id)).toEqual([
+    'full',
+    'critical',
+    'watch',
+    'stable',
+    'insufficient',
+  ]);
+  expect(input.map(({ id }) => id)).toEqual(['insufficient', 'stable', 'watch', 'critical', 'full']);
+});
+
+test('sắp xếp CRITICAL có số ngày nhỏ hơn lên trước', () => {
+  const result = sortStationsByFillForecast([
+    station('critical-3', 'CRITICAL', 3),
+    station('critical-1', 'CRITICAL', 1),
+    station('critical-2', 'CRITICAL', 2),
+  ]);
+  expect(result.map(({ id }) => id)).toEqual(['critical-1', 'critical-2', 'critical-3']);
+});
+
+test('đặt số ngày null sau số ngày cụ thể trong cùng nhóm forecast', () => {
+  const result = sortStationsByFillForecast([
+    station('watch-null', 'WATCH'),
+    station('watch-5', 'WATCH', 5),
+  ]);
+  expect(result.map(({ id }) => id)).toEqual(['watch-5', 'watch-null']);
+});
+
+test('đặt response cũ thiếu fill_forecast ở cuối danh sách', () => {
+  const result = sortStationsByFillForecast([
+    station('legacy'),
+    station('insufficient', 'INSUFFICIENT_DATA'),
+  ]);
+  expect(result.map(({ id }) => id)).toEqual(['insufficient', 'legacy']);
+});
+
+test('giữ nguyên thứ tự API khi trạm có cùng mức ưu tiên và số ngày', () => {
+  const result = sortStationsByFillForecast([
+    station('first', 'CRITICAL', 2),
+    station('second', 'CRITICAL', 2),
+    station('third', 'CRITICAL', 2),
+  ]);
+  expect(result.map(({ id }) => id)).toEqual(['first', 'second', 'third']);
 });

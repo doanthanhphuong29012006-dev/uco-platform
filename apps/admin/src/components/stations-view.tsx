@@ -2,7 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import React from 'react';
-import { api, ApiError, type StationFillForecast } from '../lib/api';
+import { api, ApiError, type StationFillForecast, type StationSummaryWithForecast } from '../lib/api';
 import { formatLiters } from '../lib/dashboard-utils';
 import { AdminShell } from './admin-shell';
 import { EmptyState, ErrorState, Skeleton } from './ui';
@@ -28,6 +28,43 @@ const forecastBadge = (forecast: StationFillForecast) => {
       return { label: 'Chưa đủ dữ liệu', className: 'bg-slate-100 text-slate-600' };
   }
 };
+
+const FORECAST_PRIORITY: Record<StationFillForecast['status'], number> = {
+  FULL: 0,
+  CRITICAL: 1,
+  WATCH: 2,
+  STABLE: 3,
+  INSUFFICIENT_DATA: 4,
+};
+
+export function sortStationsByFillForecast(
+  stations: readonly StationSummaryWithForecast[],
+): StationSummaryWithForecast[] {
+  return stations
+    .map((station, index) => ({ station, index }))
+    .sort((left, right) => {
+      const leftPriority = left.station.fill_forecast
+        ? FORECAST_PRIORITY[left.station.fill_forecast.status]
+        : 5;
+      const rightPriority = right.station.fill_forecast
+        ? FORECAST_PRIORITY[right.station.fill_forecast.status]
+        : 5;
+      if (leftPriority !== rightPriority) return leftPriority - rightPriority;
+
+      if (leftPriority <= FORECAST_PRIORITY.WATCH) {
+        const leftDays = left.station.fill_forecast?.estimated_days_until_full ?? null;
+        const rightDays = right.station.fill_forecast?.estimated_days_until_full ?? null;
+        if (leftDays !== rightDays) {
+          if (leftDays === null) return 1;
+          if (rightDays === null) return -1;
+          return leftDays - rightDays;
+        }
+      }
+
+      return left.index - right.index;
+    })
+    .map(({ station }) => station);
+}
 
 export function StationForecastStatus({
   forecast,
@@ -67,18 +104,19 @@ export function StationsView() {
   if (result.error) {
     return <AdminShell><ErrorState message={result.error instanceof ApiError ? result.error.message : 'Không thể tải danh sách trạm.'} /></AdminShell>;
   }
+  const stations = sortStationsByFillForecast(result.data?.data ?? []);
   return (
     <AdminShell>
       <p className="text-sm font-semibold text-emerald-700">Điểm tiếp nhận</p>
       <h2 className="mt-1 text-3xl font-bold">Trạm</h2>
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        {!result.data?.data.length ? <EmptyState message="Chưa có trạm hoạt động." /> : (
+        {!stations.length ? <EmptyState message="Chưa có trạm hoạt động." /> : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[720px] text-left text-sm">
               <thead className="border-b text-xs uppercase text-slate-400">
                 <tr><th className="pb-3">Tên trạm</th><th className="pb-3">Địa chỉ</th><th className="pb-3">Dung tích</th><th className="pb-3">Mức đầy</th><th className="pb-3">Trạng thái</th></tr>
               </thead>
-              <tbody>{result.data.data.map((station) => {
+              <tbody>{stations.map((station) => {
                 const tone = station.fill_pct > 95 ? 'bg-red-600' : station.fill_pct > 80 ? 'bg-orange-500' : 'bg-emerald-600';
                 return (
                   <tr key={station.id} className="border-b last:border-0">
