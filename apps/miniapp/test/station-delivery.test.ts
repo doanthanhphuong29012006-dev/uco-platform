@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canSubmitStationDelivery, loadStationRecommendations, retryStationDeliverySync } from '../src/lib/station-delivery';
+import { canSubmitStationDelivery, loadStationRecommendations, resolveStationSearchLocation, retryStationDeliverySync } from '../src/lib/station-delivery';
 
 const station = {
   id: 'station-01',
@@ -86,6 +86,35 @@ test('station recommendation success returns stations and stops loading', async 
 
   assert.deepEqual(loading, [true, false]);
   assert.deepEqual(result, { status: 'success', stations: [station], error: null });
+});
+
+test('GPS failure uses the ward fallback to load station recommendations', async () => {
+  const fallback = { lat: 21.0333, lng: 105.85 };
+  const resolved = await resolveStationSearchLocation(
+    async () => { throw new Error('Zalo location permission denied'); },
+    fallback,
+  );
+  let requestLocation: typeof fallback | null = null;
+  const result = await loadStationRecommendations(async () => {
+    requestLocation = resolved.location;
+    return [station];
+  }, () => undefined);
+
+  assert.deepEqual(resolved, { location: fallback, usedFallback: true, error: null });
+  assert.deepEqual(requestLocation, fallback);
+  assert.equal(result.status, 'success');
+  assert.deepEqual(result.stations, [station]);
+});
+
+test('GPS failure without a ward fallback remains a location error', async () => {
+  const resolved = await resolveStationSearchLocation(
+    async () => { throw new Error('GPS unavailable'); },
+    null,
+  );
+
+  assert.equal(resolved.location, null);
+  assert.equal(resolved.usedFallback, false);
+  assert.match(resolved.error ?? '', /không có tọa độ trung tâm phường/i);
 });
 
 test('pending station delivery survives reload and page navigation', async () => {

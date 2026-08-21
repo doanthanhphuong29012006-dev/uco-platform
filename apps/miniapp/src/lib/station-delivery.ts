@@ -1,4 +1,4 @@
-import type { StationRecommendation } from '@eco-oil/shared-types';
+import type { GeoPoint, StationRecommendation } from '@eco-oil/shared-types';
 import type { SyncSummary } from './outbox-sync';
 
 export interface StationDeliverySubmitState {
@@ -38,6 +38,31 @@ export type StationRecommendationLoadResult =
   | { status: 'success'; stations: StationRecommendation[]; error: null }
   | { status: 'empty'; stations: []; error: null }
   | { status: 'error'; stations: []; error: string };
+
+export interface StationSearchLocationResult {
+  location: GeoPoint | null;
+  usedFallback: boolean;
+  error: string | null;
+}
+
+export async function resolveStationSearchLocation(
+  getLocation: () => Promise<GeoPoint | null>,
+  fallback: GeoPoint | null,
+): Promise<StationSearchLocationResult> {
+  try {
+    const location = await getLocation();
+    if (location) {
+      const usedFallback = Boolean(fallback && location.lat === fallback.lat && location.lng === fallback.lng);
+      return { location: { ...location }, usedFallback, error: null };
+    }
+  } catch {
+    // A valid ward center remains usable when GPS or the Zalo permission flow fails.
+  }
+
+  return fallback
+    ? { location: { ...fallback }, usedFallback: true, error: null }
+    : { location: null, usedFallback: false, error: 'Không lấy được vị trí và ca hiện tại không có tọa độ trung tâm phường.' };
+}
 
 export async function loadStationRecommendations(
   request: () => Promise<StationRecommendation[]>,

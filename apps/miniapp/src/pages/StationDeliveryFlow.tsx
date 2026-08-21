@@ -12,7 +12,7 @@ import type { PhotoAsset } from '../lib/zalo-client';
 import { compressImageBlob } from '../lib/zalo-client';
 import { StatusView } from '../components/StatusView';
 import type { CompletedStop } from './CollectorFlow';
-import { canSubmitStationDelivery, loadStationRecommendations, retryStationDeliverySync } from '../lib/station-delivery';
+import { canSubmitStationDelivery, loadStationRecommendations, resolveStationSearchLocation, retryStationDeliverySync } from '../lib/station-delivery';
 
 type DeliveryScreen = 'select' | 'review' | 'receipt' | 'closeout';
 
@@ -56,20 +56,22 @@ export function StationDeliveryFlow({ completed, onBack, onDeliverySynced, onFin
   const resolveLocation = useCallback(async (): Promise<void> => {
     setLocating(true);
     setLocationError(null);
+    setRecommendationError(null);
+    setRecommendationStatus('idle');
     try {
-      const point = await zaloClient.getLocation(fallbackLocation);
-      if (point) {
-        setLocation(point);
-        setLocationDenied(Boolean(fallbackLocation && point.lat === fallbackLocation.lat && point.lng === fallbackLocation.lng));
+      const result = await resolveStationSearchLocation(
+        () => zaloClient.getLocation(fallbackLocation),
+        fallbackLocation,
+      );
+      if (result.location) {
+        setLocation(result.location);
+        setLocationDenied(result.usedFallback);
       } else {
+        setLocation(null);
         setLocationDenied(true);
-        setLocationError('Không xác định được vị trí. Hãy thử lại hoặc quay về tóm tắt ca.');
+        setLocationError(result.error);
         setRecommendationStatus('error');
       }
-    } catch {
-      setLocationDenied(true);
-      setLocationError('Không lấy được vị trí. Hãy thử lại hoặc quay về tóm tắt ca.');
-      setRecommendationStatus('error');
     } finally {
       setLocating(false);
     }
@@ -116,7 +118,7 @@ export function StationDeliveryFlow({ completed, onBack, onDeliverySynced, onFin
   if (screen === 'select') {
     const loading = waiting === 0 && (locating || loadingRecommendations);
     const error = locationError ?? recommendationError;
-    return <StationSelectScreen expectedLiters={expectedLiters} expectedKg={expectedKg} waiting={waiting} locationDenied={locationDenied} recommendations={recommendations} loading={loading} status={recommendationStatus} error={error} retryingWaiting={retryingWaiting} retryError={retryError} onBack={onBack} onRetryWaiting={() => { void retryWaiting(); }} onChoose={(station) => { setSelectedStation(station); setScreen('review'); }} onRetry={() => { if (location) void findStations(); else void resolveLocation(); }} />;
+    return <StationSelectScreen expectedLiters={expectedLiters} expectedKg={expectedKg} waiting={waiting} locationDenied={locationDenied} recommendations={recommendations} loading={loading} status={recommendationStatus} error={error} retryingWaiting={retryingWaiting} retryError={retryError} onBack={onBack} onRetryWaiting={() => { void retryWaiting(); }} onChoose={(station) => { setSelectedStation(station); setScreen('review'); }} onRetry={() => { void resolveLocation(); }} />;
   }
 
   if (screen === 'review' && selectedStation) {
