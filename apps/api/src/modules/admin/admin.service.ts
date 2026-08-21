@@ -29,6 +29,8 @@ import {
   type TransactionAnomalyResult,
 } from '../collections/transaction-anomaly-scorer';
 import { buildContainerQrCode, containerQrPrefix, normalizeWardCode, wardLookupKey } from '../containers/qr-code';
+import type { StationFillAlertCandidate } from '../stations/station-fill-alert';
+import { StationsService } from '../stations/stations.service';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -85,6 +87,7 @@ export class AdminService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(ConfigService) private readonly config: ConfigService,
+    @Inject(StationsService) private readonly stations: StationsService,
   ) {}
 
   async overview(query: AdminOverviewQueryInput) {
@@ -436,7 +439,8 @@ export class AdminService {
   }
 
   async listAlerts(query: AdminAlertListQueryInput) {
-    const rows = await this.prisma.$queryRaw<Array<{
+    const includeFillForecastAlerts = query.type === undefined && query.resolved !== true;
+    const [rows, fillForecastCandidates] = await Promise.all([this.prisma.$queryRaw<Array<{
       id: string;
       type: string;
       severity: string | null;
@@ -444,19 +448,33 @@ export class AdminService {
       details: Prisma.JsonValue;
       created_at: Date;
       resolved_at: Date | null;
-      total: number;
     }>>`
       SELECT a."id", a."type"::text AS "type", a."severity"::text AS "severity", a."message", a."details",
-        a."created_at", a."resolved_at", COUNT(*) OVER()::int AS "total"
+        a."created_at", a."resolved_at"
       FROM "alerts" a
       WHERE (${query.type ?? null}::text IS NULL OR a."type"::text = ${query.type ?? null})
         AND (${query.resolved ?? null}::boolean IS NULL OR (${query.resolved ?? null} AND a."resolved_at" IS NOT NULL) OR (NOT ${query.resolved ?? null} AND a."resolved_at" IS NULL))
       ORDER BY a."created_at" DESC
-      LIMIT ${query.limit} OFFSET ${(query.page - 1) * query.limit}
-    `;
+    `, includeFillForecastAlerts ? this.stations.listFillAlertCandidates() : Promise.resolve([])]);
+    const persistedAlerts = rows.map((row) => this.serializeAlert(row));
+    const seenStationIds = new Set<string>();
+    const generatedAt = new Date();
+    const forecastAlerts = fillForecastCandidates.flatMap((candidate) => {
+      if (seenStationIds.has(candidate.station_id)) return [];
+      seenStationIds.add(candidate.station_id);
+      return [this.serializeStationFillAlert(candidate, generatedAt)];
+    });
+    const rankedAlerts = [...persistedAlerts, ...forecastAlerts]
+      .map((alert, index) => ({ alert, index }))
+      .sort((left, right) => {
+        const rankDifference = this.alertSeverityRank(left.alert.severity) - this.alertSeverityRank(right.alert.severity);
+        return rankDifference || left.index - right.index;
+      })
+      .map(({ alert }) => alert);
+    const offset = (query.page - 1) * query.limit;
     return {
-      data: rows.map((row) => this.serializeAlert(row)),
-      meta: { page: query.page, limit: query.limit, total: Number(rows[0]?.total ?? 0) },
+      data: rankedAlerts.slice(offset, offset + query.limit),
+      meta: { page: query.page, limit: query.limit, total: rankedAlerts.length },
     };
   }
 
@@ -1255,5 +1273,30 @@ export class AdminService {
       created_at: row.created_at ?? row.createdAt,
       resolved_at: row.resolved_at ?? row.resolvedAt ?? null,
     };
+  }
+
+  private serializeStationFillAlert(candidate: StationFillAlertCandidate, generatedAt: Date) {
+    return {
+      id: `station-fill:${candidate.station_id}`,
+      type: 'STATION_FILL_FORECAST',
+      severity: candidate.severity,
+      message: candidate.message,
+      details: {
+        station_id: candidate.station_id,
+        station_name: candidate.station_name,
+        forecast_status: candidate.forecast_status,
+        estimated_days_until_full: candidate.estimated_days_until_full,
+        reason_codes: [...candidate.reason_codes],
+      },
+      created_at: generatedAt,
+      resolved_at: null,
+      dynamic: true,
+    };
+  }
+
+  private alertSeverityRank(severity: string | null): number {
+    if (severity === AlertSeverity.HIGH) return 0;
+    if (severity === AlertSeverity.MEDIUM) return 1;
+    return 2;
   }
 }

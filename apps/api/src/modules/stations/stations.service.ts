@@ -3,6 +3,10 @@ import type { Prisma } from '@prisma/client';
 import { DeliveryStatus, EntityStatus, Role } from '@prisma/client';
 import type { EntityStatusInput, PersonListQueryInput, StationCreateInput, StationPatchInput, StationRecommendInput } from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  buildStationFillAlertCandidate,
+  type StationFillAlertCandidate,
+} from './station-fill-alert';
 import { forecastStationFill, type StationFillForecastResult } from './station-fill-forecast';
 
 const FORECAST_HISTORY_DAYS = 7;
@@ -134,6 +138,25 @@ export class StationsService {
       this.dailyIncomingByStation([id]),
     ]);
     return this.serialize(row, point ?? undefined, dailyIncomingByStation.get(id) ?? []);
+  }
+
+  async listFillAlertCandidates(now = new Date()): Promise<StationFillAlertCandidate[]> {
+    const stations = await this.prisma.station.findMany({
+      where: { status: EntityStatus.ACTIVE, isActive: true, deletedAt: null },
+      select: { id: true, name: true, capacityLiters: true, currentVolumeLiters: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    const dailyIncomingByStation = await this.dailyIncomingByStation(stations.map((station) => station.id), now);
+
+    return stations.flatMap((station) => {
+      const forecast = forecastStationFill({
+        capacityLiters: Number(station.capacityLiters),
+        currentVolumeLiters: Number(station.currentVolumeLiters),
+        dailyIncomingLiters: dailyIncomingByStation.get(station.id) ?? [],
+      });
+      const candidate = buildStationFillAlertCandidate(station, forecast);
+      return candidate ? [candidate] : [];
+    });
   }
 
   private async dailyIncomingByStation(stationIds: string[], now = new Date()): Promise<Map<string, number[]>> {

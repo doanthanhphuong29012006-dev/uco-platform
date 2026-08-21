@@ -1,6 +1,9 @@
 import type { ConfigService } from '@nestjs/config';
+import { AlertType } from '@eco-oil/shared-types';
 import { AdminService } from './admin.service';
 import type { PrismaService } from '../../prisma/prisma.service';
+import type { StationFillAlertCandidate } from '../stations/station-fill-alert';
+import type { StationsService } from '../stations/stations.service';
 
 const merchantId = '20000000-0000-4000-8000-000000000001';
 const otherMerchantId = '20000000-0000-4000-8000-000000000002';
@@ -66,7 +69,34 @@ function createService(currentTransactions: ReturnType<typeof transaction>[], hi
   const config = {
     get: jest.fn((_key: string, fallback: unknown) => fallback),
   } as unknown as ConfigService;
-  return { service: new AdminService(prisma, config), queryRaw, findMany };
+  const stations = {
+    listFillAlertCandidates: jest.fn().mockResolvedValue([]),
+  } as unknown as StationsService;
+  return { service: new AdminService(prisma, config, stations), queryRaw, findMany };
+}
+
+function fillCandidate(
+  stationId: string,
+  forecastStatus: 'FULL' | 'CRITICAL' | 'WATCH',
+): StationFillAlertCandidate {
+  return {
+    station_id: stationId,
+    station_name: `Trạm ${stationId}`,
+    severity: forecastStatus === 'WATCH' ? 'MEDIUM' : 'HIGH',
+    forecast_status: forecastStatus,
+    estimated_days_until_full: forecastStatus === 'FULL' ? 0 : forecastStatus === 'CRITICAL' ? 2 : 5,
+    reason_codes: forecastStatus === 'FULL' ? ['STATION_ALREADY_FULL'] : forecastStatus === 'CRITICAL' ? ['FULL_WITHIN_3_DAYS'] : ['FULL_WITHIN_7_DAYS'],
+    message: `Cảnh báo ${forecastStatus}`,
+  };
+}
+
+function createAlertService(persistedAlerts: Array<Record<string, unknown>>, candidates: StationFillAlertCandidate[]) {
+  const queryRaw = jest.fn().mockResolvedValue(persistedAlerts);
+  const prisma = { $queryRaw: queryRaw } as unknown as PrismaService;
+  const config = { get: jest.fn() } as unknown as ConfigService;
+  const listFillAlertCandidates = jest.fn().mockResolvedValue(candidates);
+  const stations = { listFillAlertCandidates } as unknown as StationsService;
+  return { service: new AdminService(prisma, config, stations), queryRaw, listFillAlertCandidates };
 }
 
 describe('AdminService reconciliation anomaly integration', () => {
@@ -145,5 +175,70 @@ describe('AdminService reconciliation anomaly integration', () => {
     expect(findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ merchantId: { in: [merchantId, otherMerchantId] } }) }),
     );
+  });
+});
+
+describe('AdminService station fill forecast alerts integration', () => {
+  const persistedMedium = {
+    id: 'persisted-medium',
+    type: 'DELIVERY_VARIANCE',
+    severity: 'MEDIUM',
+    message: 'Cảnh báo cũ mức trung bình',
+    details: { delivery_id: 'delivery-1' },
+    created_at: new Date('2026-08-20T10:00:00.000Z'),
+    resolved_at: null,
+  };
+
+  it('keeps persisted alert fields, removes duplicate station alerts and orders HIGH before MEDIUM', async () => {
+    const candidates = [
+      fillCandidate('watch-station', 'WATCH'),
+      fillCandidate('critical-station', 'CRITICAL'),
+      fillCandidate('critical-station', 'CRITICAL'),
+      fillCandidate('full-station', 'FULL'),
+    ];
+    const { service, listFillAlertCandidates } = createAlertService([persistedMedium], candidates);
+
+    const result = await service.listAlerts({ page: 1, limit: 20, include_inactive: false });
+
+    expect(listFillAlertCandidates).toHaveBeenCalledTimes(1);
+    expect(result.meta).toEqual({ page: 1, limit: 20, total: 4 });
+    expect(result.data.map((alert) => alert.severity)).toEqual(['HIGH', 'HIGH', 'MEDIUM', 'MEDIUM']);
+    expect(result.data.filter((alert) => alert.id === 'station-fill:critical-station')).toHaveLength(1);
+    expect(result.data).toContainEqual(expect.objectContaining({
+      id: persistedMedium.id,
+      type: persistedMedium.type,
+      message: persistedMedium.message,
+      details: persistedMedium.details,
+      created_at: persistedMedium.created_at,
+      resolved_at: persistedMedium.resolved_at,
+    }));
+    expect(result.data).toContainEqual(expect.objectContaining({
+      id: 'station-fill:full-station',
+      type: 'STATION_FILL_FORECAST',
+      severity: 'HIGH',
+      details: expect.objectContaining({
+        station_id: 'full-station',
+        station_name: 'Trạm full-station',
+        forecast_status: 'FULL',
+        estimated_days_until_full: 0,
+        reason_codes: ['STATION_ALREADY_FULL'],
+      }),
+    }));
+  });
+
+  it('does not add dynamic forecast alerts to resolved or persisted-type queries', async () => {
+    const { service, listFillAlertCandidates } = createAlertService([persistedMedium], [fillCandidate('full-station', 'FULL')]);
+
+    const resolvedResult = await service.listAlerts({ page: 1, limit: 20, include_inactive: false, resolved: true });
+    const typedResult = await service.listAlerts({
+      page: 1,
+      limit: 20,
+      include_inactive: false,
+      type: AlertType.DELIVERY_VARIANCE,
+    });
+
+    expect(listFillAlertCandidates).not.toHaveBeenCalled();
+    expect(resolvedResult.data).toHaveLength(1);
+    expect(typedResult.data).toHaveLength(1);
   });
 });
