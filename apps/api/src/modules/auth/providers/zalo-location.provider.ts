@@ -1,4 +1,4 @@
-import { BadGatewayException, Inject, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { BadGatewayException, Inject, Injectable, Logger, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { ZaloLocationInput } from '@eco-oil/validation';
 
@@ -7,6 +7,7 @@ const ZALO_LOCATION_TIMEOUT_MS = 5_000;
 
 type ZaloLocationResponse = {
   error?: unknown;
+  message?: unknown;
   data?: {
     latitude?: unknown;
     longitude?: unknown;
@@ -17,6 +18,8 @@ export type ZaloLocation = { lat: number; lng: number };
 
 @Injectable()
 export class ZaloLocationProvider {
+  private readonly logger = new Logger(ZaloLocationProvider.name);
+
   constructor(@Inject(ConfigService) private readonly config: ConfigService) {}
 
   async resolve(input: ZaloLocationInput): Promise<ZaloLocation> {
@@ -69,6 +72,12 @@ export class ZaloLocationProvider {
       });
     }
     if (!response.ok || payload.error !== undefined && payload.error !== 0) {
+      this.logger.warn({
+        event: 'zalo_location_exchange_rejected',
+        status: response.status,
+        provider_error: this.safeDiagnostic(payload.error),
+        provider_message: this.safeDiagnostic(payload.message),
+      });
       throw new UnauthorizedException({
         code: 'ZALO_LOCATION_TOKEN_INVALID',
         message: 'Token vị trí Zalo không hợp lệ hoặc đã hết hạn',
@@ -82,6 +91,16 @@ export class ZaloLocationProvider {
       throw this.invalidResponse();
     }
     return { lat, lng };
+  }
+
+  private safeDiagnostic(value: unknown): string | number | boolean | null {
+    if (value === null || typeof value === 'number' || typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'string') {
+      return value.slice(0, 200);
+    }
+    return value === undefined ? null : `[${typeof value}]`;
   }
 
   private invalidResponse(): BadGatewayException {

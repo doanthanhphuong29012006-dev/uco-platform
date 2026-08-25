@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ZaloLocationProvider } from './zalo-location.provider';
 
@@ -43,10 +44,11 @@ describe('ZaloLocationProvider', () => {
   });
 
   it('maps an expired or invalid Zalo token to a stable unauthorized error', async () => {
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
     fetchMock.mockResolvedValue({
       ok: false,
       status: 401,
-      json: async () => ({ error: 202, message: 'invalid token' }),
+      json: async () => ({ error: 202, message: 'invalid location token' }),
     });
     const provider = new ZaloLocationProvider(new ConfigService({ ZALO_APP_SECRET: 'backend-secret-test' }));
 
@@ -54,6 +56,16 @@ describe('ZaloLocationProvider', () => {
       response: expect.objectContaining({ code: 'ZALO_LOCATION_TOKEN_INVALID' }),
       status: 401,
     });
+    expect(warnSpy).toHaveBeenCalledWith({
+      event: 'zalo_location_exchange_rejected',
+      status: 401,
+      provider_error: 202,
+      provider_message: 'invalid location token',
+    });
+    expect(JSON.stringify(warnSpy.mock.calls)).not.toContain(input.access_token);
+    expect(JSON.stringify(warnSpy.mock.calls)).not.toContain(input.location_token);
+    expect(JSON.stringify(warnSpy.mock.calls)).not.toContain('backend-secret-test');
+    warnSpy.mockRestore();
   });
 
   it('maps network failures to a bounded provider error', async () => {
