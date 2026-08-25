@@ -66,6 +66,68 @@ export function pickupPriorityReasonLabel(reasonCode: string): string {
   return PICKUP_PRIORITY_REASONS[reasonCode] ?? reasonCode;
 }
 
+type RouteOptimizationMetadata = NonNullable<CurrentRouteResponse['route_optimization']>;
+
+export interface RouteOptimizationDisplay {
+  title: string;
+  message: string;
+  detail: string | null;
+  tone: 'success' | 'neutral' | 'warning';
+}
+
+function isSafeDistance(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+export function formatRouteOptimizationDistance(value: unknown): string | null {
+  if (!isSafeDistance(value)) return null;
+  if (value < 1_000) return `${Math.round(value).toLocaleString('vi-VN')} m`;
+  return `${(value / 1_000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} km`;
+}
+
+export function getRouteOptimizationDisplay(metadata: RouteOptimizationMetadata | null | undefined): RouteOptimizationDisplay | null {
+  if (!metadata || metadata.reason_codes.includes('INSUFFICIENT_STOPS')) return null;
+
+  const hasInvalidCoordinates = metadata.reason_codes.includes('INVALID_STOP_COORDINATES') || metadata.reason_codes.includes('INVALID_ORIGIN');
+  if (hasInvalidCoordinates) {
+    return {
+      title: 'Đã ưu tiên điểm thu gom',
+      message: 'Chưa thể ước tính đầy đủ quãng đường',
+      detail: null,
+      tone: 'warning',
+    };
+  }
+
+  if (metadata.reason_codes.includes('ALREADY_OPTIMAL')) {
+    return {
+      title: 'Tuyến hiện tại đã tối ưu',
+      message: 'Không cần thay đổi thứ tự điểm',
+      detail: null,
+      tone: 'success',
+    };
+  }
+
+  if (!metadata.optimization_applied) return null;
+  const savedDistance = formatRouteOptimizationDistance(metadata.saved_distance_m);
+  const before = formatRouteOptimizationDistance(metadata.estimated_distance_before_m);
+  const after = formatRouteOptimizationDistance(metadata.estimated_distance_after_m);
+  if (isSafeDistance(metadata.saved_distance_m) && metadata.saved_distance_m > 0 && savedDistance) {
+    return {
+      title: 'AI đã tối ưu tuyến',
+      message: `Tiết kiệm khoảng ${savedDistance}`,
+      detail: before && after ? `${before} → ${after}` : null,
+      tone: 'success',
+    };
+  }
+
+  return {
+    title: 'AI đã sắp xếp lại tuyến',
+    message: 'Thứ tự điểm đã được tối ưu theo mức ưu tiên',
+    detail: before && after ? `${before} → ${after}` : null,
+    tone: 'success',
+  };
+}
+
 export function getPickupPriorityDisplay(stop: RouteStop): {
   level: keyof typeof PICKUP_PRIORITY_LEVELS;
   label: string;
@@ -300,6 +362,7 @@ function CollectorRouteScreen({ stops, route, location, locationDenied, complete
   const vehicleCapacity = route.route.total_expected_liters + route.route.remaining_capacity_l;
   const routeFill = vehicleCapacity > 0 ? Math.min(100, Math.round((route.route.total_expected_liters / vehicleCapacity) * 100)) : 0;
   const completedLiters = Object.values(completed).reduce((sum, item) => sum + item.liters, 0);
+  const routeOptimization = getRouteOptimizationDisplay(route.route.route_optimization);
 
   return (
     <div className="page-content collector-content">
@@ -320,6 +383,13 @@ function CollectorRouteScreen({ stops, route, location, locationDenied, complete
         <div className="route-progress"><span className={routeFill >= 80 ? 'route-progress-high' : ''} style={{ width: `${routeFill}%` }} /></div>
         <div className="route-capacity-bottom"><span>{routeFill}% dung tích xe</span><span>{formatLiters(route.route.remaining_capacity_l)} còn trống</span></div>
       </section>
+      {routeOptimization ? (
+        <section className={`route-optimization-card route-optimization-${routeOptimization.tone}`} aria-label="Tóm tắt tối ưu tuyến">
+          <div className="route-optimization-heading"><span className="route-optimization-ai">AI</span><strong>{routeOptimization.title}</strong></div>
+          <p>{routeOptimization.message}</p>
+          {routeOptimization.detail ? <small>{routeOptimization.detail}</small> : null}
+        </section>
+      ) : null}
       <div className="route-summary-line"><strong>{Object.keys(completed).length} / {Math.max(totalStops, Object.keys(completed).length)} điểm đã thu</strong><button className="text-button" onClick={onOpenSummary}>Tóm tắt ca</button></div>
       {stops.length === 0 ? (
         <StatusView title="Đã hoàn thành tuyến" message={completedLiters > 0 ? `Đã thu ${formatLiters(completedLiters)}. Bạn có thể xem lại tóm tắt ca.` : 'Hiện chưa có điểm READY trong phường.'} action={{ label: 'Xem tóm tắt ca', onClick: onOpenSummary }} />

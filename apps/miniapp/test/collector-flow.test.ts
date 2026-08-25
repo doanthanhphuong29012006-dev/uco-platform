@@ -93,3 +93,71 @@ test('pickup priority display does not reorder stops and accepts insufficient da
   assert.deepEqual(busy, [true, false]);
   assert.deepEqual(errors, [null, 'Không thể mở chỉ đường. Vui lòng thử lại.']);
 });
+
+test('route optimization display formats saved distance and before/after values', async () => {
+  const { getRouteOptimizationDisplay, formatRouteOptimizationDistance } = await loadPickupPriorityHelpers();
+  const display = getRouteOptimizationDisplay({
+    optimization_applied: true,
+    estimated_distance_before_m: 3_400,
+    estimated_distance_after_m: 1_000,
+    saved_distance_m: 2_400,
+    reason_codes: ['ROUTE_OPTIMIZED'],
+  });
+
+  assert.deepEqual(display, {
+    title: 'AI đã tối ưu tuyến',
+    message: 'Tiết kiệm khoảng 2,4 km',
+    detail: '3,4 km → 1 km',
+    tone: 'success',
+  });
+  assert.equal(formatRouteOptimizationDistance(850), '850 m');
+  assert.equal(formatRouteOptimizationDistance(2_400), '2,4 km');
+});
+
+test('route optimization display handles fallback states and never renders invalid distances', async () => {
+  const { getRouteOptimizationDisplay } = await loadPickupPriorityHelpers();
+  assert.deepEqual(getRouteOptimizationDisplay({
+    optimization_applied: true,
+    estimated_distance_before_m: 1_000,
+    estimated_distance_after_m: null,
+    saved_distance_m: null,
+    reason_codes: ['ROUTE_OPTIMIZED'],
+  }), {
+    title: 'AI đã sắp xếp lại tuyến',
+    message: 'Thứ tự điểm đã được tối ưu theo mức ưu tiên',
+    detail: null,
+    tone: 'success',
+  });
+  assert.deepEqual(getRouteOptimizationDisplay({
+    optimization_applied: false,
+    estimated_distance_before_m: 0,
+    estimated_distance_after_m: 0,
+    saved_distance_m: 0,
+    reason_codes: ['ALREADY_OPTIMAL'],
+  }), {
+    title: 'Tuyến hiện tại đã tối ưu',
+    message: 'Không cần thay đổi thứ tự điểm',
+    detail: null,
+    tone: 'success',
+  });
+  assert.deepEqual(getRouteOptimizationDisplay({
+    optimization_applied: true,
+    estimated_distance_before_m: Number.NaN,
+    estimated_distance_after_m: Number.POSITIVE_INFINITY,
+    saved_distance_m: -1,
+    reason_codes: ['INVALID_ORIGIN'],
+  }), {
+    title: 'Đã ưu tiên điểm thu gom',
+    message: 'Chưa thể ước tính đầy đủ quãng đường',
+    detail: null,
+    tone: 'warning',
+  });
+  assert.equal(getRouteOptimizationDisplay({
+    optimization_applied: false,
+    estimated_distance_before_m: null,
+    estimated_distance_after_m: null,
+    saved_distance_m: null,
+    reason_codes: ['INSUFFICIENT_STOPS'],
+  }), null);
+  assert.equal(getRouteOptimizationDisplay(undefined), null);
+});
