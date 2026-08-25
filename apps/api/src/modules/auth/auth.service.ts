@@ -34,13 +34,6 @@ export class AuthService {
   ) {}
 
   async resolveZaloLocation(input: ZaloLocationInput): Promise<{ lat: number; lng: number }> {
-    if (this.isMockMode()) {
-      throw new BadRequestException({
-        code: 'ZALO_LOCATION_DISABLED_IN_MOCK',
-        message: 'Đổi token vị trí Zalo không khả dụng trong chế độ mô phỏng',
-        details: null,
-      });
-    }
     return this.zaloLocationProvider.resolve(input);
   }
 

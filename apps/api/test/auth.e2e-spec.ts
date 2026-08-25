@@ -7,8 +7,10 @@ import { AppModule } from '../src/app.module';
 
 describe('Auth and RBAC (e2e)', () => {
   let app: INestApplication;
+  const originalLocationSecret = process.env.ZALO_APP_SECRET;
 
   beforeAll(async () => {
+    process.env.ZALO_APP_SECRET = 'test-backend-secret';
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
@@ -21,6 +23,11 @@ describe('Auth and RBAC (e2e)', () => {
 
   afterAll(async () => {
     await app.close();
+    if (originalLocationSecret === undefined) {
+      delete process.env.ZALO_APP_SECRET;
+    } else {
+      process.env.ZALO_APP_SECRET = originalLocationSecret;
+    }
   });
 
   it('logs in with mock Zalo and returns the current user', async () => {
@@ -86,7 +93,7 @@ describe('Auth and RBAC (e2e)', () => {
     expect(response.body).toMatchObject({ code: 'INVALID_ZALO_ID' });
   });
 
-  it('requires JWT and does not call the real location provider in mock mode', async () => {
+  it('requires JWT and exchanges location token in mock auth mode', async () => {
     await request(app.getHttpServer())
       .post('/api/v1/auth/zalo/location')
       .send({ access_token: 'access-token-test', location_token: 'location-token-test' })
@@ -97,13 +104,23 @@ describe('Auth and RBAC (e2e)', () => {
       .send({ zalo_id: 'zalo_merchant_01', phone: '0900000001' })
       .expect(201);
 
-    const response = await request(app.getHttpServer())
-      .post('/api/v1/auth/zalo/location')
-      .set('Authorization', `Bearer ${login.body.access_token}`)
-      .send({ access_token: 'access-token-test', location_token: 'location-token-test' })
-      .expect(400);
+    const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ error: 0, data: { latitude: '21.0333', longitude: '105.85' } }),
+    } as Response);
+    try {
+      const response = await request(app.getHttpServer())
+        .post('/api/v1/auth/zalo/location')
+        .set('Authorization', `Bearer ${login.body.access_token}`)
+        .send({ access_token: 'access-token-test', location_token: 'location-token-test' })
+        .expect(201);
 
-    expect(response.body).toMatchObject({ code: 'ZALO_LOCATION_DISABLED_IN_MOCK' });
+      expect(response.body).toEqual({ lat: 21.0333, lng: 105.85 });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      fetchMock.mockRestore();
+    }
   });
 
   it('rotates refresh tokens and rejects reuse of the old token', async () => {
