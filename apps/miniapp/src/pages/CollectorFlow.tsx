@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ContainerState, DEFAULT_DENSITY_KG_PER_LITER, OilGrade, Quality } from '@eco-oil/shared-types';
@@ -128,6 +128,55 @@ export function getRouteOptimizationDisplay(metadata: RouteOptimizationMetadata 
   };
 }
 
+export interface RouteRefreshNotice {
+  kind: 'success' | 'cache' | 'error';
+  message: string;
+}
+
+export function getRouteRefreshNotice(
+  result: { data?: RouteLoadResult; error?: unknown },
+  updatedAt: Date = new Date(),
+): RouteRefreshNotice {
+  if (result.error || !result.data) {
+    return { kind: 'error', message: 'Không thể tải lại tuyến. Vui lòng kiểm tra mạng và thử lại.' };
+  }
+  if (result.data.fromCache) {
+    return { kind: 'cache', message: 'Không kết nối được máy chủ, đang dùng tuyến đã lưu.' };
+  }
+  return { kind: 'success', message: `Đã cập nhật tuyến lúc ${formatTime(updatedAt.toISOString())}` };
+}
+
+interface RouteRefreshState {
+  busy: boolean;
+  notice: RouteRefreshNotice | null;
+}
+
+export function createRouteRefreshRunner(
+  refetch: () => Promise<{ data?: RouteLoadResult; error?: unknown }>,
+  onStateChange: (state: RouteRefreshState) => void,
+): () => Promise<void> {
+  let inFlight: Promise<void> | null = null;
+
+  async function refreshRoute(): Promise<void> {
+    if (inFlight) return inFlight;
+    const request = (async () => {
+      onStateChange({ busy: true, notice: null });
+      try {
+        const result = await refetch();
+        onStateChange({ busy: false, notice: getRouteRefreshNotice(result) });
+      } catch (error) {
+        onStateChange({ busy: false, notice: getRouteRefreshNotice({ error }) });
+      } finally {
+        inFlight = null;
+      }
+    })();
+    inFlight = request;
+    return request;
+  }
+
+  return refreshRoute;
+}
+
 export function getPickupPriorityDisplay(stop: RouteStop): {
   level: keyof typeof PICKUP_PRIORITY_LEVELS;
   label: string;
@@ -186,6 +235,9 @@ export function CollectorFlow() {
   const [initialStopCount, setInitialStopCount] = useState<number | null>(restoredShift?.totalStops ?? null);
   const [shiftStarted, setShiftStarted] = useState(false);
   const [prefetching, setPrefetching] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshNotice, setRefreshNotice] = useState<RouteRefreshNotice | null>(null);
+  const refreshRunner = useRef<(() => Promise<void>) | null>(null);
   const online = useOnlineStatus();
   const outboxStats = useOutboxStats();
   const outboxRows = useOutboxRows();
@@ -212,6 +264,17 @@ export function CollectorFlow() {
     queryFn: () => loadRouteWithCache(location ?? undefined),
     staleTime: 15_000,
   });
+
+  if (refreshRunner.current === null) {
+    refreshRunner.current = createRouteRefreshRunner(
+      () => route.refetch(),
+      ({ busy, notice }) => {
+        setRefreshing(busy);
+        setRefreshNotice(notice);
+      },
+    );
+  }
+  const refreshRoute = refreshRunner.current;
 
   useEffect(() => {
     const completedEntries = Object.values(completed);
@@ -305,11 +368,11 @@ export function CollectorFlow() {
     content = <CollectorSummaryScreen route={route.data?.route} completed={completed} totalStops={initialStopCount ?? route.data?.route.stops.length ?? 0} onBack={() => setScreen({ name: 'route' })} onOpenDelivery={() => setScreen({ name: 'station-delivery' })} />;
   } else if (screen.name === 'station-delivery') {
     content = <StationDeliveryFlow completed={completed} onBack={() => setScreen({ name: 'summary' })} onDeliverySynced={clearPersistedShift} onFinish={finishShift} />;
-  } else if (route.isPending) {
+  } else if (route.isPending && !route.data) {
     content = <StatusView title="Đang tải tuyến hôm nay…" />;
-  } else if (route.isError) {
+  } else if (route.isError && !route.data) {
     content = <StatusView title="Chưa tải được tuyến" message="Chưa có dữ liệu tuyến trên máy. Kiểm tra kết nối rồi thử lại." action={{ label: 'Thử lại', onClick: () => { void route.refetch(); } }} />;
-  } else {
+  } else if (route.data) {
     const activeStops = route.data.route.stops.filter((stop) => completed[stop.order_id] === undefined);
     content = (
       <CollectorRouteScreen
@@ -327,9 +390,13 @@ export function CollectorFlow() {
         onOpenQr={(stop) => setScreen({ name: 'qr', stop })}
         onOpenSummary={() => setScreen({ name: 'summary' })}
         onOpenOutbox={() => setScreen({ name: 'outbox' })}
-        onRefresh={() => void route.refetch()}
+        refreshing={refreshing}
+        refreshNotice={refreshNotice}
+        onRefresh={() => { void refreshRoute(); }}
       />
     );
+  } else {
+    content = <StatusView title="Chưa tải được tuyến" message="Chưa có dữ liệu tuyến trên máy. Kiểm tra kết nối rồi thử lại." />;
   }
 
   return (
@@ -351,6 +418,8 @@ interface CollectorRouteScreenProps {
   outboxStats: ReturnType<typeof useOutboxStats>;
   shiftStarted: boolean;
   prefetching: boolean;
+  refreshing: boolean;
+  refreshNotice: RouteRefreshNotice | null;
   onStartShift: () => void;
   onOpenQr: (stop: RouteStop) => void;
   onOpenSummary: () => void;
@@ -358,7 +427,7 @@ interface CollectorRouteScreenProps {
   onRefresh: () => void;
 }
 
-function CollectorRouteScreen({ stops, route, location, locationDenied, completed, totalStops, outboxRows, outboxStats, shiftStarted, prefetching, onStartShift, onOpenQr, onOpenSummary, onOpenOutbox, onRefresh }: CollectorRouteScreenProps) {
+function CollectorRouteScreen({ stops, route, location, locationDenied, completed, totalStops, outboxRows, outboxStats, shiftStarted, prefetching, refreshing, refreshNotice, onStartShift, onOpenQr, onOpenSummary, onOpenOutbox, onRefresh }: CollectorRouteScreenProps) {
   const vehicleCapacity = route.route.total_expected_liters + route.route.remaining_capacity_l;
   const routeFill = vehicleCapacity > 0 ? Math.min(100, Math.round((route.route.total_expected_liters / vehicleCapacity) * 100)) : 0;
   const completedLiters = Object.values(completed).reduce((sum, item) => sum + item.liters, 0);
@@ -370,9 +439,10 @@ function CollectorRouteScreen({ stops, route, location, locationDenied, complete
         <div><p className="eyebrow">CA HÔM NAY</p><h1>Tuyến thu gom</h1></div>
         <div className="collector-header-actions">
           <OutboxBadge stats={outboxStats} onClick={onOpenOutbox} />
-          <button className="round-action" onClick={onRefresh} aria-label="Tải lại tuyến">↻</button>
+          <button type="button" className={`round-action ${refreshing ? 'round-action-loading' : ''}`} onClick={onRefresh} disabled={refreshing} aria-busy={refreshing ? 'true' : 'false'} aria-label={refreshing ? 'Đang tải lại tuyến' : 'Tải lại tuyến'}><span className="route-refresh-icon" aria-hidden="true">↻</span></button>
         </div>
       </header>
+      {refreshNotice ? <div className={`route-refresh-notice route-refresh-notice-${refreshNotice.kind}`} role={refreshNotice.kind === 'error' ? 'alert' : 'status'}>{refreshNotice.message}</div> : null}
       {!location && !locationDenied ? <div className="location-banner">Đang xin quyền vị trí để tính tuyến gần nhất…</div> : null}
       {locationDenied ? <div className="location-banner">Không lấy được vị trí GPS, đang dùng vị trí trung tâm phường. Giao dịch có thể bị đánh dấu cần kiểm tra.</div> : null}
       {route.fromCache ? <div className="offline-cache-banner">Đang dùng dữ liệu lúc {formatTime(route.cachedAt)}</div> : null}

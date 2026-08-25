@@ -161,3 +161,49 @@ test('route optimization display handles fallback states and never renders inval
   }), null);
   assert.equal(getRouteOptimizationDisplay(undefined), null);
 });
+
+test('route refresh notices distinguish fresh data, cache fallback and errors', async () => {
+  const { getRouteRefreshNotice } = await loadPickupPriorityHelpers();
+  const updatedAt = new Date('2026-08-25T08:05:00+07:00');
+  const route = { route: { stops: [], total_expected_liters: 0, remaining_capacity_l: 100 }, fromCache: false, cachedAt: null } as never;
+  assert.deepEqual(getRouteRefreshNotice({ data: route }, updatedAt), {
+    kind: 'success',
+    message: 'Đã cập nhật tuyến lúc 08:05',
+  });
+  assert.deepEqual(getRouteRefreshNotice({ data: { ...route, fromCache: true, cachedAt: '2026-08-25T07:00:00+07:00' } }, updatedAt), {
+    kind: 'cache',
+    message: 'Không kết nối được máy chủ, đang dùng tuyến đã lưu.',
+  });
+  assert.deepEqual(getRouteRefreshNotice({ error: new Error('offline') }, updatedAt), {
+    kind: 'error',
+    message: 'Không thể tải lại tuyến. Vui lòng kiểm tra mạng và thử lại.',
+  });
+});
+
+test('route refresh runner is single-flight and can retry after an error', async () => {
+  const { createRouteRefreshRunner } = await loadPickupPriorityHelpers();
+  let calls = 0;
+  let rejectRequest: ((error: Error) => void) | null = null;
+  const states: Array<{ busy: boolean; notice: { kind: string } | null }> = [];
+  const runner = createRouteRefreshRunner(
+    () => {
+      calls += 1;
+      return new Promise((_, reject) => { rejectRequest = reject; });
+    },
+    (state) => { states.push(state as { busy: boolean; notice: { kind: string } | null }); },
+  );
+
+  const first = runner();
+  const second = runner();
+  assert.equal(calls, 1);
+  rejectRequest?.(new Error('offline'));
+  await Promise.all([first, second]);
+  assert.equal(states.at(-1)?.notice?.kind, 'error');
+
+  const retry = runner();
+  assert.notEqual(retry, first);
+  assert.equal(calls, 2);
+  rejectRequest?.(new Error('offline again'));
+  await retry;
+  assert.equal(states.at(-1)?.busy, false);
+});
