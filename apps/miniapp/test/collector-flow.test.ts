@@ -207,3 +207,72 @@ test('route refresh runner is single-flight and can retry after an error', async
   await retry;
   assert.equal(states.at(-1)?.busy, false);
 });
+
+test('pickup volume forecast maps confidence, formats liters and limits reason chips', async () => {
+  const { getPickupVolumeForecastDisplay, formatPickupVolumeLiters } = await loadPickupPriorityHelpers();
+  const display = getPickupVolumeForecastDisplay(stop({
+    pickup_volume_forecast: {
+      predicted_liters: 14.8,
+      confidence: 'HIGH',
+      sample_size: 5,
+      reason_codes: ['HISTORY_WEIGHTED', 'STABLE_HISTORY', 'PREDICTION_CAPPED_TO_CAPACITY', 'UNKNOWN_REASON'],
+    },
+  }));
+
+  assert.equal(formatPickupVolumeLiters(15), '15 lít');
+  assert.equal(formatPickupVolumeLiters(14.8), '14,8 lít');
+  assert.deepEqual(display, {
+    predictedLiters: 14.8,
+    confidenceLabel: 'Tin cậy cao',
+    className: 'high',
+    sampleSize: 5,
+    declaredOnly: false,
+    reasons: ['Dựa trên lịch sử gần đây', 'Sản lượng khá ổn định'],
+  });
+});
+
+test('pickup volume forecast maps all confidence labels and declared-only messaging', async () => {
+  const { getPickupVolumeForecastDisplay } = await loadPickupPriorityHelpers();
+  const cases = [
+    ['MEDIUM', 'Tin cậy trung bình', 'medium'],
+    ['LOW', 'Tin cậy thấp', 'low'],
+    ['INSUFFICIENT_DATA', 'Chưa đủ dữ liệu', 'insufficient'],
+  ] as const;
+  for (const [confidence, label, className] of cases) {
+    const display = getPickupVolumeForecastDisplay(stop({ pickup_volume_forecast: { predicted_liters: 15, confidence, sample_size: 3, reason_codes: [] } }));
+    assert.equal(display?.confidenceLabel, label);
+    assert.equal(display?.className, className);
+  }
+
+  const declaredOnly = getPickupVolumeForecastDisplay(stop({ pickup_volume_forecast: {
+    predicted_liters: 20,
+    confidence: 'HIGH',
+    sample_size: 0,
+    reason_codes: ['DECLARED_ESTIMATE_ONLY', 'HISTORY_WEIGHTED'],
+  } }));
+  assert.equal(declaredOnly?.confidenceLabel, 'Tin cậy thấp');
+  assert.equal(declaredOnly?.declaredOnly, true);
+  assert.deepEqual(declaredOnly?.reasons, ['Tạm tính theo số quán khai', 'Dựa trên lịch sử gần đây']);
+});
+
+test('pickup volume forecast handles null, legacy metadata and invalid values safely', async () => {
+  const { getPickupVolumeForecastDisplay, formatPickupVolumeLiters } = await loadPickupPriorityHelpers();
+  assert.deepEqual(getPickupVolumeForecastDisplay(stop({ pickup_volume_forecast: {
+    predicted_liters: null,
+    confidence: 'INSUFFICIENT_DATA',
+    sample_size: 0,
+    reason_codes: ['MISSING_HISTORY_AND_ESTIMATE'],
+  } })), {
+    predictedLiters: null,
+    confidenceLabel: 'Chưa đủ dữ liệu',
+    className: 'insufficient',
+    sampleSize: null,
+    declaredOnly: false,
+    reasons: [],
+  });
+  assert.equal(getPickupVolumeForecastDisplay(stop()), null);
+  assert.equal(formatPickupVolumeLiters(0), '0 lít');
+  assert.equal(formatPickupVolumeLiters(-1), null);
+  assert.equal(formatPickupVolumeLiters(Number.NaN), null);
+  assert.equal(formatPickupVolumeLiters(Number.POSITIVE_INFINITY), null);
+});

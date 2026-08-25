@@ -183,6 +183,18 @@ select, input { width: 100%; min-height: 48px; border: 1px solid #cfe0d7; border
 .distance-label { flex: 0 0 auto; color: var(--green); font-size: .78rem; font-weight: 800; }
 .stop-address { min-height: 20px; margin: 6px 0 7px; color: var(--muted); font-size: .81rem; line-height: 1.35; }
 .stop-liters { display: block; color: var(--green-dark); font-size: .9rem; }
+.pickup-volume-forecast { display: grid; min-width: 0; gap: 4px; margin-top: 8px; padding: 9px 10px; border-left: 4px solid var(--green); border-radius: 10px; background: #f3faf6; color: var(--green-dark); }
+.pickup-volume-forecast-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; font-size: .72rem; font-weight: 750; }
+.pickup-volume-ai-label { display: inline-flex; align-items: center; padding: 3px 6px; border-radius: 6px; color: white; background: var(--green); font-size: .67rem; font-weight: 850; }
+.pickup-volume-forecast > strong { font-size: .87rem; }
+.pickup-volume-forecast small { color: var(--muted); font-size: .72rem; line-height: 1.3; }
+.pickup-volume-forecast-medium { border-color: #5a9f79; background: #eff8f2; }
+.pickup-volume-forecast-low { border-color: #c49a3d; color: #765b1c; background: #fff8e8; }
+.pickup-volume-forecast-low .pickup-volume-ai-label { background: #a98029; }
+.pickup-volume-forecast-insufficient { border-color: #8a9a9e; color: #536970; background: #f2f6f7; }
+.pickup-volume-forecast-insufficient .pickup-volume-ai-label { background: #6f8186; }
+.pickup-volume-forecast-reasons { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; }
+.pickup-volume-forecast-reason { max-width: 100%; overflow: hidden; padding: 3px 6px; border-radius: 999px; color: inherit; background: #ffffffb8; font-size: .67rem; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
 .pickup-priority { display: grid; gap: 7px; margin-top: 10px; padding: 9px 10px; border-left: 4px solid var(--green); border-radius: 10px; background: #f5faf7; }
 .pickup-priority-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: .76rem; }
 .pickup-priority-heading span { font-weight: 750; white-space: nowrap; }

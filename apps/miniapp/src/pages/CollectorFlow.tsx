@@ -58,12 +58,77 @@ const PICKUP_PRIORITY_REASONS: Record<string, string> = {
   ALREADY_SCHEDULED: 'Đã có lịch thu gom',
 };
 
+const PICKUP_VOLUME_CONFIDENCE: Record<string, { label: string; className: string }> = {
+  HIGH: { label: 'Tin cậy cao', className: 'high' },
+  MEDIUM: { label: 'Tin cậy trung bình', className: 'medium' },
+  LOW: { label: 'Tin cậy thấp', className: 'low' },
+  INSUFFICIENT_DATA: { label: 'Chưa đủ dữ liệu', className: 'insufficient' },
+};
+
+const PICKUP_VOLUME_REASONS: Record<string, string> = {
+  HISTORY_WEIGHTED: 'Dựa trên lịch sử gần đây',
+  DECLARED_ESTIMATE_BLEND: 'Kết hợp số quán khai',
+  DECLARED_ESTIMATE_ONLY: 'Tạm tính theo số quán khai',
+  LIMITED_HISTORY: 'Ít dữ liệu lịch sử',
+  STABLE_HISTORY: 'Sản lượng khá ổn định',
+  VOLATILE_HISTORY: 'Sản lượng biến động',
+  PREDICTION_CAPPED_TO_CAPACITY: 'Không vượt dung tích can',
+};
+
 export function pickupPriorityLevelLabel(level: string): string | null {
   return PICKUP_PRIORITY_LEVELS[level as keyof typeof PICKUP_PRIORITY_LEVELS]?.label ?? null;
 }
 
 export function pickupPriorityReasonLabel(reasonCode: string): string {
   return PICKUP_PRIORITY_REASONS[reasonCode] ?? reasonCode;
+}
+
+export interface PickupVolumeForecastDisplay {
+  predictedLiters: number | null;
+  confidenceLabel: string;
+  className: string;
+  sampleSize: number | null;
+  declaredOnly: boolean;
+  reasons: string[];
+}
+
+function isValidForecastLiters(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function validSampleSize(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : null;
+}
+
+export function formatPickupVolumeLiters(value: unknown): string | null {
+  if (!isValidForecastLiters(value)) return null;
+  return `${value.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} lít`;
+}
+
+export function getPickupVolumeForecastDisplay(stop: RouteStop): PickupVolumeForecastDisplay | null {
+  const candidate = (stop as RouteStop & { pickup_volume_forecast?: unknown }).pickup_volume_forecast;
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
+
+  const metadata = candidate as {
+    predicted_liters?: unknown;
+    confidence?: unknown;
+    sample_size?: unknown;
+    reason_codes?: unknown;
+  };
+  const declaredOnly = Array.isArray(metadata.reason_codes) && metadata.reason_codes.includes('DECLARED_ESTIMATE_ONLY');
+  const confidence = declaredOnly ? PICKUP_VOLUME_CONFIDENCE.LOW : PICKUP_VOLUME_CONFIDENCE[String(metadata.confidence)] ?? PICKUP_VOLUME_CONFIDENCE.INSUFFICIENT_DATA;
+  const reasons = Array.isArray(metadata.reason_codes)
+    ? [...new Set(metadata.reason_codes.filter((reason): reason is string => typeof reason === 'string').map((reason) => PICKUP_VOLUME_REASONS[reason]).filter((reason): reason is string => Boolean(reason)))].slice(0, 2)
+    : [];
+
+  return {
+    predictedLiters: isValidForecastLiters(metadata.predicted_liters) ? metadata.predicted_liters : null,
+    confidenceLabel: confidence.label,
+    className: confidence.className,
+    sampleSize: validSampleSize(metadata.sample_size),
+    declaredOnly,
+    reasons,
+  };
 }
 
 type RouteOptimizationMetadata = NonNullable<CurrentRouteResponse['route_optimization']>;
@@ -494,6 +559,7 @@ function OutboxIssueNotice({ rows, stats, onOpen }: { rows: OutboxRecord[]; stat
 function CollectorStopCard({ stop, outboxRow, onOpenQr }: { stop: RouteStop; outboxRow: OutboxRecord | undefined; onOpenQr: () => void }) {
   const status = outboxRow?.status;
   const pickupPriority = getPickupPriorityDisplay(stop);
+  const pickupVolumeForecast = getPickupVolumeForecastDisplay(stop);
   const [actionBusy, setActionBusy] = useState<'phone' | 'directions' | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const phone = isValidPhone(stop.merchant.phone) ? stop.merchant.phone.trim() : '';
@@ -527,6 +593,14 @@ function CollectorStopCard({ stop, outboxRow, onOpenQr }: { stop: RouteStop; out
         <div className="stop-title-row"><h2>{stop.merchant.name}</h2><span className="distance-label">{formatDistance(stop.distance_m)}</span></div>
         <p className="stop-address">{stop.merchant.address ?? 'Chưa có địa chỉ'}</p>
         <strong className="stop-liters">{formatLiters(stop.expected_liters)} dự kiến</strong>
+        {pickupVolumeForecast ? (
+          <section className={`pickup-volume-forecast pickup-volume-forecast-${pickupVolumeForecast.className}`} aria-label="Dự báo AI sản lượng">
+            <div className="pickup-volume-forecast-heading"><span className="pickup-volume-ai-label">Dự báo AI</span><span>{pickupVolumeForecast.confidenceLabel}</span></div>
+            {pickupVolumeForecast.predictedLiters === null ? <strong>Chưa đủ dữ liệu để dự báo sản lượng</strong> : <strong>Khoảng {formatPickupVolumeLiters(pickupVolumeForecast.predictedLiters)}</strong>}
+            {pickupVolumeForecast.declaredOnly ? <small>Tạm tính theo số quán khai</small> : pickupVolumeForecast.sampleSize !== null ? <small>Dựa trên {pickupVolumeForecast.sampleSize} lần thu gần nhất</small> : null}
+            {pickupVolumeForecast.reasons.length > 0 ? <div className="pickup-volume-forecast-reasons">{pickupVolumeForecast.reasons.map((reason, index) => <span className="pickup-volume-forecast-reason" key={`${reason}-${index}`}>{reason}</span>)}</div> : null}
+          </section>
+        ) : null}
         {pickupPriority ? (
           <section className={`pickup-priority pickup-priority-${pickupPriority.className}`} aria-label={`Mức ưu tiên: ${pickupPriority.label}`}>
             <div className="pickup-priority-heading"><strong>{pickupPriority.label}</strong><span>Điểm ưu tiên: {pickupPriority.score}</span></div>
