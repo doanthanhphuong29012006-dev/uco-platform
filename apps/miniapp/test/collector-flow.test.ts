@@ -162,6 +162,76 @@ test('route optimization display handles fallback states and never renders inval
   assert.equal(getRouteOptimizationDisplay(undefined), null);
 });
 
+test('route capacity risk maps levels, metrics and safe messages', async () => {
+  const { getRouteCapacityRiskDisplay, formatRouteCapacityRiskLiters } = await loadPickupPriorityHelpers();
+  const base = {
+    predicted_total_liters: 95,
+    risk_adjusted_total_liters: 112,
+    risk_adjusted_remaining_liters: -12,
+    risk_utilization_pct: 112.4,
+    confidence: 'HIGH',
+    forecast_coverage_pct: 100,
+    reason_codes: [],
+  } as const;
+
+  const over = getRouteCapacityRiskDisplay({ ...base, level: 'OVER_CAPACITY' }, 100);
+  assert.equal(over?.title, 'Nguy cơ quá tải');
+  assert.equal(over?.tone, 'danger');
+  assert.equal(over?.utilizationPct, 112);
+  assert.equal(over?.message, 'Có thể vượt tải khoảng 12 lít');
+  assert.equal(over?.message?.includes('-'), false);
+  assert.equal(formatRouteCapacityRiskLiters(0), '0 lít');
+
+  const near = getRouteCapacityRiskDisplay({ ...base, level: 'NEAR_CAPACITY', risk_adjusted_remaining_liters: 5.5 }, 100);
+  assert.equal(near?.title, 'Xe có thể gần đầy');
+  assert.equal(near?.message, 'Còn khoảng 5,5 lít dự phòng');
+
+  const balanced = getRouteCapacityRiskDisplay({ ...base, level: 'BALANCED', risk_utilization_pct: 60, risk_adjusted_remaining_liters: 40 }, 100);
+  assert.equal(balanced?.title, 'Tải xe hợp lý');
+  assert.equal(balanced?.message, 'Tuyến đang sử dụng sức chứa ở mức phù hợp');
+
+  const under = getRouteCapacityRiskDisplay({ ...base, level: 'UNDERUTILIZED', risk_utilization_pct: 0, risk_adjusted_total_liters: 0, risk_adjusted_remaining_liters: 100, forecast_coverage_pct: 0, confidence: 'LOW' }, 100);
+  assert.equal(under?.title, 'Xe còn nhiều chỗ trống');
+  assert.equal(under?.message, 'Còn khoảng 100 lít sức chứa');
+  assert.equal(under?.coveragePct, 0);
+  assert.equal(under?.utilizationPct, 0);
+});
+
+test('route capacity risk safely handles insufficient, legacy and invalid metadata', async () => {
+  const { getRouteCapacityRiskDisplay } = await loadPickupPriorityHelpers();
+  assert.equal(getRouteCapacityRiskDisplay({
+    predicted_total_liters: null,
+    risk_adjusted_total_liters: null,
+    risk_adjusted_remaining_liters: null,
+    risk_utilization_pct: null,
+    level: 'INSUFFICIENT_DATA',
+    confidence: 'INSUFFICIENT_DATA',
+    forecast_coverage_pct: 0,
+    reason_codes: [],
+  }, 100)?.title, 'Chưa đủ dữ liệu đánh giá tải xe');
+  assert.equal(getRouteCapacityRiskDisplay({
+    predicted_total_liters: 10,
+    risk_adjusted_total_liters: Number.NaN,
+    risk_adjusted_remaining_liters: Number.POSITIVE_INFINITY,
+    risk_utilization_pct: Number.NaN,
+    level: 'BALANCED',
+    confidence: 'MEDIUM',
+    forecast_coverage_pct: 100,
+    reason_codes: [],
+  }, 100)?.utilizationPct, null);
+  assert.equal(getRouteCapacityRiskDisplay({
+    predicted_total_liters: 0,
+    risk_adjusted_total_liters: 0,
+    risk_adjusted_remaining_liters: 100,
+    risk_utilization_pct: 0,
+    level: 'INSUFFICIENT_DATA',
+    confidence: 'INSUFFICIENT_DATA',
+    forecast_coverage_pct: 0,
+    reason_codes: ['NO_STOPS'],
+  }, 100), null);
+  assert.equal(getRouteCapacityRiskDisplay(undefined, 100), null);
+});
+
 test('route refresh notices distinguish fresh data, cache fallback and errors', async () => {
   const { getRouteRefreshNotice } = await loadPickupPriorityHelpers();
   const updatedAt = new Date('2026-08-25T08:05:00+07:00');

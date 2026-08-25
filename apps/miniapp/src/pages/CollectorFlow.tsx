@@ -193,6 +193,112 @@ export function getRouteOptimizationDisplay(metadata: RouteOptimizationMetadata 
   };
 }
 
+type RouteCapacityRiskLevel = 'OVER_CAPACITY' | 'NEAR_CAPACITY' | 'BALANCED' | 'UNDERUTILIZED' | 'INSUFFICIENT_DATA';
+type RouteCapacityRiskConfidence = 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT_DATA';
+
+const ROUTE_CAPACITY_RISK_LEVELS: Record<RouteCapacityRiskLevel, { title: string; tone: 'danger' | 'warning' | 'success' | 'neutral' | 'insufficient' }> = {
+  OVER_CAPACITY: { title: 'Nguy cơ quá tải', tone: 'danger' },
+  NEAR_CAPACITY: { title: 'Xe có thể gần đầy', tone: 'warning' },
+  BALANCED: { title: 'Tải xe hợp lý', tone: 'success' },
+  UNDERUTILIZED: { title: 'Xe còn nhiều chỗ trống', tone: 'neutral' },
+  INSUFFICIENT_DATA: { title: 'Chưa đủ dữ liệu đánh giá tải xe', tone: 'insufficient' },
+};
+
+const ROUTE_CAPACITY_RISK_CONFIDENCE: Record<RouteCapacityRiskConfidence, string> = {
+  HIGH: 'Tin cậy cao',
+  MEDIUM: 'Tin cậy trung bình',
+  LOW: 'Tin cậy thấp',
+  INSUFFICIENT_DATA: 'Chưa đủ dữ liệu',
+};
+
+export interface RouteCapacityRiskDisplay {
+  level: RouteCapacityRiskLevel;
+  title: string;
+  tone: 'danger' | 'warning' | 'success' | 'neutral' | 'insufficient';
+  utilizationPct: number | null;
+  riskAdjustedTotalLiters: number | null;
+  riskAdjustedRemainingLiters: number | null;
+  vehicleCapacityLiters: number | null;
+  confidenceLabel: string;
+  coveragePct: number | null;
+  message: string | null;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isNonNegativeFinite(value: unknown): value is number {
+  return isFiniteNumber(value) && value >= 0;
+}
+
+export function formatRouteCapacityRiskLiters(value: unknown): string | null {
+  if (!isNonNegativeFinite(value)) return null;
+  return `${value.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} lít`;
+}
+
+export function getRouteCapacityRiskDisplay(
+  metadata: CurrentRouteResponse['route_capacity_risk'] | null | undefined,
+  vehicleCapacityLiters: unknown,
+): RouteCapacityRiskDisplay | null {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const reasonCodes = Array.isArray(metadata.reason_codes) ? metadata.reason_codes : [];
+  if (reasonCodes.includes('NO_STOPS')) return null;
+
+  const rawLevel = metadata.level as RouteCapacityRiskLevel;
+  const level = Object.prototype.hasOwnProperty.call(ROUTE_CAPACITY_RISK_LEVELS, rawLevel) ? rawLevel : 'INSUFFICIENT_DATA';
+  const levelDisplay = ROUTE_CAPACITY_RISK_LEVELS[level];
+  const confidence = metadata.confidence as RouteCapacityRiskConfidence;
+  const confidenceLabel = ROUTE_CAPACITY_RISK_CONFIDENCE[confidence] ?? ROUTE_CAPACITY_RISK_CONFIDENCE.INSUFFICIENT_DATA;
+  const coveragePct = isNonNegativeFinite(metadata.forecast_coverage_pct) && metadata.forecast_coverage_pct <= 100
+    ? Math.round(metadata.forecast_coverage_pct)
+    : null;
+  const validVehicleCapacity = isFiniteNumber(vehicleCapacityLiters) && vehicleCapacityLiters > 0 ? vehicleCapacityLiters : null;
+  const validRiskTotal = isNonNegativeFinite(metadata.risk_adjusted_total_liters) ? metadata.risk_adjusted_total_liters : null;
+  const validRiskRemaining = isFiniteNumber(metadata.risk_adjusted_remaining_liters) ? metadata.risk_adjusted_remaining_liters : null;
+  const validUtilization = isNonNegativeFinite(metadata.risk_utilization_pct) ? Math.round(metadata.risk_utilization_pct) : null;
+  const hasValidMetrics = validVehicleCapacity !== null && validRiskTotal !== null && validRiskRemaining !== null && validUtilization !== null;
+
+  if (level !== 'INSUFFICIENT_DATA' && !hasValidMetrics) {
+    return {
+      level: 'INSUFFICIENT_DATA',
+      title: ROUTE_CAPACITY_RISK_LEVELS.INSUFFICIENT_DATA.title,
+      tone: ROUTE_CAPACITY_RISK_LEVELS.INSUFFICIENT_DATA.tone,
+      utilizationPct: null,
+      riskAdjustedTotalLiters: null,
+      riskAdjustedRemainingLiters: null,
+      vehicleCapacityLiters: null,
+      confidenceLabel: ROUTE_CAPACITY_RISK_CONFIDENCE.INSUFFICIENT_DATA,
+      coveragePct,
+      message: null,
+    };
+  }
+
+  let message: string | null = null;
+  if (level === 'OVER_CAPACITY' && validRiskRemaining !== null && validRiskRemaining < 0) {
+    message = `Có thể vượt tải khoảng ${formatRouteCapacityRiskLiters(Math.abs(validRiskRemaining))}`;
+  } else if (level === 'NEAR_CAPACITY' && validRiskRemaining !== null && validRiskRemaining >= 0) {
+    message = `Còn khoảng ${formatRouteCapacityRiskLiters(validRiskRemaining)} dự phòng`;
+  } else if (level === 'BALANCED') {
+    message = 'Tuyến đang sử dụng sức chứa ở mức phù hợp';
+  } else if (level === 'UNDERUTILIZED' && validRiskRemaining !== null && validRiskRemaining >= 0) {
+    message = `Còn khoảng ${formatRouteCapacityRiskLiters(validRiskRemaining)} sức chứa`;
+  }
+
+  return {
+    level,
+    title: levelDisplay.title,
+    tone: levelDisplay.tone,
+    utilizationPct: validUtilization,
+    riskAdjustedTotalLiters: validRiskTotal,
+    riskAdjustedRemainingLiters: validRiskRemaining,
+    vehicleCapacityLiters: validVehicleCapacity,
+    confidenceLabel,
+    coveragePct,
+    message,
+  };
+}
+
 export interface RouteRefreshNotice {
   kind: 'success' | 'cache' | 'error';
   message: string;
@@ -497,6 +603,7 @@ function CollectorRouteScreen({ stops, route, location, locationDenied, complete
   const routeFill = vehicleCapacity > 0 ? Math.min(100, Math.round((route.route.total_expected_liters / vehicleCapacity) * 100)) : 0;
   const completedLiters = Object.values(completed).reduce((sum, item) => sum + item.liters, 0);
   const routeOptimization = getRouteOptimizationDisplay(route.route.route_optimization);
+  const routeCapacityRisk = getRouteCapacityRiskDisplay(route.route.route_capacity_risk, vehicleCapacity);
 
   return (
     <div className="page-content collector-content">
@@ -518,6 +625,15 @@ function CollectorRouteScreen({ stops, route, location, locationDenied, complete
         <div className="route-progress"><span className={routeFill >= 80 ? 'route-progress-high' : ''} style={{ width: `${routeFill}%` }} /></div>
         <div className="route-capacity-bottom"><span>{routeFill}% dung tích xe</span><span>{formatLiters(route.route.remaining_capacity_l)} còn trống</span></div>
       </section>
+      {routeCapacityRisk ? (
+        <section className={`route-capacity-risk-card route-capacity-risk-${routeCapacityRisk.tone}`} aria-label="Cảnh báo AI sức chứa">
+          <div className="route-capacity-risk-heading"><span className="route-capacity-risk-ai">AI</span><strong>{routeCapacityRisk.title}</strong></div>
+          {routeCapacityRisk.utilizationPct !== null ? <p className="route-capacity-risk-utilization">AI dự kiến xe đạt {routeCapacityRisk.utilizationPct}%</p> : null}
+          {routeCapacityRisk.riskAdjustedTotalLiters !== null && routeCapacityRisk.vehicleCapacityLiters !== null ? <p className="route-capacity-risk-metrics">Sau biên an toàn: {formatRouteCapacityRiskLiters(routeCapacityRisk.riskAdjustedTotalLiters)} / {formatRouteCapacityRiskLiters(routeCapacityRisk.vehicleCapacityLiters)}</p> : null}
+          <div className="route-capacity-risk-meta"><span>{routeCapacityRisk.confidenceLabel}</span>{routeCapacityRisk.coveragePct !== null ? <span>Độ phủ dự báo: {routeCapacityRisk.coveragePct}%</span> : null}</div>
+          {routeCapacityRisk.message ? <small>{routeCapacityRisk.message}</small> : null}
+        </section>
+      ) : null}
       {routeOptimization ? (
         <section className={`route-optimization-card route-optimization-${routeOptimization.tone}`} aria-label="Tóm tắt tối ưu tuyến">
           <div className="route-optimization-heading"><span className="route-optimization-ai">AI</span><strong>{routeOptimization.title}</strong></div>
