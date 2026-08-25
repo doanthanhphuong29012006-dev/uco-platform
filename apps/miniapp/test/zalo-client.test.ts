@@ -32,9 +32,10 @@ test('mock getLocation falls back to the supplied ward center without a hardcode
 });
 
 test('browser outside Zalo uses the mock client for the full SDK surface', async () => {
+  let navigated = false;
   Object.defineProperty(globalThis, 'window', {
     configurable: true,
-    value: {},
+    value: { open: () => { navigated = true; } },
   });
   setBrowserGeolocation((_success, failure) => failure(new Error('unsupported')));
   const { createZaloClient } = await import('../src/lib/zalo-client');
@@ -46,9 +47,54 @@ test('browser outside Zalo uses the mock client for the full SDK surface', async
   assert.equal(await client.getLocation(), null);
   assert.equal(await client.scanQRCode(), '');
   await assert.rejects(() => client.chooseImage(), /Camera is unavailable in mock mode/);
+  await client.openPhone('0900000001');
+  await client.openDirections({ lat: 21.0333, lng: 105.85 });
+  assert.equal(navigated, false);
 
   client.setStorage('zalo-client-test', 'mock-value');
   assert.equal(client.getStorage('zalo-client-test'), 'mock-value');
   client.removeStorage('zalo-client-test');
   assert.equal(client.getStorage('zalo-client-test'), null);
+});
+
+test('real client calls native openPhone with the trimmed phone number', async () => {
+  const calls: string[] = [];
+  const { RealZaloClient } = await import('../src/lib/zalo-client');
+  const client = new RealZaloClient(async () => ({
+    openPhone: async ({ phoneNumber }) => { calls.push(phoneNumber); },
+    openWebview: async () => undefined,
+  }));
+
+  await client.openPhone('  +84900000001  ');
+
+  assert.deepEqual(calls, ['+84900000001']);
+});
+
+test('real client opens encoded Google Maps directions in the configured webview', async () => {
+  const calls: Array<{ url: string; config: { style: string; leftButton: string } }> = [];
+  const { RealZaloClient } = await import('../src/lib/zalo-client');
+  const client = new RealZaloClient(async () => ({
+    openPhone: async () => undefined,
+    openWebview: async (args) => { calls.push(args); },
+  }));
+
+  await client.openDirections({ lat: 21.0333, lng: 105.85 });
+
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /^https:\/\/www\.google\.com\/maps\/dir\/\?api=1&destination=/);
+  assert.match(decodeURIComponent(calls[0].url), /21\.0333,105\.85/);
+  assert.deepEqual(calls[0].config, { style: 'normal', leftButton: 'back' });
+});
+
+test('real client rejects empty phone and invalid coordinates before native calls', async () => {
+  let nativeCalls = 0;
+  const { RealZaloClient } = await import('../src/lib/zalo-client');
+  const client = new RealZaloClient(async () => ({
+    openPhone: async () => { nativeCalls += 1; },
+    openWebview: async () => { nativeCalls += 1; },
+  }));
+
+  await assert.rejects(() => client.openPhone('  '), /Số điện thoại/);
+  await assert.rejects(() => client.openDirections({ lat: Number.NaN, lng: 105.85 }), /Tọa độ/);
+  assert.equal(nativeCalls, 0);
 });

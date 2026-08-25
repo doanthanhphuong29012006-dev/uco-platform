@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { resolve } from 'node:path';
 import { createServer } from 'vite';
+import { isValidGeoPoint } from '../src/lib/zalo-client';
 
 type PickupPriorityHelpers = typeof import('../src/pages/CollectorFlow');
 
@@ -66,7 +67,7 @@ test('legacy cached stop without AI fields keeps the old card path', async () =>
 });
 
 test('pickup priority display does not reorder stops and accepts insufficient data', async () => {
-  const { getPickupPriorityDisplay } = await loadPickupPriorityHelpers();
+  const { getPickupPriorityDisplay, isValidPhone, runCollectorAction } = await loadPickupPriorityHelpers();
   const stops = [
     stop({ order_id: 'first', pickup_priority_score: 0, pickup_priority_level: 'INSUFFICIENT_DATA', pickup_priority_reason_codes: ['MISSING_FILL_DATA'] }),
     stop({ order_id: 'second', pickup_priority_score: 75, pickup_priority_level: 'HIGH', pickup_priority_reason_codes: ['HIGH_FILL'] }),
@@ -75,4 +76,20 @@ test('pickup priority display does not reorder stops and accepts insufficient da
   assert.equal(stops[0].order_id, 'first');
   assert.equal(getPickupPriorityDisplay(stops[0])?.label, 'Chưa đủ dữ liệu');
   assert.equal(getPickupPriorityDisplay(stops[1])?.label, 'Ưu tiên cao');
+  assert.equal(isValidPhone(''), false);
+  assert.equal(isValidPhone('0900000001'), true);
+  assert.equal(isValidGeoPoint({ lat: Number.NaN, lng: 105.85 }), false);
+  assert.equal(isValidGeoPoint({ lat: 21.0333, lng: 105.85 }), true);
+
+  const busy: boolean[] = [];
+  const errors: Array<string | null> = [];
+  const succeeded = await runCollectorAction(
+    async () => { throw new Error('SDK failed'); },
+    'Không thể mở chỉ đường. Vui lòng thử lại.',
+    (value) => busy.push(value),
+    (value) => errors.push(value),
+  );
+  assert.equal(succeeded, false);
+  assert.deepEqual(busy, [true, false]);
+  assert.deepEqual(errors, [null, 'Không thể mở chỉ đường. Vui lòng thử lại.']);
 });

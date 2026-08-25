@@ -13,7 +13,7 @@ import { startOutboxSyncWorker, syncOutbox } from '../lib/outbox-sync';
 import { outboxErrorMessage } from '../lib/outbox-errors';
 import { submitContainerCode } from '../lib/container-code';
 import { pendingStationDeliveryStorage } from '../lib/storage';
-import { zaloClient } from '../lib/zalo-client';
+import { isValidGeoPoint, zaloClient } from '../lib/zalo-client';
 import type { PhotoAsset } from '../lib/zalo-client';
 import { compressImageBlob } from '../lib/zalo-client';
 import { StatusView } from '../components/StatusView';
@@ -88,6 +88,29 @@ export function getPickupPriorityDisplay(stop: RouteStop): {
     ? aiStop.pickup_priority_reason_codes.filter((reason): reason is string => typeof reason === 'string' && reason.length > 0).map(pickupPriorityReasonLabel)
     : [];
   return { level: level as keyof typeof PICKUP_PRIORITY_LEVELS, ...display, score: aiStop.pickup_priority_score, reasons };
+}
+
+export function isValidPhone(phone: unknown): phone is string {
+  return typeof phone === 'string' && phone.trim().length > 0;
+}
+
+export async function runCollectorAction(
+  action: () => Promise<void>,
+  errorMessage: string,
+  setBusy: (busy: boolean) => void,
+  setError: (error: string | null) => void,
+): Promise<boolean> {
+  setBusy(true);
+  setError(null);
+  try {
+    await action();
+    return true;
+  } catch {
+    setError(errorMessage);
+    return false;
+  } finally {
+    setBusy(false);
+  }
 }
 
 export function CollectorFlow() {
@@ -331,6 +354,32 @@ function OutboxIssueNotice({ rows, stats, onOpen }: { rows: OutboxRecord[]; stat
 function CollectorStopCard({ stop, outboxRow, onOpenQr }: { stop: RouteStop; outboxRow: OutboxRecord | undefined; onOpenQr: () => void }) {
   const status = outboxRow?.status;
   const pickupPriority = getPickupPriorityDisplay(stop);
+  const [actionBusy, setActionBusy] = useState<'phone' | 'directions' | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const phone = isValidPhone(stop.merchant.phone) ? stop.merchant.phone.trim() : '';
+  const canCall = phone.length > 0;
+  const canOpenDirections = isValidGeoPoint(stop.merchant);
+
+  function openPhone(): void {
+    if (!canCall || actionBusy) return;
+    void runCollectorAction(
+      () => zaloClient.openPhone(phone),
+      'Không thể mở cuộc gọi. Vui lòng thử lại.',
+      (busy) => setActionBusy(busy ? 'phone' : null),
+      setActionError,
+    );
+  }
+
+  function openDirections(): void {
+    if (!canOpenDirections || actionBusy) return;
+    void runCollectorAction(
+      () => zaloClient.openDirections({ lat: stop.merchant.lat, lng: stop.merchant.lng }),
+      'Không thể mở chỉ đường. Vui lòng thử lại.',
+      (busy) => setActionBusy(busy ? 'directions' : null),
+      setActionError,
+    );
+  }
+
   return (
     <article className="collector-stop-card">
       <div className={`stop-number ${status ? `stop-number-${status}` : ''}`}>{stop.seq}</div>
@@ -346,10 +395,11 @@ function CollectorStopCard({ stop, outboxRow, onOpenQr }: { stop: RouteStop; out
         ) : null}
         {status ? <p className={`transaction-status transaction-status-${status}`}>{statusLabel(status)}</p> : null}
         <div className="stop-actions">
-          <a className={`call-action ${stop.merchant.phone ? '' : 'disabled-action'}`} href={stop.merchant.phone ? `tel:${stop.merchant.phone}` : undefined}>☎ Gọi quán</a>
-          <button className="map-action" onClick={() => zaloClient.openDirections({ lat: stop.merchant.lat, lng: stop.merchant.lng })}>↗ Chỉ đường</button>
+          <button type="button" className={`call-action ${!canCall ? 'disabled-action' : ''}`} onClick={openPhone} disabled={!canCall || actionBusy !== null}>{actionBusy === 'phone' ? 'Đang mở…' : '☎ Gọi quán'}</button>
+          <button type="button" className={`map-action ${!canOpenDirections ? 'disabled-action' : ''}`} onClick={openDirections} disabled={!canOpenDirections || actionBusy !== null}>{actionBusy === 'directions' ? 'Đang mở…' : '↗ Chỉ đường'}</button>
           <button className="collect-action" onClick={onOpenQr} disabled={status === 'pending' || status === 'syncing'}>{status === 'synced' ? 'Đã thu' : 'Thu gom'}</button>
         </div>
+        {actionError ? <p className="action-error" role="alert">{actionError}</p> : null}
       </div>
     </article>
   );

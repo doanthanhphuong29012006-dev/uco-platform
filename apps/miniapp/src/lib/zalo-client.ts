@@ -20,7 +20,8 @@ export interface IZaloClient {
   getLocation(fallback?: GeoPoint | null): Promise<GeoPoint | null>;
   scanQRCode(): Promise<string>;
   chooseImage(): Promise<PhotoAsset>;
-  openDirections(destination: GeoPoint): void;
+  openPhone(phoneNumber: string): Promise<void>;
+  openDirections(destination: GeoPoint): Promise<void>;
   getStorage(key: string): string | null;
   setStorage(key: string, value: string): void;
   removeStorage(key: string): void;
@@ -92,14 +93,32 @@ export async function compressImageBlob(blob: Blob): Promise<PhotoAsset> {
   return { url: canvas.toDataURL('image/jpeg', 0.7), width, height };
 }
 
+export interface ZaloNavigationSdk {
+  openPhone(args: { phoneNumber: string }): Promise<void>;
+  openWebview(args: { url: string; config: { style: 'normal'; leftButton: 'back' } }): Promise<void>;
+}
+
+export function isValidGeoPoint(destination: { lat?: unknown; lng?: unknown }): boolean {
+  return typeof destination.lat === 'number'
+    && Number.isFinite(destination.lat)
+    && typeof destination.lng === 'number'
+    && Number.isFinite(destination.lng);
+}
+
+export function buildGoogleMapsDirectionsUrl(destination: GeoPoint): string {
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${destination.lat},${destination.lng}`)}`;
+}
+
 async function compressImage(filePath: string): Promise<PhotoAsset> {
   const response = await fetch(filePath);
   return compressImageBlob(await response.blob());
 }
 
-class RealZaloClient implements IZaloClient {
+export class RealZaloClient implements IZaloClient {
   readonly mode = 'real' as const;
   private seedAccount: SeedAccount = { zaloId: '', phone: '' };
+
+  constructor(private readonly loadSdk: () => Promise<ZaloNavigationSdk> = () => import('zmp-sdk')) {}
 
   async login(): Promise<SeedAccount> {
     const accessToken = await this.getAccessToken();
@@ -141,9 +160,24 @@ class RealZaloClient implements IZaloClient {
     return compressImage(filePath);
   }
 
-  openDirections(destination: GeoPoint): void {
-    const url = `https://www.google.com/maps/dir/?api=1&destination=${destination.lat},${destination.lng}`;
-    window.open(url, '_blank', 'noopener,noreferrer');
+  async openPhone(phoneNumber: string): Promise<void> {
+    const trimmedPhone = phoneNumber.trim();
+    if (!trimmedPhone) {
+      throw new Error('Số điện thoại quán không hợp lệ');
+    }
+    const { openPhone } = await this.loadSdk();
+    await openPhone({ phoneNumber: trimmedPhone });
+  }
+
+  async openDirections(destination: GeoPoint): Promise<void> {
+    if (!isValidGeoPoint(destination)) {
+      throw new Error('Tọa độ chỉ đường không hợp lệ');
+    }
+    const { openWebview } = await this.loadSdk();
+    await openWebview({
+      url: buildGoogleMapsDirectionsUrl(destination),
+      config: { style: 'normal', leftButton: 'back' },
+    });
   }
 
   getStorage(key: string): string | null {
@@ -201,9 +235,16 @@ class MockZaloClient implements IZaloClient {
     throw new Error('Camera is unavailable in mock mode. Choose an image file.');
   }
 
-  openDirections(destination: GeoPoint): void {
-    const url = `https://www.google.com/maps/dir/?api=1&destination=${destination.lat},${destination.lng}`;
-    window.open(url, '_blank', 'noopener,noreferrer');
+  async openPhone(phoneNumber: string): Promise<void> {
+    if (!phoneNumber.trim()) {
+      throw new Error('Số điện thoại quán không hợp lệ');
+    }
+  }
+
+  async openDirections(destination: GeoPoint): Promise<void> {
+    if (!isValidGeoPoint(destination)) {
+      throw new Error('Tọa độ chỉ đường không hợp lệ');
+    }
   }
 
   getStorage(key: string): string | null {

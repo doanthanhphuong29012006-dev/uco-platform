@@ -181,6 +181,7 @@ select, input { width: 100%; min-height: 48px; border: 1px solid #cfe0d7; border
 .call-action, .map-action { color: var(--green); background: var(--mint); }
 .collect-action { color: white; background: var(--green); }
 .disabled-action { pointer-events: none; opacity: .45; }
+.action-error { margin: 8px 0 0; color: var(--danger); font-size: .76rem; font-weight: 750; }
 .back-button { min-height: 42px; padding: 0; border: 0; color: var(--green); background: transparent; font-weight: 750; }
 .collector-screen-heading { padding: 19px 0 17px; }
 .collector-screen-heading .eyebrow { margin-bottom: 5px; }
