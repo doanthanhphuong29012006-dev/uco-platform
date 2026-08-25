@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "build": "nest build",
+    "demo:zalo-location-relay": "tsx src/demo/zalo-location-relay.ts",
     "dev": "nest start --watch",
     "lint": "eslint \"src/**/*.ts\"",
     "start": "node dist/main.js",

@@ -4,6 +4,7 @@ import type { ZaloLocationInput } from '@eco-oil/validation';
 
 const ZALO_LOCATION_URL = 'https://graph.zalo.me/v2.0/me/info';
 const ZALO_LOCATION_TIMEOUT_MS = 5_000;
+const MIN_RELAY_TOKEN_LENGTH = 32;
 
 type ZaloLocationResponse = {
   error?: unknown;
@@ -15,6 +16,8 @@ type ZaloLocationResponse = {
 };
 
 export type ZaloLocation = { lat: number; lng: number };
+type LocationExchange = { response: Response; payload: ZaloLocationResponse };
+type RelayConfig = { url: string; token: string };
 
 @Injectable()
 export class ZaloLocationProvider {
@@ -23,8 +26,9 @@ export class ZaloLocationProvider {
   constructor(@Inject(ConfigService) private readonly config: ConfigService) {}
 
   async resolve(input: ZaloLocationInput): Promise<ZaloLocation> {
+    const relay = this.getRelayConfig();
     const secret = this.config.get<string>('ZALO_APP_SECRET')?.trim();
-    if (!secret) {
+    if (!relay && !secret) {
       throw new ServiceUnavailableException({
         code: 'ZALO_APP_SECRET_NOT_CONFIGURED',
         message: 'ZALO_APP_SECRET chưa được cấu hình ở backend',
@@ -32,42 +36,21 @@ export class ZaloLocationProvider {
       });
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), ZALO_LOCATION_TIMEOUT_MS);
-    let response: Response;
-    let payload: ZaloLocationResponse;
-    try {
-      response = await fetch(ZALO_LOCATION_URL, {
-        method: 'GET',
-        headers: {
-          access_token: input.access_token,
-          code: input.location_token,
-          secret_key: secret,
-        },
-        signal: controller.signal,
-      });
-      try {
-        payload = await response.json() as ZaloLocationResponse;
-      } catch {
-        throw this.invalidResponse();
-      }
-    } catch (error) {
-      if (error instanceof BadGatewayException) {
-        throw error;
-      }
-      throw new BadGatewayException({
-        code: 'ZALO_LOCATION_PROVIDER_UNAVAILABLE',
-        message: 'Không kết nối được dịch vụ vị trí Zalo',
-        details: null,
-      });
-    } finally {
-      clearTimeout(timeout);
-    }
+    const { response, payload } = relay
+      ? await this.exchangeThroughRelay(input, relay)
+      : await this.exchangeDirectly(input, secret!);
 
     if (response.status >= 500) {
       throw new BadGatewayException({
         code: 'ZALO_LOCATION_PROVIDER_UNAVAILABLE',
         message: 'Dịch vụ vị trí Zalo tạm thời không khả dụng',
+        details: null,
+      });
+    }
+    if (payload.error === -501) {
+      throw new ServiceUnavailableException({
+        code: 'ZALO_LOCATION_REGION_RESTRICTED',
+        message: 'Máy chủ giải mã vị trí phải sử dụng địa chỉ IP tại Việt Nam',
         details: null,
       });
     }
@@ -91,6 +74,82 @@ export class ZaloLocationProvider {
       throw this.invalidResponse();
     }
     return { lat, lng };
+  }
+
+  private async exchangeDirectly(input: ZaloLocationInput, secret: string): Promise<LocationExchange> {
+    return this.exchange(ZALO_LOCATION_URL, {
+      method: 'GET',
+      headers: {
+        access_token: input.access_token,
+        code: input.location_token,
+        secret_key: secret,
+      },
+    });
+  }
+
+  private async exchangeThroughRelay(input: ZaloLocationInput, relay: RelayConfig): Promise<LocationExchange> {
+    return this.exchange(relay.url, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${relay.token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(input),
+    });
+  }
+
+  private async exchange(url: string, options: RequestInit): Promise<LocationExchange> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), ZALO_LOCATION_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+      try {
+        const payload = await response.json() as ZaloLocationResponse;
+        return { response, payload };
+      } catch {
+        throw this.invalidResponse();
+      }
+    } catch (error) {
+      if (error instanceof BadGatewayException) {
+        throw error;
+      }
+      throw new BadGatewayException({
+        code: 'ZALO_LOCATION_PROVIDER_UNAVAILABLE',
+        message: 'Không kết nối được dịch vụ vị trí Zalo',
+        details: null,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private getRelayConfig(): RelayConfig | null {
+    const urlValue = this.config.get<string>('ZALO_LOCATION_RELAY_URL')?.trim();
+    const token = this.config.get<string>('ZALO_LOCATION_RELAY_TOKEN')?.trim();
+    if (!urlValue && !token) {
+      return null;
+    }
+    let url: URL;
+    try {
+      url = new URL(urlValue ?? '');
+    } catch {
+      throw new ServiceUnavailableException({
+        code: 'ZALO_LOCATION_RELAY_CONFIG_INVALID',
+        message: 'Cấu hình relay vị trí Zalo không hợp lệ',
+        details: null,
+      });
+    }
+    if (url.protocol !== 'https:' || !token || token.length < MIN_RELAY_TOKEN_LENGTH) {
+      throw new ServiceUnavailableException({
+        code: 'ZALO_LOCATION_RELAY_CONFIG_INVALID',
+        message: 'Relay vị trí Zalo cần URL HTTPS và token tối thiểu 32 ký tự',
+        details: null,
+      });
+    }
+    return { url: url.toString(), token };
   }
 
   private safeDiagnostic(value: unknown): string | number | boolean | null {

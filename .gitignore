@@ -12,3 +12,4 @@ prisma/*.db
 pnpm-debug.log*
 *.log
 *.tsbuildinfo
+.tools/

@@ -13,6 +13,7 @@
     "db:reset": "prisma migrate reset --force",
     "db:seed": "prisma db seed",
     "seed:demo": "tsx scripts/seed-demo.ts",
+    "demo:zalo-location-relay": "pnpm --filter @eco-oil/api demo:zalo-location-relay",
     "db:cleanup-invalid-orders": "tsx scripts/cleanup-invalid-orders.ts",
     "prisma:migrate": "prisma migrate deploy",
     "prisma:validate": "prisma validate",
