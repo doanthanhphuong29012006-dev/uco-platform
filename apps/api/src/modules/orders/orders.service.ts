@@ -4,6 +4,7 @@ import type { Prisma } from '@prisma/client';
 import type { OrderListQueryInput, OrderReadyInput, RouteQueryInput } from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { AccessTokenPayload } from '../auth/auth.types';
+import { scoreMerchantPickupPriority } from './merchant-pickup-priority';
 import { calculatePriority } from './priority';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -160,6 +161,27 @@ export class OrdersService {
     const maxCapacity = Number(collector.maxCapacityLiters);
     const wardIds = collector.collectorWards.map((item) => item.wardId);
     const rows = await this.prisma.findReadyOrdersForRoute(wardIds, originLat, originLng);
+    const now = Date.now();
+    const scoredRows = rows
+      .map((row, index) => {
+        const daysSinceLastCollection = row.lastCollectedAt
+          ? Math.max(0, (now - row.lastCollectedAt.getTime()) / DAY_MS)
+          : null;
+        const pickupPriority = scoreMerchantPickupPriority({
+          estimated_liters: row.expectedLiters,
+          container_capacity_liters: row.containerCapacityLiters,
+          days_since_last_collection: daysSinceLastCollection,
+          distance_km: row.distanceM / 1000,
+          has_active_pickup: false,
+        });
+        return { row, index, pickupPriority };
+      })
+      .sort((left, right) =>
+        right.pickupPriority.score - left.pickupPriority.score ||
+        right.row.priority - left.row.priority ||
+        left.row.distanceM - right.row.distanceM ||
+        left.index - right.index,
+      );
     const stops: Array<{
       seq: number;
       order_id: string;
@@ -169,9 +191,13 @@ export class OrdersService {
         priority: number;
         distance_m: number;
         ward_center: { lat: number; lng: number } | null;
+      pickup_priority_score: number;
+      pickup_priority_level: 'URGENT' | 'HIGH' | 'NORMAL' | 'LOW' | 'INSUFFICIENT_DATA';
+      pickup_priority_reason_codes: string[];
     }> = [];
     let total = 0;
-    for (const row of rows) {
+    for (const scoredRow of scoredRows) {
+      const { row, pickupPriority } = scoredRow;
       if (total + row.expectedLiters > maxCapacity) {
         break;
       }
@@ -185,6 +211,9 @@ export class OrdersService {
         priority: row.priority,
         distance_m: row.distanceM,
         ward_center: row.wardCenterLat === null || row.wardCenterLng === null ? null : { lat: row.wardCenterLat, lng: row.wardCenterLng },
+        pickup_priority_score: pickupPriority.score,
+        pickup_priority_level: pickupPriority.priority,
+        pickup_priority_reason_codes: pickupPriority.reason_codes,
       });
     }
     // TODO(sprint-4): Persist route/route_stops when re-optimization is introduced.

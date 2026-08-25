@@ -22,6 +22,8 @@ export interface RouteOrderRow {
   wardCenterLng: number | null;
   containerCode: string;
   expectedLiters: number;
+  containerCapacityLiters: number | null;
+  lastCollectedAt: Date | null;
   priority: number;
   distanceM: number;
 }
@@ -85,6 +87,8 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         w."center_lng"::float8 AS "wardCenterLng",
         c."qr_code" AS "containerCode",
         COALESCE(o."expected_liters", 0)::float8 AS "expectedLiters",
+        c."capacity_liters"::float8 AS "containerCapacityLiters",
+        m."last_collected_at" AS "lastCollectedAt",
         o."priority"::float8 AS "priority",
         ST_Distance(
           COALESCE(m."location", ST_SetSRID(ST_MakePoint(COALESCE(w."center_lng", $1), COALESCE(w."center_lat", $2)), 4326)::geography),
