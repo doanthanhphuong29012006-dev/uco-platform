@@ -167,6 +167,15 @@ select, input { width: 100%; min-height: 48px; border: 1px solid #cfe0d7; border
 .distance-label { flex: 0 0 auto; color: var(--green); font-size: .78rem; font-weight: 800; }
 .stop-address { min-height: 20px; margin: 6px 0 7px; color: var(--muted); font-size: .81rem; line-height: 1.35; }
 .stop-liters { display: block; color: var(--green-dark); font-size: .9rem; }
+.pickup-priority { display: grid; gap: 7px; margin-top: 10px; padding: 9px 10px; border-left: 4px solid var(--green); border-radius: 10px; background: #f5faf7; }
+.pickup-priority-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: .76rem; }
+.pickup-priority-heading span { font-weight: 750; white-space: nowrap; }
+.pickup-priority-urgent { border-color: #c43d3d; color: #8d3030; background: #fff2f2; }
+.pickup-priority-high { border-color: #d49b2f; color: #8a631c; background: #fff8e8; }
+.pickup-priority-normal { border-color: #3f9163; color: #276d50; background: #effaf2; }
+.pickup-priority-low, .pickup-priority-insufficient { border-color: #7b8e96; color: #536970; background: #f2f6f7; }
+.pickup-priority-reasons { display: flex; flex-wrap: wrap; gap: 5px; }
+.pickup-priority-reason { padding: 3px 6px; border-radius: 999px; color: inherit; background: #ffffffb8; font-size: .68rem; line-height: 1.2; }
 .stop-actions { display: grid; grid-template-columns: 1fr 1fr 1.12fr; gap: 7px; margin-top: 13px; }
 .stop-actions a, .stop-actions button { display: grid; place-items: center; min-height: 42px; padding: 0 6px; border: 0; border-radius: 11px; text-decoration: none; font-size: .73rem; font-weight: 750; }
 .call-action, .map-action { color: var(--green); background: var(--mint); }

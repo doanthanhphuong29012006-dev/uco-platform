@@ -37,6 +37,59 @@ export interface CompletedStop {
   stop: RouteStop;
 }
 
+const PICKUP_PRIORITY_LEVELS = {
+  URGENT: { label: 'Khẩn cấp', className: 'urgent' },
+  HIGH: { label: 'Ưu tiên cao', className: 'high' },
+  NORMAL: { label: 'Bình thường', className: 'normal' },
+  LOW: { label: 'Ưu tiên thấp', className: 'low' },
+  INSUFFICIENT_DATA: { label: 'Chưa đủ dữ liệu', className: 'insufficient' },
+} as const;
+
+const PICKUP_PRIORITY_REASONS: Record<string, string> = {
+  MISSING_FILL_DATA: 'Thiếu dữ liệu mức đầy',
+  NEAR_FULL: 'Can gần đầy',
+  HIGH_FILL: 'Mức đầy cao',
+  MEDIUM_FILL: 'Mức đầy trung bình',
+  MISSING_COLLECTION_HISTORY: 'Chưa có lịch sử thu gom',
+  OVERDUE_COLLECTION: 'Đã quá lâu chưa thu',
+  WAITING_LONG: 'Đã chờ lâu',
+  MISSING_DISTANCE: 'Thiếu dữ liệu khoảng cách',
+  NEARBY: 'Điểm thu ở gần',
+  ALREADY_SCHEDULED: 'Đã có lịch thu gom',
+};
+
+export function pickupPriorityLevelLabel(level: string): string | null {
+  return PICKUP_PRIORITY_LEVELS[level as keyof typeof PICKUP_PRIORITY_LEVELS]?.label ?? null;
+}
+
+export function pickupPriorityReasonLabel(reasonCode: string): string {
+  return PICKUP_PRIORITY_REASONS[reasonCode] ?? reasonCode;
+}
+
+export function getPickupPriorityDisplay(stop: RouteStop): {
+  level: keyof typeof PICKUP_PRIORITY_LEVELS;
+  label: string;
+  className: string;
+  score: number;
+  reasons: string[];
+} | null {
+  const aiStop = stop as RouteStop & {
+    pickup_priority_score?: unknown;
+    pickup_priority_level?: unknown;
+    pickup_priority_reason_codes?: unknown;
+  };
+  const level = typeof aiStop.pickup_priority_level === 'string' ? aiStop.pickup_priority_level : null;
+  const display = level ? PICKUP_PRIORITY_LEVELS[level as keyof typeof PICKUP_PRIORITY_LEVELS] : undefined;
+  if (!display || typeof aiStop.pickup_priority_score !== 'number' || !Number.isFinite(aiStop.pickup_priority_score)) {
+    return null;
+  }
+
+  const reasons = Array.isArray(aiStop.pickup_priority_reason_codes)
+    ? aiStop.pickup_priority_reason_codes.filter((reason): reason is string => typeof reason === 'string' && reason.length > 0).map(pickupPriorityReasonLabel)
+    : [];
+  return { level: level as keyof typeof PICKUP_PRIORITY_LEVELS, ...display, score: aiStop.pickup_priority_score, reasons };
+}
+
 export function CollectorFlow() {
   const queryClient = useQueryClient();
   const collectorStorageId = useAuthStore((state) => state.user?.collectorId ?? state.user?.id ?? null);
@@ -277,6 +330,7 @@ function OutboxIssueNotice({ rows, stats, onOpen }: { rows: OutboxRecord[]; stat
 
 function CollectorStopCard({ stop, outboxRow, onOpenQr }: { stop: RouteStop; outboxRow: OutboxRecord | undefined; onOpenQr: () => void }) {
   const status = outboxRow?.status;
+  const pickupPriority = getPickupPriorityDisplay(stop);
   return (
     <article className="collector-stop-card">
       <div className={`stop-number ${status ? `stop-number-${status}` : ''}`}>{stop.seq}</div>
@@ -284,6 +338,12 @@ function CollectorStopCard({ stop, outboxRow, onOpenQr }: { stop: RouteStop; out
         <div className="stop-title-row"><h2>{stop.merchant.name}</h2><span className="distance-label">{formatDistance(stop.distance_m)}</span></div>
         <p className="stop-address">{stop.merchant.address ?? 'Chưa có địa chỉ'}</p>
         <strong className="stop-liters">{formatLiters(stop.expected_liters)} dự kiến</strong>
+        {pickupPriority ? (
+          <section className={`pickup-priority pickup-priority-${pickupPriority.className}`} aria-label={`Mức ưu tiên: ${pickupPriority.label}`}>
+            <div className="pickup-priority-heading"><strong>{pickupPriority.label}</strong><span>Điểm ưu tiên: {pickupPriority.score}</span></div>
+            {pickupPriority.reasons.length > 0 ? <div className="pickup-priority-reasons">{pickupPriority.reasons.map((reason, index) => <span className="pickup-priority-reason" key={`${reason}-${index}`}>{reason}</span>)}</div> : null}
+          </section>
+        ) : null}
         {status ? <p className={`transaction-status transaction-status-${status}`}>{statusLabel(status)}</p> : null}
         <div className="stop-actions">
           <a className={`call-action ${stop.merchant.phone ? '' : 'disabled-action'}`} href={stop.merchant.phone ? `tel:${stop.merchant.phone}` : undefined}>☎ Gọi quán</a>
