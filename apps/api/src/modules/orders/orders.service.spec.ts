@@ -58,6 +58,7 @@ describe('OrdersService currentRoute pickup priority', () => {
     expect(result.stops[0]).toHaveProperty('container_code');
     expect(result.stops[0]).toHaveProperty('expected_liters');
     expect(result.stops[0]).toHaveProperty('distance_m');
+    expect(result.route_optimization).toMatchObject({ optimization_applied: false, reason_codes: ['ALREADY_OPTIMAL'] });
   });
 
   it('uses legacy priority, then distance, then original order for ties and renumbers seq', async () => {
@@ -80,6 +81,7 @@ describe('OrdersService currentRoute pickup priority', () => {
       'legacy-low',
     ]);
     expect(result.stops.map((stop) => stop.seq)).toEqual([1, 2, 3, 4, 5]);
+    expect(result.route_optimization).toMatchObject({ optimization_applied: false, reason_codes: ['ALREADY_OPTIMAL'] });
   });
 
   it('returns insufficient data for null capacity, clamps future collection to zero, and keeps truck limit', async () => {
@@ -96,6 +98,7 @@ describe('OrdersService currentRoute pickup priority', () => {
     expect(result.stops).toHaveLength(1);
     expect(result.stops[0]).toMatchObject({ order_id: 'full-capacity', pickup_priority_level: 'HIGH' });
     expect(result.total_expected_liters).toBeLessThanOrEqual(50);
+    expect(result.route_optimization?.reason_codes).toContain('INSUFFICIENT_STOPS');
   });
 
   it('passes null history for a never-collected merchant and clamps a future date to zero days', async () => {
@@ -114,5 +117,61 @@ describe('OrdersService currentRoute pickup priority', () => {
     expect(neverCollected?.pickup_priority_reason_codes).toContain('MISSING_COLLECTION_HISTORY');
     expect(futureCollected?.pickup_priority_reason_codes).not.toContain('MISSING_COLLECTION_HISTORY');
     expect(neverCollected?.pickup_priority_score).toBe(futureCollected?.pickup_priority_score);
+  });
+
+  it('optimizes selected stops within their priority group without changing the selected set or totals', async () => {
+    const rows = [
+      routeRow({ orderId: 'near-origin', expectedLiters: 10, merchantLat: 10.001, merchantLng: 106.001, distanceM: 1_000 }),
+      routeRow({ orderId: 'far', expectedLiters: 10, merchantLat: 10.01, merchantLng: 106.01, distanceM: 2_000 }),
+      routeRow({ orderId: 'near-far', expectedLiters: 10, merchantLat: 10.009, merchantLng: 106.009, distanceM: 3_000 }),
+    ];
+    const { service } = createService(rows, 30);
+
+    const result = await service.currentRoute({ sub: 'collector-user' } as never, {});
+
+    expect(result.stops.map((stop) => stop.order_id)).toEqual(['near-origin', 'near-far', 'far']);
+    expect(new Set(result.stops.map((stop) => stop.order_id))).toEqual(new Set(rows.map((row) => row.orderId)));
+    expect(result.stops.map((stop) => stop.seq)).toEqual([1, 2, 3]);
+    expect(result.total_expected_liters).toBe(30);
+    expect(result.remaining_capacity_l).toBe(0);
+    expect(result.route_optimization).toMatchObject({ optimization_applied: true, reason_codes: ['ROUTE_OPTIMIZED'] });
+    expect(result.route_optimization?.estimated_distance_after_m).toBeLessThanOrEqual(result.route_optimization?.estimated_distance_before_m ?? Infinity);
+  });
+
+  it('keeps a low-priority nearby stop after an urgent stop and preserves stop fields', async () => {
+    const rows = [
+      routeRow({ orderId: 'low-near', expectedLiters: 5, containerCapacityLiters: 30, merchantLat: 10.001, merchantLng: 106.001, distanceM: 100 }),
+      routeRow({ orderId: 'urgent-far', expectedLiters: 30, containerCapacityLiters: 30, merchantLat: 10.02, merchantLng: 106.02, distanceM: 20_000, lastCollectedAt: new Date(Date.now() - 14 * 24 * 60 * 60 * 1_000), priority: 1 }),
+    ];
+    const { service } = createService(rows, 35);
+
+    const result = await service.currentRoute({ sub: 'collector-user' } as never, {});
+
+    expect(result.stops.map((stop) => stop.order_id)).toEqual(['urgent-far', 'low-near']);
+    expect(result.stops[0]).toMatchObject({
+      pickup_priority_level: 'URGENT',
+      merchant: { phone: '0900000000' },
+      ward_center: { lat: 10, lng: 106 },
+    });
+  });
+
+  it('returns safe metadata for an invalid stop coordinate without crashing', async () => {
+    const rows = [
+      routeRow({ orderId: 'invalid-coordinate', merchantLat: Number.NaN }),
+      routeRow({ orderId: 'valid-coordinate', merchantLat: 10.2, merchantLng: 106.2, distanceM: 2_000 }),
+    ];
+    const { service } = createService(rows);
+
+    const result = await service.currentRoute({ sub: 'collector-user' } as never, {});
+
+    expect(result.stops).toHaveLength(2);
+    expect(result.route_optimization).toMatchObject({
+      estimated_distance_before_m: null,
+      estimated_distance_after_m: null,
+      saved_distance_m: null,
+    });
+    expect(result.route_optimization?.optimization_applied).toBe(true);
+    expect(result.route_optimization?.reason_codes).toEqual(['ROUTE_OPTIMIZED', 'INVALID_STOP_COORDINATES']);
+    expect(result.stops.map((stop) => stop.seq)).toEqual([1, 2]);
   });
 });

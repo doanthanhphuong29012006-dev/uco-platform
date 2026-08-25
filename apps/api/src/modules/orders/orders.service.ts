@@ -4,6 +4,7 @@ import type { Prisma } from '@prisma/client';
 import type { OrderListQueryInput, OrderReadyInput, RouteQueryInput } from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { AccessTokenPayload } from '../auth/auth.types';
+import { optimizeCollectionRoute } from './collection-route-optimizer';
 import { scoreMerchantPickupPriority } from './merchant-pickup-priority';
 import { calculatePriority } from './priority';
 
@@ -216,8 +217,53 @@ export class OrdersService {
         pickup_priority_reason_codes: pickupPriority.reason_codes,
       });
     }
-    // TODO(sprint-4): Persist route/route_stops when re-optimization is introduced.
-    return { stops, total_expected_liters: total, remaining_capacity_l: Math.max(maxCapacity - total, 0) };
+    let orderedStops = stops;
+    let routeOptimization: {
+      estimated_distance_before_m: number | null;
+      estimated_distance_after_m: number | null;
+      saved_distance_m: number | null;
+      optimization_applied: boolean;
+      reason_codes: Array<'ROUTE_OPTIMIZED' | 'ALREADY_OPTIMAL' | 'INSUFFICIENT_STOPS' | 'INVALID_ORIGIN' | 'INVALID_STOP_COORDINATES'>;
+    };
+    try {
+      const optimization = optimizeCollectionRoute({
+        origin: { lat: originLat, lng: originLng },
+        stops: stops.map((stop, index) => ({
+          id: stop.order_id,
+          lat: stop.merchant.lat,
+          lng: stop.merchant.lng,
+          pickup_priority_score: stop.pickup_priority_score,
+          legacy_priority: stop.priority,
+          original_index: index,
+        })),
+      });
+      const stopsById = new Map(stops.map((stop) => [stop.order_id, stop]));
+      orderedStops = optimization.stops.map((optimizedStop, index) => {
+        const originalStop = stopsById.get(optimizedStop.id);
+        if (!originalStop) {
+          throw new Error('Route optimizer returned an unknown order');
+        }
+        return { ...originalStop, seq: index + 1 };
+      });
+      routeOptimization = {
+        estimated_distance_before_m: optimization.estimated_distance_before_m,
+        estimated_distance_after_m: optimization.estimated_distance_after_m,
+        saved_distance_m: optimization.saved_distance_m,
+        optimization_applied: optimization.optimization_applied,
+        reason_codes: optimization.reason_codes,
+      };
+    } catch {
+      orderedStops = stops.map((stop, index) => ({ ...stop, seq: index + 1 }));
+      routeOptimization = {
+        estimated_distance_before_m: null,
+        estimated_distance_after_m: null,
+        saved_distance_m: null,
+        optimization_applied: false,
+        reason_codes: ['INVALID_STOP_COORDINATES'],
+      };
+    }
+    // TODO(sprint-4): Persist optimized route/route_stops when route persistence is introduced.
+    return { stops: orderedStops, total_expected_liters: total, remaining_capacity_l: Math.max(maxCapacity - total, 0), route_optimization: routeOptimization };
   }
 
   private async requireMerchant(userId: string) {

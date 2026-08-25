@@ -253,6 +253,13 @@ export interface CurrentRouteResponse {
   stops: RouteStop[];
   total_expected_liters: number;
   remaining_capacity_l: number;
+  route_optimization?: {
+    estimated_distance_before_m: number | null;
+    estimated_distance_after_m: number | null;
+    saved_distance_m: number | null;
+    optimization_applied: boolean;
+    reason_codes: Array<'ROUTE_OPTIMIZED' | 'ALREADY_OPTIMAL' | 'INSUFFICIENT_STOPS' | 'INVALID_ORIGIN' | 'INVALID_STOP_COORDINATES'>;
+  };
 }
 
 export interface ContainerLookupResponse {
