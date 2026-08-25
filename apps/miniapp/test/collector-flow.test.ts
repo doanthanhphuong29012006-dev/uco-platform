@@ -248,6 +248,66 @@ test('route refresh notices distinguish fresh data, cache fallback and errors', 
     kind: 'error',
     message: 'Không thể tải lại tuyến. Vui lòng kiểm tra mạng và thử lại.',
   });
+  assert.deepEqual(getRouteRefreshNotice({ data: route, gpsFallback: true }, updatedAt), {
+    kind: 'warning',
+    message: 'Chưa lấy được GPS, tuyến đang dùng vị trí trung tâm phường.',
+  });
+});
+
+test('refresh retries GPS and loads the route with the newest coordinates', async () => {
+  const { getRouteRefreshNotice, refreshRouteWithLocation } = await loadPickupPriorityHelpers();
+  const fallback = { lat: 21.0333, lng: 105.85 };
+  const freshPoint = { lat: 21.034, lng: 105.851 };
+  const loadedLocations: Array<{ lat: number; lng: number } | undefined> = [];
+  const route = { route: { stops: [], total_expected_liters: 0, remaining_capacity_l: 100 }, fromCache: false, cachedAt: null } as never;
+  let gpsAllowed = false;
+  const load = async (point?: { lat: number; lng: number }) => {
+    loadedLocations.push(point);
+    return route;
+  };
+
+  const first = await refreshRouteWithLocation(
+    async () => { if (!gpsAllowed) throw new Error('permission denied'); return freshPoint; },
+    load,
+    fallback,
+  );
+  assert.equal(first.gpsFallback, true);
+  assert.deepEqual(first.point, fallback);
+  assert.deepEqual(loadedLocations[0], fallback);
+  assert.equal(getRouteRefreshNotice(first).kind, 'warning');
+
+  gpsAllowed = true;
+  const second = await refreshRouteWithLocation(async () => freshPoint, load, fallback);
+  assert.equal(second.gpsFallback, false);
+  assert.equal(second.gpsUpdated, true);
+  assert.deepEqual(second.point, freshPoint);
+  assert.deepEqual(loadedLocations[1], freshPoint);
+  assert.deepEqual(getRouteRefreshNotice(second, new Date('2026-08-25T08:05:00+07:00')), {
+    kind: 'success',
+    message: 'Đã cập nhật GPS và tuyến lúc 08:05',
+  });
+});
+
+test('location attempts are single-flight and can retry after completion', async () => {
+  const { createLocationAttemptRunner } = await loadPickupPriorityHelpers();
+  let calls = 0;
+  let resolveLocation: ((point: { lat: number; lng: number }) => void) | null = null;
+  const attempt = createLocationAttemptRunner(() => {
+    calls += 1;
+    if (calls > 1) return Promise.resolve({ lat: 21.0333, lng: 105.85 });
+    return new Promise((resolve) => { resolveLocation = resolve; });
+  });
+
+  const first = attempt();
+  const second = attempt();
+  assert.equal(calls, 1);
+  resolveLocation?.({ lat: 21.0333, lng: 105.85 });
+  assert.deepEqual(await Promise.all([first, second]), [
+    { point: { lat: 21.0333, lng: 105.85 }, failed: false },
+    { point: { lat: 21.0333, lng: 105.85 }, failed: false },
+  ]);
+  await attempt();
+  assert.equal(calls, 2);
 });
 
 test('route refresh runner is single-flight and can retry after an error', async () => {

@@ -358,21 +358,108 @@ export function getRouteCapacityRiskDisplay(
 }
 
 export interface RouteRefreshNotice {
-  kind: 'success' | 'cache' | 'error';
+  kind: 'success' | 'cache' | 'warning' | 'error';
   message: string;
 }
 
+export interface RouteRefreshResult {
+  data?: RouteLoadResult;
+  error?: unknown;
+  gpsFallback?: boolean;
+  gpsUpdated?: boolean;
+}
+
 export function getRouteRefreshNotice(
-  result: { data?: RouteLoadResult; error?: unknown },
+  result: RouteRefreshResult,
   updatedAt: Date = new Date(),
 ): RouteRefreshNotice {
   if (result.error || !result.data) {
     return { kind: 'error', message: 'Không thể tải lại tuyến. Vui lòng kiểm tra mạng và thử lại.' };
   }
+  if (result.gpsFallback) {
+    return { kind: 'warning', message: 'Chưa lấy được GPS, tuyến đang dùng vị trí trung tâm phường.' };
+  }
   if (result.data.fromCache) {
     return { kind: 'cache', message: 'Không kết nối được máy chủ, đang dùng tuyến đã lưu.' };
   }
+  if (result.gpsUpdated) {
+    return { kind: 'success', message: `Đã cập nhật GPS và tuyến lúc ${formatTime(updatedAt.toISOString())}` };
+  }
   return { kind: 'success', message: `Đã cập nhật tuyến lúc ${formatTime(updatedAt.toISOString())}` };
+}
+
+export interface LocationAttemptResult {
+  point: GeoPoint | null;
+  failed: boolean;
+  error?: unknown;
+}
+
+export function createLocationAttemptRunner(
+  getLocation: () => Promise<GeoPoint | null>,
+  onError: (error: unknown) => void = logLocationFailure,
+): () => Promise<LocationAttemptResult> {
+  let inFlight: Promise<LocationAttemptResult> | null = null;
+
+  async function attempt(): Promise<LocationAttemptResult> {
+    if (inFlight) return inFlight;
+    const request = (async () => {
+      try {
+        const point = await getLocation();
+        return { point, failed: point === null };
+      } catch (error) {
+        onError(error);
+        return { point: null, failed: true, error };
+      } finally {
+        inFlight = null;
+      }
+    })();
+    inFlight = request;
+    return request;
+  }
+
+  return attempt;
+}
+
+function logLocationFailure(error: unknown): void {
+  const details: { code?: string; api?: string; message?: string } = { api: 'zalo.location' };
+  if (error instanceof ApiError) {
+    details.code = error.code;
+    details.message = error.message;
+  } else if (error instanceof Error) {
+    details.message = error.message;
+  } else if (typeof error === 'object' && error !== null) {
+    const candidate = error as { code?: unknown; api?: unknown; message?: unknown };
+    if (typeof candidate.code === 'string') details.code = candidate.code;
+    if (typeof candidate.api === 'string') details.api = candidate.api;
+    if (typeof candidate.message === 'string') details.message = candidate.message;
+  }
+  console.warn('[zalo] Không lấy được vị trí', details);
+}
+
+export interface LocationAwareRouteRefreshResult extends RouteRefreshResult {
+  point: GeoPoint | null;
+}
+
+export async function refreshRouteWithLocation(
+  getLocation: () => Promise<GeoPoint | null>,
+  loadRoute: (location?: GeoPoint) => Promise<RouteLoadResult>,
+  fallback: GeoPoint | null,
+): Promise<LocationAwareRouteRefreshResult> {
+  let point: GeoPoint | null = null;
+  let gpsFallback = false;
+  try {
+    point = await getLocation();
+    if (!point) gpsFallback = true;
+  } catch {
+    gpsFallback = true;
+  }
+  if (gpsFallback) point = fallback;
+
+  try {
+    return { point, gpsFallback, gpsUpdated: !gpsFallback, data: await loadRoute(point ?? undefined) };
+  } catch (error) {
+    return { point, gpsFallback, gpsUpdated: !gpsFallback, error };
+  }
 }
 
 interface RouteRefreshState {
@@ -381,7 +468,7 @@ interface RouteRefreshState {
 }
 
 export function createRouteRefreshRunner(
-  refetch: () => Promise<{ data?: RouteLoadResult; error?: unknown }>,
+  refetch: () => Promise<RouteRefreshResult>,
   onStateChange: (state: RouteRefreshState) => void,
 ): () => Promise<void> {
   let inFlight: Promise<void> | null = null;
@@ -467,21 +554,22 @@ export function CollectorFlow() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshNotice, setRefreshNotice] = useState<RouteRefreshNotice | null>(null);
   const refreshRunner = useRef<(() => Promise<void>) | null>(null);
+  const locationRunner = useRef<(() => Promise<LocationAttemptResult>) | null>(null);
   const online = useOnlineStatus();
   const outboxStats = useOutboxStats();
   const outboxRows = useOutboxRows();
 
+  if (locationRunner.current === null) {
+    locationRunner.current = createLocationAttemptRunner(() => zaloClient.getLocation());
+  }
+
   useEffect(() => {
     void startOutboxSyncWorker();
     let active = true;
-    void zaloClient.getLocation().then((point) => {
-      if (active) {
-        setLocation(point);
-      }
-    }).catch(() => {
-      if (active) {
-        setLocationDenied(true);
-      }
+    void locationRunner.current?.().then(({ point, failed }) => {
+      if (!active) return;
+      setLocation(point);
+      setLocationDenied(failed);
     });
     return () => {
       active = false;
@@ -496,7 +584,27 @@ export function CollectorFlow() {
 
   if (refreshRunner.current === null) {
     refreshRunner.current = createRouteRefreshRunner(
-      () => route.refetch(),
+      async () => {
+        const fallback = route.data?.route.stops.find((stop) => stop.ward_center)?.ward_center ?? location;
+        const attempt = locationRunner.current;
+        const refreshed = await refreshRouteWithLocation(
+          async () => {
+            const result = await attempt?.() ?? { point: null, failed: true };
+            if (result.failed) throw result.error ?? new Error('Không lấy được GPS');
+            return result.point;
+          },
+          (point) => loadRouteWithCache(point),
+          fallback,
+        );
+        if (refreshed.point) {
+          setLocation(refreshed.point);
+        }
+        setLocationDenied(refreshed.gpsFallback ?? false);
+        if (refreshed.data) {
+          queryClient.setQueryData(['collector-route', refreshed.point], refreshed.data);
+        }
+        return refreshed;
+      },
       ({ busy, notice }) => {
         setRefreshing(busy);
         setRefreshNotice(notice);

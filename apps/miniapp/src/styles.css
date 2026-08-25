@@ -150,6 +150,7 @@ select, input { width: 100%; min-height: 48px; border: 1px solid #cfe0d7; border
 @keyframes route-refresh-spin { to { transform: rotate(360deg); } }
 .route-refresh-notice { margin: 0 0 12px; padding: 10px 12px; border: 1px solid #b9dfca; border-radius: 12px; color: #276d50; background: #effaf2; font-size: .78rem; font-weight: 750; line-height: 1.35; }
 .route-refresh-notice-cache { color: #694f16; border-color: #ead49b; background: #fff8e8; }
+.route-refresh-notice-warning { color: #7d4d0c; border-color: #edca7c; background: #fff7dc; }
 .route-refresh-notice-error { color: #8d3030; border-color: #efbcbc; background: #fff0f0; }
 .location-banner, .error-panel, .warning-panel { display: grid; gap: 4px; margin: 0 0 14px; padding: 14px 15px; border-radius: 14px; line-height: 1.4; font-size: .86rem; }
 .location-banner { color: #694f16; border: 1px solid #e7d69c; background: #fff8df; }
