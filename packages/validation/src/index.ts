@@ -21,6 +21,12 @@ export type RealZaloAuthInput = z.infer<typeof realZaloAuthSchema>;
 export type SeedZaloAuthInput = z.infer<typeof seedZaloAuthSchema>;
 export type ZaloAuthInput = z.infer<typeof zaloAuthSchema>;
 
+export const zaloLocationSchema = z.object({
+  access_token: z.string().min(1),
+  location_token: z.string().min(1),
+}).strict();
+export type ZaloLocationInput = z.infer<typeof zaloLocationSchema>;
+
 export const adminLoginSchema = z.object({
   zalo_id: z.string().trim().min(1).max(120),
   phone: phoneSchema,

@@ -10,6 +10,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
 import { MockZaloAuthProvider } from './providers/mock-zalo-auth.provider';
 import { RealZaloAuthProvider } from './providers/real-zalo-auth.provider';
+import { ZaloLocationProvider } from './providers/zalo-location.provider';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { RealZaloAuthProvider } from './providers/real-zalo-auth.provider';
     AuthService,
     MockZaloAuthProvider,
     RealZaloAuthProvider,
+    ZaloLocationProvider,
     {
       provide: ZALO_AUTH_PROVIDER,
       inject: [ConfigService, MockZaloAuthProvider, RealZaloAuthProvider],

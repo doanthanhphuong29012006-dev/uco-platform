@@ -98,3 +98,43 @@ test('real client rejects empty phone and invalid coordinates before native call
   await assert.rejects(() => client.openDirections({ lat: Number.NaN, lng: 105.85 }), /Tọa độ/);
   assert.equal(nativeCalls, 0);
 });
+
+test('real client exchanges the SDK access and location tokens exactly once', async () => {
+  let accessTokenCalls = 0;
+  let locationTokenCalls = 0;
+  const exchanged: string[] = [];
+  const { RealZaloClient } = await import('../src/lib/zalo-client');
+  const client = new RealZaloClient(
+    undefined,
+    async () => ({
+      getAccessToken: async () => {
+        accessTokenCalls += 1;
+        return 'access-token-test';
+      },
+      getLocation: async () => {
+        locationTokenCalls += 1;
+        return { token: 'location-token-test' };
+      },
+    }),
+    async (accessToken, locationToken) => {
+      exchanged.push(accessToken, locationToken);
+      return { lat: 21.0333, lng: 105.85 };
+    },
+  );
+
+  assert.deepEqual(await client.getLocation(null), { lat: 21.0333, lng: 105.85 });
+  assert.equal(accessTokenCalls, 1);
+  assert.equal(locationTokenCalls, 1);
+  assert.deepEqual(exchanged, ['access-token-test', 'location-token-test']);
+});
+
+test('real client rejects an empty SDK location token without browser geolocation', async () => {
+  const { RealZaloClient } = await import('../src/lib/zalo-client');
+  const client = new RealZaloClient(
+    undefined,
+    async () => ({ getAccessToken: async () => 'access-token-test', getLocation: async () => ({ token: '' }) }),
+    async () => ({ lat: 21.0333, lng: 105.85 }),
+  );
+
+  await assert.rejects(() => client.getLocation({ lat: 21.0333, lng: 105.85 }), /token vị trí Zalo/);
+});

@@ -98,6 +98,11 @@ export interface ZaloNavigationSdk {
   openWebview(args: { url: string; config: { style: 'normal'; leftButton: 'back' } }): Promise<void>;
 }
 
+export interface ZaloLocationSdk {
+  getAccessToken(): Promise<string>;
+  getLocation(): Promise<{ token?: string }>;
+}
+
 export function isValidGeoPoint(destination: { lat?: unknown; lng?: unknown }): boolean {
   return typeof destination.lat === 'number'
     && Number.isFinite(destination.lat)
@@ -118,7 +123,14 @@ export class RealZaloClient implements IZaloClient {
   readonly mode = 'real' as const;
   private seedAccount: SeedAccount = { zaloId: '', phone: '' };
 
-  constructor(private readonly loadSdk: () => Promise<ZaloNavigationSdk> = () => import('zmp-sdk')) {}
+  constructor(
+    private readonly loadSdk: () => Promise<ZaloNavigationSdk> = () => import('zmp-sdk'),
+    private readonly loadLocationSdk: () => Promise<ZaloLocationSdk> = () => import('zmp-sdk'),
+    private readonly resolveLocation: (accessToken: string, locationToken: string) => Promise<GeoPoint> = async (accessToken, locationToken) => {
+      const { api } = await import('./api');
+      return api.resolveZaloLocation(accessToken, locationToken);
+    },
+  ) {}
 
   async login(): Promise<SeedAccount> {
     const accessToken = await this.getAccessToken();
@@ -134,14 +146,14 @@ export class RealZaloClient implements IZaloClient {
   }
 
   async getLocation(): Promise<GeoPoint | null> {
-    const { getLocation } = await import('zmp-sdk');
-    await getLocation();
-    try {
-      return await browserLocation();
-    } catch {
-      // TODO(sprint-4): Exchange the Zalo location token with the backend location API in production.
-      throw new Error('Không lấy được vị trí hiện tại');
+    const sdk = await this.loadLocationSdk();
+    const accessToken = (await sdk.getAccessToken()).trim();
+    const { token } = await sdk.getLocation();
+    const locationToken = token?.trim();
+    if (!accessToken || !locationToken) {
+      throw new Error('Không lấy được token vị trí Zalo');
     }
+    return this.resolveLocation(accessToken, locationToken);
   }
 
   async scanQRCode(): Promise<string> {

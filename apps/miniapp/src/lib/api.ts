@@ -147,6 +147,11 @@ export const api = {
       body: { access_token: accessToken },
       retry: false,
     }),
+  resolveZaloLocation: (accessToken: string, locationToken: string) =>
+    request<GeoPoint>('/auth/zalo/location', {
+      method: 'POST',
+      body: { access_token: accessToken, location_token: locationToken },
+    }),
   logout: (refreshToken: string) => request<{ success: true }>('/auth/logout', { method: 'POST', body: { refresh_token: refreshToken }, retry: false }),
   me: () => request<AuthUser>('/auth/me'),
   dashboard: () => request<MerchantDashboardResponse>('/merchants/me/dashboard'),

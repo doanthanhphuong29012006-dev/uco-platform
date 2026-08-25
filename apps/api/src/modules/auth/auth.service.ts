@@ -4,7 +4,7 @@ import { JwtService } from '@nestjs/jwt';
 import { Role } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import type { AdminLoginInput, RealZaloAuthInput, SeedZaloAuthInput, ZaloAuthInput } from '@eco-oil/validation';
+import type { AdminLoginInput, RealZaloAuthInput, SeedZaloAuthInput, ZaloAuthInput, ZaloLocationInput } from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   ACCESS_TOKEN_TTL_SECONDS,
@@ -13,6 +13,7 @@ import {
 } from './auth.constants';
 import type { AccessTokenPayload, AuthUserResponse } from './auth.types';
 import type { IZaloAuthProvider } from './providers/zalo-auth.provider';
+import { ZaloLocationProvider } from './providers/zalo-location.provider';
 
 type UserWithProfiles = Prisma.UserGetPayload<{
   include: {
@@ -29,7 +30,19 @@ export class AuthService {
     @Inject(JwtService) private readonly jwt: JwtService,
     @Inject(ConfigService) private readonly config: ConfigService,
     @Inject(ZALO_AUTH_PROVIDER) private readonly zaloProvider: IZaloAuthProvider,
+    @Inject(ZaloLocationProvider) private readonly zaloLocationProvider: ZaloLocationProvider,
   ) {}
+
+  async resolveZaloLocation(input: ZaloLocationInput): Promise<{ lat: number; lng: number }> {
+    if (this.isMockMode()) {
+      throw new BadRequestException({
+        code: 'ZALO_LOCATION_DISABLED_IN_MOCK',
+        message: 'Đổi token vị trí Zalo không khả dụng trong chế độ mô phỏng',
+        details: null,
+      });
+    }
+    return this.zaloLocationProvider.resolve(input);
+  }
 
   async login(input: ZaloAuthInput): Promise<{
     access_token: string;

@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Inject, Post } from '@nestjs/common';
 import { Role } from '@prisma/client';
-import { adminLoginSchema, refreshTokenSchema, zaloAuthSchema } from '@eco-oil/validation';
+import { adminLoginSchema, refreshTokenSchema, zaloAuthSchema, zaloLocationSchema } from '@eco-oil/validation';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { Public } from './decorators/public.decorator';
@@ -47,6 +47,12 @@ export class AuthController {
   @Get('me')
   me(@CurrentUser() user: AccessTokenPayload) {
     return this.authService.me(user.sub);
+  }
+
+  @Roles(Role.MERCHANT, Role.COLLECTOR, Role.STATION, Role.ADMIN)
+  @Post('zalo/location')
+  resolveZaloLocation(@Body() body: unknown) {
+    return this.authService.resolveZaloLocation(zaloLocationSchema.parse(body));
   }
 
   @Roles(Role.ADMIN)

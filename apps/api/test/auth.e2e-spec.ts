@@ -86,6 +86,26 @@ describe('Auth and RBAC (e2e)', () => {
     expect(response.body).toMatchObject({ code: 'INVALID_ZALO_ID' });
   });
 
+  it('requires JWT and does not call the real location provider in mock mode', async () => {
+    await request(app.getHttpServer())
+      .post('/api/v1/auth/zalo/location')
+      .send({ access_token: 'access-token-test', location_token: 'location-token-test' })
+      .expect(401);
+
+    const login = await request(app.getHttpServer())
+      .post('/api/v1/auth/zalo')
+      .send({ zalo_id: 'zalo_merchant_01', phone: '0900000001' })
+      .expect(201);
+
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/auth/zalo/location')
+      .set('Authorization', `Bearer ${login.body.access_token}`)
+      .send({ access_token: 'access-token-test', location_token: 'location-token-test' })
+      .expect(400);
+
+    expect(response.body).toMatchObject({ code: 'ZALO_LOCATION_DISABLED_IN_MOCK' });
+  });
+
   it('rotates refresh tokens and rejects reuse of the old token', async () => {
     const login = await request(app.getHttpServer())
       .post('/api/v1/auth/zalo')
