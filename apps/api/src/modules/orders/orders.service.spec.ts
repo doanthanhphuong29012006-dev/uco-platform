@@ -259,5 +259,57 @@ describe('OrdersService currentRoute pickup priority', () => {
 
     expect(result.stops).toEqual([]);
     expect(findRecentCollectionHistoryByMerchantIds).not.toHaveBeenCalled();
+    expect(result.route_capacity_risk).toEqual({
+      predicted_total_liters: 0,
+      risk_adjusted_total_liters: 0,
+      risk_adjusted_remaining_liters: 100,
+      risk_utilization_pct: 0,
+      level: 'INSUFFICIENT_DATA',
+      confidence: 'INSUFFICIENT_DATA',
+      forecast_coverage_pct: 0,
+      reason_codes: ['NO_STOPS'],
+    });
+  });
+
+  it.each([
+    [10, 'UNDERUTILIZED'],
+    [60, 'BALANCED'],
+    [70, 'NEAR_CAPACITY'],
+    [100, 'OVER_CAPACITY'],
+  ] as const)('assesses route capacity risk at %s declared liters as %s', async (expectedLiters, level) => {
+    const { service } = createService([routeRow({ expectedLiters, containerCapacityLiters: null })], 100);
+
+    const result = await service.currentRoute({ sub: 'collector-user' } as never, {});
+
+    expect(result.route_capacity_risk?.level).toBe(level);
+    expect(result.stops[0]?.expected_liters).toBe(expectedLiters);
+    expect(result.total_expected_liters).toBe(expectedLiters);
+    expect(result.remaining_capacity_l).toBe(100 - expectedLiters);
+    if (level === 'OVER_CAPACITY') {
+      expect(result.route_capacity_risk?.risk_adjusted_remaining_liters).toBe(-25);
+    }
+  });
+
+  it('reuses the existing forecasts for risk without another history query', async () => {
+    const rows = [
+      routeRow({ orderId: 'risk-a', merchantId: 'merchant-a', expectedLiters: 20 }),
+      routeRow({ orderId: 'risk-b', merchantId: 'merchant-b', expectedLiters: 30 }),
+    ];
+    const { service, findRecentCollectionHistoryByMerchantIds } = createService(rows, 100);
+
+    const result = await service.currentRoute({ sub: 'collector-user' } as never, {});
+
+    expect(findRecentCollectionHistoryByMerchantIds).toHaveBeenCalledTimes(1);
+    expect(result.route_capacity_risk).toMatchObject({
+      predicted_total_liters: 50,
+      risk_adjusted_total_liters: 54,
+      risk_utilization_pct: 54,
+      level: 'UNDERUTILIZED',
+      confidence: 'LOW',
+      forecast_coverage_pct: 100,
+    });
+    expect(result.stops.map((stop) => stop.order_id)).toEqual(['risk-b', 'risk-a']);
+    expect(result.stops.map((stop) => stop.seq)).toEqual([1, 2]);
+    expect(result.route_optimization).toBeDefined();
   });
 });

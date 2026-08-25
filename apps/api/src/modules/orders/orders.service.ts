@@ -5,6 +5,7 @@ import type { OrderListQueryInput, OrderReadyInput, RouteQueryInput } from '@eco
 import { PrismaService } from '../../prisma/prisma.service';
 import type { AccessTokenPayload } from '../auth/auth.types';
 import { optimizeCollectionRoute } from './collection-route-optimizer';
+import { assessCollectorRouteCapacityRisk } from './collector-route-capacity-risk';
 import { scoreMerchantPickupPriority } from './merchant-pickup-priority';
 import { forecastMerchantPickupVolume } from './merchant-pickup-volume-forecast';
 import { calculatePriority } from './priority';
@@ -220,6 +221,12 @@ export class OrdersService {
         reason_codes: string[];
       };
     }> = [];
+    const selectedCapacityRiskStops: Array<{
+      declared_liters: number | null;
+      predicted_liters: number | null;
+      forecast_confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT_DATA';
+      container_capacity_liters: number | null;
+    }> = [];
     let total = 0;
     for (const scoredRow of scoredRows) {
       const { row, pickupPriority, pickupVolumeForecast } = scoredRow;
@@ -227,6 +234,12 @@ export class OrdersService {
         break;
       }
       total += row.expectedLiters;
+      selectedCapacityRiskStops.push({
+        declared_liters: row.expectedLiters,
+        predicted_liters: pickupVolumeForecast.predicted_liters,
+        forecast_confidence: pickupVolumeForecast.confidence,
+        container_capacity_liters: row.containerCapacityLiters,
+      });
       stops.push({
         seq: stops.length + 1,
         order_id: row.orderId,
@@ -287,8 +300,18 @@ export class OrdersService {
         reason_codes: ['INVALID_STOP_COORDINATES'],
       };
     }
+    const routeCapacityRisk = assessCollectorRouteCapacityRisk({
+      vehicle_capacity_liters: maxCapacity,
+      stops: selectedCapacityRiskStops,
+    });
     // TODO(sprint-4): Persist optimized route/route_stops when route persistence is introduced.
-    return { stops: orderedStops, total_expected_liters: total, remaining_capacity_l: Math.max(maxCapacity - total, 0), route_optimization: routeOptimization };
+    return {
+      stops: orderedStops,
+      total_expected_liters: total,
+      remaining_capacity_l: Math.max(maxCapacity - total, 0),
+      route_optimization: routeOptimization,
+      route_capacity_risk: routeCapacityRisk,
+    };
   }
 
   private async requireMerchant(userId: string) {

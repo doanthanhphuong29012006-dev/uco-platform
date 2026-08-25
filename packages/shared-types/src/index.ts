@@ -266,6 +266,16 @@ export interface CurrentRouteResponse {
     optimization_applied: boolean;
     reason_codes: Array<'ROUTE_OPTIMIZED' | 'ALREADY_OPTIMAL' | 'INSUFFICIENT_STOPS' | 'INVALID_ORIGIN' | 'INVALID_STOP_COORDINATES'>;
   };
+  route_capacity_risk?: {
+    predicted_total_liters: number | null;
+    risk_adjusted_total_liters: number | null;
+    risk_adjusted_remaining_liters: number | null;
+    risk_utilization_pct: number | null;
+    level: 'OVER_CAPACITY' | 'NEAR_CAPACITY' | 'BALANCED' | 'UNDERUTILIZED' | 'INSUFFICIENT_DATA';
+    confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT_DATA';
+    forecast_coverage_pct: number;
+    reason_codes: string[];
+  };
 }
 
 export interface ContainerLookupResponse {
