@@ -327,9 +327,15 @@ export const adminReconciliationQuerySchema = z.object({
 });
 export type AdminReconciliationQueryInput = z.infer<typeof adminReconciliationQuerySchema>;
 
+const queryBooleanSchema = z.preprocess((value) => {
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return value;
+}, z.boolean());
+
 export const adminAlertListQuerySchema = paginationSchema.extend({
   type: z.nativeEnum(AlertType).optional(),
-  resolved: z.coerce.boolean().optional(),
+  resolved: queryBooleanSchema.optional(),
 });
 export type AdminAlertListQueryInput = z.infer<typeof adminAlertListQuerySchema>;
 

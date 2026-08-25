@@ -77,7 +77,7 @@ export function AlertListItem({ alert, onResolve, resolvePending }: {
 
 export function AlertsView() {
   const [type, setType] = useState('');
-  const [resolved, setResolved] = useState('false');
+  const [resolved, setResolved] = useState('');
   const queryClient = useQueryClient();
   const alerts = useQuery({
     queryKey: ['alerts', type, resolved],

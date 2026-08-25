@@ -1,5 +1,6 @@
 import type { ConfigService } from '@nestjs/config';
 import { AlertType } from '@eco-oil/shared-types';
+import { adminAlertListQuerySchema } from '@eco-oil/validation';
 import { AdminService } from './admin.service';
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { StationFillAlertCandidate } from '../stations/station-fill-alert';
@@ -240,5 +241,13 @@ describe('AdminService station fill forecast alerts integration', () => {
     expect(listFillAlertCandidates).not.toHaveBeenCalled();
     expect(resolvedResult.data).toHaveLength(1);
     expect(typedResult.data).toHaveLength(1);
+  });
+});
+
+describe('admin alert resolution query contract', () => {
+  it('parses query string false as false and true as true', () => {
+    expect(adminAlertListQuerySchema.parse({ page: '1', limit: '20', resolved: 'false' }).resolved).toBe(false);
+    expect(adminAlertListQuerySchema.parse({ page: '1', limit: '20', resolved: 'true' }).resolved).toBe(true);
+    expect(adminAlertListQuerySchema.parse({ page: '1', limit: '20' }).resolved).toBeUndefined();
   });
 });
