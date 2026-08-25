@@ -246,6 +246,12 @@ export interface RouteStop {
   pickup_priority_score: number;
   pickup_priority_level: 'URGENT' | 'HIGH' | 'NORMAL' | 'LOW' | 'INSUFFICIENT_DATA';
   pickup_priority_reason_codes: string[];
+  pickup_volume_forecast?: {
+    predicted_liters: number | null;
+    confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT_DATA';
+    sample_size: number;
+    reason_codes: string[];
+  };
   ward_center?: GeoPoint | null;
 }
 

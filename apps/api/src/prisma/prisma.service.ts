@@ -13,6 +13,7 @@ export interface GeographyPoint {
 
 export interface RouteOrderRow {
   orderId: string;
+  merchantId: string;
   merchantName: string;
   merchantAddress: string | null;
   merchantPhone: string | null;
@@ -78,6 +79,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       )
       SELECT
         o."id" AS "orderId",
+        m."id" AS "merchantId",
         m."business_name" AS "merchantName",
         m."address" AS "merchantAddress",
         u."phone" AS "merchantPhone",
@@ -109,6 +111,42 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       originLng,
       originLat,
       wardIds,
+    );
+  }
+
+  async findRecentCollectionHistoryByMerchantIds(
+    merchantIds: string[],
+    limitPerMerchant = 5,
+  ): Promise<Array<{ merchantId: string; actualLiters: number; collectedAt: Date }>> {
+    const uniqueMerchantIds = [...new Set(merchantIds)];
+    if (uniqueMerchantIds.length === 0) {
+      return [];
+    }
+    const safeLimit = Math.max(0, Math.floor(limitPerMerchant));
+    if (safeLimit === 0) {
+      return [];
+    }
+    return this.$queryRawUnsafe<Array<{ merchantId: string; actualLiters: number; collectedAt: Date }>>(
+      `WITH ranked_transactions AS (
+        SELECT
+          ct."merchant_id" AS "merchantId",
+          ct."actual_liters"::float8 AS "actualLiters",
+          ct."collected_at" AS "collectedAt",
+          ROW_NUMBER() OVER (
+            PARTITION BY ct."merchant_id"
+            ORDER BY ct."collected_at" DESC, ct."id" DESC
+          ) AS row_number
+        FROM "collection_transactions" ct
+        WHERE ct."merchant_id" = ANY($1::uuid[])
+          AND ct."deleted_at" IS NULL
+          AND ct."quality" = 'PASS'::"Quality"
+      )
+      SELECT "merchantId", "actualLiters", "collectedAt"
+      FROM ranked_transactions
+      WHERE row_number <= $2
+      ORDER BY "merchantId", "collectedAt" DESC` ,
+      uniqueMerchantIds,
+      safeLimit,
     );
   }
 }

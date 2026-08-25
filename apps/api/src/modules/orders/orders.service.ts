@@ -6,6 +6,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import type { AccessTokenPayload } from '../auth/auth.types';
 import { optimizeCollectionRoute } from './collection-route-optimizer';
 import { scoreMerchantPickupPriority } from './merchant-pickup-priority';
+import { forecastMerchantPickupVolume } from './merchant-pickup-volume-forecast';
 import { calculatePriority } from './priority';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -162,7 +163,18 @@ export class OrdersService {
     const maxCapacity = Number(collector.maxCapacityLiters);
     const wardIds = collector.collectorWards.map((item) => item.wardId);
     const rows = await this.prisma.findReadyOrdersForRoute(wardIds, originLat, originLng);
-    const now = Date.now();
+    const asOf = new Date();
+    const now = asOf.getTime();
+    const merchantIds = [...new Set(rows.map((row) => row.merchantId))];
+    const historyRows = rows.length === 0
+      ? []
+      : await this.prisma.findRecentCollectionHistoryByMerchantIds(merchantIds);
+    const historyByMerchant = new Map<string, Array<{ actual_liters: number; collected_at: Date }>>();
+    for (const historyRow of historyRows) {
+      const merchantHistory = historyByMerchant.get(historyRow.merchantId) ?? [];
+      merchantHistory.push({ actual_liters: historyRow.actualLiters, collected_at: historyRow.collectedAt });
+      historyByMerchant.set(historyRow.merchantId, merchantHistory);
+    }
     const scoredRows = rows
       .map((row, index) => {
         const daysSinceLastCollection = row.lastCollectedAt
@@ -175,7 +187,13 @@ export class OrdersService {
           distance_km: row.distanceM / 1000,
           has_active_pickup: false,
         });
-        return { row, index, pickupPriority };
+        const pickupVolumeForecast = forecastMerchantPickupVolume({
+          container_capacity_liters: row.containerCapacityLiters,
+          declared_estimated_liters: row.expectedLiters,
+          history: historyByMerchant.get(row.merchantId) ?? [],
+          as_of: asOf,
+        });
+        return { row, index, pickupPriority, pickupVolumeForecast };
       })
       .sort((left, right) =>
         right.pickupPriority.score - left.pickupPriority.score ||
@@ -195,10 +213,16 @@ export class OrdersService {
       pickup_priority_score: number;
       pickup_priority_level: 'URGENT' | 'HIGH' | 'NORMAL' | 'LOW' | 'INSUFFICIENT_DATA';
       pickup_priority_reason_codes: string[];
+      pickup_volume_forecast: {
+        predicted_liters: number | null;
+        confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT_DATA';
+        sample_size: number;
+        reason_codes: string[];
+      };
     }> = [];
     let total = 0;
     for (const scoredRow of scoredRows) {
-      const { row, pickupPriority } = scoredRow;
+      const { row, pickupPriority, pickupVolumeForecast } = scoredRow;
       if (total + row.expectedLiters > maxCapacity) {
         break;
       }
@@ -215,6 +239,7 @@ export class OrdersService {
         pickup_priority_score: pickupPriority.score,
         pickup_priority_level: pickupPriority.priority,
         pickup_priority_reason_codes: pickupPriority.reason_codes,
+        pickup_volume_forecast: pickupVolumeForecast,
       });
     }
     let orderedStops = stops;

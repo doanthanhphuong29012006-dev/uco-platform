@@ -10,6 +10,7 @@ const collector = {
 function routeRow(overrides: Partial<RouteOrderRow> = {}): RouteOrderRow {
   return {
     orderId: 'order-01',
+    merchantId: 'merchant-01',
     merchantName: 'Quán thử nghiệm',
     merchantAddress: 'Địa chỉ thử nghiệm',
     merchantPhone: '0900000000',
@@ -29,11 +30,13 @@ function routeRow(overrides: Partial<RouteOrderRow> = {}): RouteOrderRow {
 
 function createService(rows: RouteOrderRow[], maxCapacityLiters = 100) {
   const findReadyOrdersForRoute = jest.fn().mockResolvedValue(rows);
+  const findRecentCollectionHistoryByMerchantIds = jest.fn().mockResolvedValue([]);
   const prisma = {
     collector: { findUnique: jest.fn().mockResolvedValue({ ...collector, maxCapacityLiters }) },
     findReadyOrdersForRoute,
+    findRecentCollectionHistoryByMerchantIds,
   } as unknown as PrismaService;
-  return { service: new OrdersService(prisma), findReadyOrdersForRoute };
+  return { service: new OrdersService(prisma), findReadyOrdersForRoute, findRecentCollectionHistoryByMerchantIds };
 }
 
 describe('OrdersService currentRoute pickup priority', () => {
@@ -173,5 +176,88 @@ describe('OrdersService currentRoute pickup priority', () => {
     expect(result.route_optimization?.optimization_applied).toBe(true);
     expect(result.route_optimization?.reason_codes).toEqual(['ROUTE_OPTIMIZED', 'INVALID_STOP_COORDINATES']);
     expect(result.stops.map((stop) => stop.seq)).toEqual([1, 2]);
+  });
+
+  it('adds volume forecasts from one batched history query without changing route totals or priority', async () => {
+    const rows = [
+      routeRow({ orderId: 'merchant-a-order-1', merchantId: 'merchant-a', expectedLiters: 20, priority: 9 }),
+      routeRow({ orderId: 'merchant-a-order-2', merchantId: 'merchant-a', expectedLiters: 15, priority: 8 }),
+      routeRow({ orderId: 'merchant-b-order', merchantId: 'merchant-b', expectedLiters: 10, priority: 7 }),
+    ];
+    const { service, findRecentCollectionHistoryByMerchantIds } = createService(rows, 100);
+    findRecentCollectionHistoryByMerchantIds.mockResolvedValue([
+      { merchantId: 'merchant-a', actualLiters: 20, collectedAt: new Date('2026-01-09') },
+      { merchantId: 'merchant-a', actualLiters: 20, collectedAt: new Date('2026-01-08') },
+      { merchantId: 'merchant-a', actualLiters: 20, collectedAt: new Date('2026-01-07') },
+      { merchantId: 'merchant-a', actualLiters: 20, collectedAt: new Date('2026-01-06') },
+      { merchantId: 'merchant-a', actualLiters: 20, collectedAt: new Date('2026-01-05') },
+      { merchantId: 'merchant-b', actualLiters: 10, collectedAt: new Date('2026-01-09') },
+      { merchantId: 'merchant-b', actualLiters: 10, collectedAt: new Date('2026-01-08') },
+      { merchantId: 'merchant-b', actualLiters: 10, collectedAt: new Date('2026-01-07') },
+    ]);
+
+    const result = await service.currentRoute({ sub: 'collector-user' } as never, {});
+
+    expect(findRecentCollectionHistoryByMerchantIds).toHaveBeenCalledTimes(1);
+    expect(findRecentCollectionHistoryByMerchantIds).toHaveBeenCalledWith(['merchant-a', 'merchant-b']);
+    expect(result.stops).toHaveLength(3);
+    expect(result.stops.every((stop) => stop.pickup_volume_forecast)).toBe(true);
+    expect(result.stops.find((stop) => stop.order_id === 'merchant-a-order-1')?.pickup_volume_forecast).toMatchObject({
+      predicted_liters: 20,
+      confidence: 'HIGH',
+      sample_size: 5,
+    });
+    expect(result.stops.find((stop) => stop.order_id === 'merchant-b-order')?.pickup_volume_forecast).toMatchObject({
+      predicted_liters: 10,
+      confidence: 'MEDIUM',
+      sample_size: 3,
+    });
+    expect(result.stops.map((stop) => stop.expected_liters)).toEqual([20, 15, 10]);
+    expect(result.total_expected_liters).toBe(45);
+    expect(result.remaining_capacity_l).toBe(55);
+    expect(result.stops[0]).toHaveProperty('pickup_priority_score');
+    expect(result.stops[0].merchant.phone).toBe('0900000000');
+    expect(result.stops[0].ward_center).toEqual({ lat: 10, lng: 106 });
+    expect(result.route_optimization).toBeDefined();
+  });
+
+  it('uses declared estimate with LOW confidence when a merchant has no history', async () => {
+    const rows = [routeRow({ merchantId: 'merchant-without-history', expectedLiters: 18 })];
+    const { service, findRecentCollectionHistoryByMerchantIds } = createService(rows);
+
+    const result = await service.currentRoute({ sub: 'collector-user' } as never, {});
+
+    expect(findRecentCollectionHistoryByMerchantIds).toHaveBeenCalledTimes(1);
+    expect(result.stops[0]?.pickup_volume_forecast).toEqual({
+      predicted_liters: 18,
+      confidence: 'LOW',
+      sample_size: 0,
+      reason_codes: ['DECLARED_ESTIMATE_ONLY', 'LIMITED_HISTORY'],
+    });
+  });
+
+  it('keeps only five recent history samples per merchant in the forecast', async () => {
+    const rows = [routeRow({ merchantId: 'merchant-a', expectedLiters: 10 })];
+    const { service, findRecentCollectionHistoryByMerchantIds } = createService(rows);
+    findRecentCollectionHistoryByMerchantIds.mockResolvedValue(
+      Array.from({ length: 6 }, (_, index) => ({
+        merchantId: 'merchant-a',
+        actualLiters: 10,
+        collectedAt: new Date(`2026-01-${String(9 - index).padStart(2, '0')}`),
+      })),
+    );
+
+    const result = await service.currentRoute({ sub: 'collector-user' } as never, {});
+
+    expect(result.stops[0]?.pickup_volume_forecast?.sample_size).toBe(5);
+  });
+
+  it('does not query history for an empty route', async () => {
+    const { service, findRecentCollectionHistoryByMerchantIds } = createService([]);
+
+    const result = await service.currentRoute({ sub: 'collector-user' } as never, {});
+
+    expect(result.stops).toEqual([]);
+    expect(findRecentCollectionHistoryByMerchantIds).not.toHaveBeenCalled();
   });
 });
