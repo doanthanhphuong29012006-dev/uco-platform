@@ -1,8 +1,9 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import { Role, type AuthUser } from '@eco-oil/shared-types';
+import { AlertSeverity, Role, type AuthUser } from '@eco-oil/shared-types';
 import { createElement } from 'react';
 import { expect, test } from 'vitest';
 import { KpiCards } from './components/kpi-cards';
+import { AlertListItem } from './components/alerts-view';
 import { TransactionAnomalySummary } from './components/reconciliation-view';
 import { countStationsByFillForecast, sortStationsByFillForecast, StationForecastStatus, StationsTable } from './components/stations-view';
 import { calculateVariancePct, isAdminUser } from './lib/dashboard-utils';
@@ -74,6 +75,66 @@ test('chuyển reason code bất thường thành mô tả tiếng Việt', () =
 test('không render trạng thái bất thường khi API cũ chưa trả anomaly', () => {
   const { container } = render(createElement(TransactionAnomalySummary, {}));
   expect(container).toBeEmptyDOMElement();
+});
+
+const stationAlert = (severity: 'HIGH' | 'MEDIUM', details: unknown = {
+  station_id: 'station-01',
+  station_name: 'Trạm Hồ Gươm',
+  forecast_status: 'CRITICAL',
+  estimated_days_until_full: 2,
+}) => ({
+  id: `station-fill-${severity}`,
+  type: 'STATION_FILL_FORECAST' as never,
+  severity: severity === 'HIGH' ? AlertSeverity.HIGH : AlertSeverity.MEDIUM,
+  message: 'Dự báo trạm cần theo dõi.',
+  details,
+  created_at: '2026-08-25T10:00:00.000Z',
+  resolved_at: null,
+});
+
+test('hiển thị cảnh báo dự báo trạm HIGH và MEDIUM bằng nhãn tiếng Việt', () => {
+  const { rerender } = render(createElement(AlertListItem, {
+    alert: stationAlert('HIGH'),
+    resolvePending: false,
+    onResolve: () => undefined,
+  }));
+  expect(screen.getByText('Cần xử lý')).toBeInTheDocument();
+  expect(screen.getByText('Dự báo đầy trạm')).toBeInTheDocument();
+
+  rerender(createElement(AlertListItem, {
+    alert: stationAlert('MEDIUM', { station_id: 'station-02', forecast_status: 'WATCH', estimated_days_until_full: 0 }),
+    resolvePending: false,
+    onResolve: () => undefined,
+  }));
+  expect(screen.getByText('Theo dõi')).toBeInTheDocument();
+  expect(screen.getByText('Dự kiến đầy sau: 0 ngày')).toBeInTheDocument();
+});
+
+test('cảnh báo cũ vẫn hiển thị và thiếu field forecast không làm crash', () => {
+  const oldAlert = {
+    id: 'old-alert',
+    type: 'GEO_MISMATCH' as never,
+    severity: AlertSeverity.HIGH,
+    message: 'Vị trí cần kiểm tra.',
+    details: null,
+    created_at: '2026-08-25T10:00:00.000Z',
+    resolved_at: null,
+  };
+  const { container, rerender } = render(createElement(AlertListItem, {
+    alert: oldAlert,
+    resolvePending: false,
+    onResolve: () => undefined,
+  }));
+  expect(screen.getByText('Sai vị trí')).toBeInTheDocument();
+  expect(screen.getByText('Vị trí cần kiểm tra.')).toBeInTheDocument();
+
+  rerender(createElement(AlertListItem, {
+    alert: stationAlert('HIGH', null),
+    resolvePending: false,
+    onResolve: () => undefined,
+  }));
+  expect(screen.getByText('Trạm: Trạm chưa xác định')).toBeInTheDocument();
+  expect(within(container).queryByText(/Dự kiến đầy sau/)).not.toBeInTheDocument();
 });
 
 const stationForecast = (
