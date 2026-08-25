@@ -131,6 +131,64 @@ export function getPickupVolumeForecastDisplay(stop: RouteStop): PickupVolumeFor
   };
 }
 
+export type PickupVolumeDeviationLevel = 'NORMAL' | 'REVIEW' | 'HIGH';
+
+export type PickupVolumeDeviationResult = {
+  level: PickupVolumeDeviationLevel;
+  predicted_liters: number;
+  actual_liters: number;
+  deviation_liters: number;
+  deviation_pct: number;
+};
+
+export function evaluatePickupVolumeDeviation(stop: RouteStop, actualLiters: unknown): PickupVolumeDeviationResult | null {
+  const candidate = (stop as RouteStop & { pickup_volume_forecast?: unknown }).pickup_volume_forecast;
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
+  const metadata = candidate as { predicted_liters?: unknown; confidence?: unknown; reason_codes?: unknown };
+  const predictedLiters = metadata.predicted_liters;
+  const confidence = metadata.confidence;
+  const reasonCodes = Array.isArray(metadata.reason_codes) ? metadata.reason_codes : [];
+  if (!isValidForecastLiters(predictedLiters) || predictedLiters <= 0) return null;
+  if (!isValidForecastLiters(actualLiters)) return null;
+  if (confidence !== 'HIGH' && confidence !== 'MEDIUM') return null;
+  if (reasonCodes.includes('DECLARED_ESTIMATE_ONLY')) return null;
+
+  const deviationLiters = actualLiters - predictedLiters;
+  const deviationPct = Math.abs(deviationLiters) / predictedLiters;
+  if (!Number.isFinite(deviationLiters) || !Number.isFinite(deviationPct)) return null;
+  const level: PickupVolumeDeviationLevel = deviationPct <= 0.2 ? 'NORMAL' : deviationPct <= 0.35 ? 'REVIEW' : 'HIGH';
+  return {
+    level,
+    predicted_liters: predictedLiters,
+    actual_liters: actualLiters,
+    deviation_liters: deviationLiters,
+    deviation_pct: deviationPct,
+  };
+}
+
+function formatDeviationPercent(value: number): string {
+  return `${(value * 100).toLocaleString('vi-VN', { maximumFractionDigits: 1 })}%`;
+}
+
+function formatSignedDeviationLiters(value: number): string {
+  const formatted = Math.abs(value).toLocaleString('vi-VN', { maximumFractionDigits: 1 });
+  return `${value >= 0 ? '+' : '-'}${formatted} lít`;
+}
+
+export function getPickupVolumeDeviationKey(deviation: PickupVolumeDeviationResult | null): string | null {
+  return deviation?.level === 'HIGH'
+    ? `${deviation.predicted_liters}:${deviation.actual_liters}:${deviation.deviation_pct}`
+    : null;
+}
+
+export function requiresPickupVolumeAcknowledgement(
+  deviation: PickupVolumeDeviationResult | null,
+  acknowledgementKey: string | null,
+): boolean {
+  const key = getPickupVolumeDeviationKey(deviation);
+  return key !== null && key !== acknowledgementKey;
+}
+
 type RouteOptimizationMetadata = NonNullable<CurrentRouteResponse['route_optimization']>;
 
 export interface RouteOptimizationDisplay {
@@ -826,6 +884,7 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
   const [success, setSuccess] = useState(false);
   const [locationFallback, setLocationFallback] = useState(false);
   const [clientUuid] = useState(() => crypto.randomUUID());
+  const [highDeviationAcknowledgement, setHighDeviationAcknowledgement] = useState<string | null>(null);
   const capacity = Number(container.capacity_liters ?? 0);
   const enteredLiters = liters.trim() === '' ? null : Number(liters);
   const actualKg = kilograms.trim() === '' ? null : Number(kilograms);
@@ -837,6 +896,13 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
   const invalidLiters = actualLiters > maxLiters || (hasLiters && (!Number.isFinite(actualLiters) || actualLiters <= 0));
   const invalidKg = actualKg !== null && (!Number.isFinite(actualKg) || actualKg < 0);
   const invalidMass = (!hasLiters && !hasKilograms) || invalidLiters || invalidKg;
+  const pickupVolumeForecast = getPickupVolumeForecastDisplay(stop);
+  const pickupVolumeDeviation = evaluatePickupVolumeDeviation(stop, actualLiters);
+  const highDeviationKey = getPickupVolumeDeviationKey(pickupVolumeDeviation);
+  useEffect(() => {
+    setHighDeviationAcknowledgement(null);
+  }, [highDeviationKey]);
+  const highDeviationNeedsAcknowledgement = requiresPickupVolumeAcknowledgement(pickupVolumeDeviation, highDeviationAcknowledgement);
   const gradeRequiresPhoto = grade === OilGrade.B || grade === OilGrade.C || suspectedAdulteration;
   const gradePhotoMissing = isGradePhotoMissing(grade, suspectedAdulteration, photos.length);
   const submitBlockReason = grade === null
@@ -847,7 +913,9 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
         ? 'Hạng B, hạng C hoặc nghi ngờ pha lẫn cần ít nhất 1 ảnh trước khi gửi.'
         : quality === Quality.FLAG && photos.length === 0
           ? 'Giao dịch cần kiểm tra bắt buộc có ít nhất 1 ảnh.'
-          : null;
+          : highDeviationNeedsAcknowledgement
+            ? 'Vui lòng kiểm tra lại số lít và xác nhận tiếp tục.'
+            : null;
 
   function adjustLiters(amount: number): void {
     const next = Math.max(0, (Number(liters) || 0) + amount);
@@ -907,6 +975,10 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
       setError('Chất lượng cần kiểm tra bắt buộc có ít nhất 1 ảnh.');
       return;
     }
+    if (highDeviationNeedsAcknowledgement) {
+      setError('Vui lòng kiểm tra lại số lít và xác nhận tiếp tục.');
+      return;
+    }
     if (saving || success) {
       return;
     }
@@ -964,7 +1036,7 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
     <div className="page-content collector-content">
       <button className="back-button" onClick={onBack} disabled={saving}>← Quay lại quét mã</button>
        <header className="collector-screen-heading"><p className="eyebrow">GHI NHẬN THU GOM</p><h1>{container.merchant.name}</h1><p>{containerCode}</p></header>
-      <section className="entry-target-card"><span>Số lít dự kiến</span><strong>{formatLiters(stop.expected_liters)}</strong><small>Mã giao dịch: {clientUuid.slice(0, 8)}…</small>{locationFallback ? <p className="location-banner">Không lấy được vị trí GPS, đang dùng vị trí trung tâm phường. Giao dịch có thể bị đánh dấu cần kiểm tra.</p> : null}</section>
+      <section className="entry-target-card"><span>Số lít quán khai</span><strong>{formatLiters(stop.expected_liters)}</strong>{pickupVolumeForecast ? <div className="entry-volume-forecast"><strong>{pickupVolumeForecast.predictedLiters === null ? 'AI chưa đủ dữ liệu để dự báo sản lượng.' : `AI dự báo: khoảng ${formatPickupVolumeLiters(pickupVolumeForecast.predictedLiters)}`}</strong><small>{pickupVolumeForecast.confidenceLabel}</small>{pickupVolumeForecast.declaredOnly ? <small>AI chưa có đủ lịch sử riêng cho quán này.</small> : null}</div> : null}<small>Mã giao dịch: {clientUuid.slice(0, 8)}…</small>{locationFallback ? <p className="location-banner">Không lấy được vị trí GPS, đang dùng vị trí trung tâm phường. Giao dịch có thể bị đánh dấu cần kiểm tra.</p> : null}</section>
       <section className="quality-card">
         <p className="section-label">Phân hạng dầu</p>
         <OilGradeSelector value={grade} disabled={saving} onChange={setGrade} />
@@ -980,6 +1052,9 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
         <label htmlFor="actual-liters">Số lít thực tế</label>
         <div className="large-number-input"><button onClick={() => adjustLiters(-0.5)} disabled={saving}>−</button><input id="actual-liters" type="number" inputMode="decimal" step="0.5" min="0" value={liters} onChange={(event) => setLiters(event.target.value)} placeholder="0.0" /><span>lít</span><button onClick={() => adjustLiters(0.5)} disabled={saving}>+</button></div>
         <p className={invalidLiters && (liters || litersDerivedFromKilograms) ? 'error-text' : 'field-help'}>{litersDerivedFromKilograms ? `Số lít ước tính từ khối lượng: ${actualLiters.toFixed(2)} lít · dung tích tối đa ${maxLiters.toFixed(1)} lít` : `Dung tích ${formatLiters(capacity)} · tối đa ${maxLiters.toFixed(1)} lít`}</p>
+        {pickupVolumeDeviation?.level === 'NORMAL' ? <p className="pickup-volume-deviation pickup-volume-deviation-normal">Sản lượng nằm gần mức AI dự báo.</p> : null}
+        {pickupVolumeDeviation?.level === 'REVIEW' ? <p className="pickup-volume-deviation pickup-volume-deviation-review">Số lít đang chênh {formatDeviationPercent(pickupVolumeDeviation.deviation_pct)} so với AI dự báo. Hãy kiểm tra lại số nhập và mức dầu trong can.</p> : null}
+        {pickupVolumeDeviation?.level === 'HIGH' ? <div className="pickup-volume-deviation pickup-volume-deviation-high"><strong>Chênh lệch rất cao so với AI dự báo.</strong><span>AI dự báo {formatPickupVolumeLiters(pickupVolumeDeviation.predicted_liters)}</span><span>Thực tế nhập {formatPickupVolumeLiters(pickupVolumeDeviation.actual_liters)}</span><span>Chênh lệch {formatSignedDeviationLiters(pickupVolumeDeviation.deviation_liters)} ({formatDeviationPercent(pickupVolumeDeviation.deviation_pct)})</span><label className="pickup-volume-ack"><input type="checkbox" checked={highDeviationAcknowledgement === highDeviationKey} onChange={(event) => setHighDeviationAcknowledgement(event.target.checked ? highDeviationKey : null)} disabled={saving} /><span>Tôi đã kiểm tra lại số lít và xác nhận tiếp tục.</span></label></div> : null}
       </section>
       <section className="quality-card"><p className="section-label">Chất lượng dầu</p><div className="quality-options"><button className={quality === Quality.PASS ? 'quality-option selected' : 'quality-option'} onClick={() => setQuality(Quality.PASS)} disabled={saving}>✓ Đạt</button><button className={quality === Quality.FLAG ? 'quality-option selected flag-selected' : 'quality-option'} onClick={() => setQuality(Quality.FLAG)} disabled={saving}>⚠ Cần kiểm tra</button></div></section>
       {quality === Quality.FLAG || gradeRequiresPhoto ? <GradePhotoPicker photos={photos} busy={takingPhoto} disabled={saving} onTakePhoto={() => { void takePhoto(); }} onChooseFile={(file) => { void choosePhotoFile(file); }} onRemovePhoto={removePhoto} /> : null}

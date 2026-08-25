@@ -246,12 +246,22 @@ select, input { width: 100%; min-height: 48px; border: 1px solid #cfe0d7; border
 .verified-container-card .primary-button { width: 100%; margin-top: 8px; }
 .entry-target-card { display: grid; gap: 6px; margin-bottom: 13px; }
 .entry-target-card strong { color: var(--green); font-size: 1.2rem; }
+.entry-volume-forecast { display: grid; gap: 3px; margin-top: 2px; padding: 8px 10px; border-left: 4px solid var(--green); border-radius: 9px; background: #f3faf6; color: var(--green-dark); }
+.entry-volume-forecast strong { font-size: .82rem; }
+.entry-volume-forecast small { color: var(--muted); font-size: .74rem; }
 .liter-entry-card label { display: block; margin-bottom: 10px; font-size: .86rem; font-weight: 800; }
 .large-number-input { display: grid; grid-template-columns: 49px 1fr 43px 49px; align-items: center; gap: 7px; }
 .large-number-input input { min-height: 65px; padding: 0 5px; border: 0; border-bottom: 2px solid var(--green); border-radius: 0; outline: 0; text-align: center; font-size: 2.15rem; font-weight: 850; }
 .large-number-input button { min-height: 49px; padding: 0; border: 0; border-radius: 14px; color: var(--green); background: var(--mint); font-size: 1.7rem; font-weight: 750; }
 .large-number-input span { margin-left: -2px; color: var(--muted); font-size: .78rem; }
 .field-help { margin: 12px 0 0; color: var(--muted); font-size: .77rem; }
+.pickup-volume-deviation { margin: 10px 0 0; padding: 10px 11px; border-radius: 11px; font-size: .78rem; line-height: 1.35; }
+.pickup-volume-deviation-normal { color: #276d50; background: #effaf2; }
+.pickup-volume-deviation-review { color: #8a631c; background: #fff8e8; }
+.pickup-volume-deviation-high { display: grid; gap: 4px; color: #8d3030; background: #fff2f2; }
+.pickup-volume-deviation-high strong { font-size: .82rem; }
+.pickup-volume-ack { display: flex !important; align-items: center; gap: 8px; min-height: 44px; margin: 3px 0 0 !important; font-size: .76rem !important; font-weight: 700 !important; }
+.pickup-volume-ack input { flex: 0 0 auto; width: 20px; height: 20px; accent-color: #b84a4a; }
 .quality-card { margin-top: 13px; }
 .quality-card .section-label { margin-bottom: 10px; }
 .quality-options { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }

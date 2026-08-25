@@ -346,3 +346,56 @@ test('pickup volume forecast handles null, legacy metadata and invalid values sa
   assert.equal(formatPickupVolumeLiters(Number.NaN), null);
   assert.equal(formatPickupVolumeLiters(Number.POSITIVE_INFINITY), null);
 });
+
+test('pickup volume deviation classifies exact boundaries and keeps signed liters', async () => {
+  const { evaluatePickupVolumeDeviation } = await loadPickupPriorityHelpers();
+  const forecastedStop = stop({ pickup_volume_forecast: {
+    predicted_liters: 20,
+    confidence: 'HIGH',
+    sample_size: 5,
+    reason_codes: ['HISTORY_WEIGHTED'],
+  } });
+
+  assert.equal(evaluatePickupVolumeDeviation(forecastedStop, 24)?.level, 'NORMAL');
+  assert.equal(evaluatePickupVolumeDeviation(forecastedStop, 24.1)?.level, 'REVIEW');
+  assert.equal(evaluatePickupVolumeDeviation(forecastedStop, 27)?.level, 'REVIEW');
+  assert.equal(evaluatePickupVolumeDeviation(forecastedStop, 27.1)?.level, 'HIGH');
+  assert.deepEqual(evaluatePickupVolumeDeviation(forecastedStop, 10), {
+    level: 'HIGH',
+    predicted_liters: 20,
+    actual_liters: 10,
+    deviation_liters: -10,
+    deviation_pct: 0.5,
+  });
+});
+
+test('pickup volume deviation uses derived liters and safely skips low-confidence or invalid metadata', async () => {
+  const { evaluatePickupVolumeDeviation, getPickupVolumeDeviationKey, requiresPickupVolumeAcknowledgement } = await loadPickupPriorityHelpers();
+  const highConfidenceStop = stop({ pickup_volume_forecast: {
+    predicted_liters: 20,
+    confidence: 'MEDIUM',
+    sample_size: 3,
+    reason_codes: [],
+  } });
+  const derivedLiters = 22.75 / 0.91;
+  const high = evaluatePickupVolumeDeviation(highConfidenceStop, derivedLiters);
+  assert.equal(high?.actual_liters, derivedLiters);
+  assert.equal(high?.level, 'REVIEW');
+
+  for (const confidence of ['LOW', 'INSUFFICIENT_DATA'] as const) {
+    assert.equal(evaluatePickupVolumeDeviation(stop({ pickup_volume_forecast: { predicted_liters: 20, confidence, sample_size: 1, reason_codes: [] } }), 40), null);
+  }
+  assert.equal(evaluatePickupVolumeDeviation(stop({ pickup_volume_forecast: { predicted_liters: 20, confidence: 'HIGH', sample_size: 5, reason_codes: ['DECLARED_ESTIMATE_ONLY'] } }), 40), null);
+  assert.equal(evaluatePickupVolumeDeviation(stop({ pickup_volume_forecast: { predicted_liters: 0, confidence: 'HIGH', sample_size: 5, reason_codes: [] } }), 40), null);
+  assert.equal(evaluatePickupVolumeDeviation(stop({ pickup_volume_forecast: { predicted_liters: Number.NaN, confidence: 'HIGH', sample_size: 5, reason_codes: [] } }), 40), null);
+  assert.equal(evaluatePickupVolumeDeviation(highConfidenceStop, Number.POSITIVE_INFINITY), null);
+  assert.equal(evaluatePickupVolumeDeviation(highConfidenceStop, -1), null);
+
+  const highResult = evaluatePickupVolumeDeviation(highConfidenceStop, 50);
+  const highKey = getPickupVolumeDeviationKey(highResult);
+  assert.equal(requiresPickupVolumeAcknowledgement(highResult, null), true);
+  assert.equal(requiresPickupVolumeAcknowledgement(highResult, highKey), false);
+  assert.equal(requiresPickupVolumeAcknowledgement(evaluatePickupVolumeDeviation(highConfidenceStop, 24), highKey), false);
+  const changedHigh = evaluatePickupVolumeDeviation(highConfidenceStop, 60);
+  assert.equal(requiresPickupVolumeAcknowledgement(changedHigh, highKey), true);
+});
