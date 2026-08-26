@@ -85,6 +85,23 @@ export enum AlertSeverity {
   HIGH = 'HIGH',
 }
 
+export enum AnomalyFeedbackVerdict {
+  CONFIRMED_ANOMALY = 'CONFIRMED_ANOMALY',
+  FALSE_POSITIVE = 'FALSE_POSITIVE',
+  UNSURE = 'UNSURE',
+}
+
+export type AnomalyRiskLevel = 'NORMAL' | 'REVIEW' | 'HIGH_RISK';
+
+export interface AdminAnomalyReason {
+  code: string;
+  label: string;
+  description: string;
+  contribution: number | null;
+  evidence: Record<string, unknown>;
+  severity: AlertSeverity;
+}
+
 export type UserRole = Role;
 export type QualityStatus = Quality;
 
@@ -453,10 +470,64 @@ export interface AdminOverviewResponse {
 
 export interface AdminTransactionAnomaly {
   score: number;
-  level: 'NORMAL' | 'REVIEW' | 'HIGH_RISK';
+  level: AnomalyRiskLevel;
   reasons: string[];
+  reason_details?: AdminAnomalyReason[];
+  explanation_summary?: string;
   explanation: Record<string, unknown>;
   historySize: number;
+}
+
+export interface AdminAnomalyFeedback {
+  id: string;
+  verdict: AnomalyFeedbackVerdict;
+  note: string | null;
+  reviewer_user_id: string;
+  risk_score_snapshot: number;
+  risk_level_snapshot: AnomalyRiskLevel;
+  reasons_snapshot: AdminAnomalyReason[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminAiAnomalyItem {
+  id: string;
+  transaction_id: string;
+  merchant_id: string;
+  merchant_name: string;
+  collector_name: string | null;
+  actual_liters: number;
+  actual_kg: number | null;
+  quality: Quality;
+  grade: OilGrade | null;
+  collected_at: string;
+  risk_score: number;
+  risk_level: AnomalyRiskLevel;
+  explanation_summary: string;
+  reason_codes: AdminAnomalyReason[];
+  history_size: number;
+  feedback: AdminAnomalyFeedback | null;
+}
+
+export interface AdminAiAnomaliesResponse extends PagedResponse<AdminAiAnomalyItem> {
+  window_days: 30 | 90 | 180;
+}
+
+export interface AdminAiAnomalyPerformanceResponse {
+  window_days: 30 | 90 | 180;
+  total_alerts: number;
+  reviewed_count: number;
+  unreviewed_count: number;
+  feedback_coverage_percent: number;
+  confirmed_count: number;
+  false_positive_count: number;
+  unsure_count: number;
+  confirmed_rate_percent: number | null;
+  false_positive_rate_percent: number | null;
+  breakdown_by_risk_level: Array<{ risk_level: AnomalyRiskLevel; count: number }>;
+  breakdown_by_reason_code: Array<{ code: string; count: number }>;
+  recent_reviewed_items: AdminAiAnomalyItem[];
+  explanation: string;
 }
 
 export interface AdminReconciliationTransaction {

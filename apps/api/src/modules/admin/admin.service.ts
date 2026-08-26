@@ -9,6 +9,9 @@ import type {
   AdminOverviewQueryInput,
   AdminReconciliationQueryInput,
   AdminAiPerformancePickupForecastQueryInput,
+  AdminAiAnomalyListQueryInput,
+  AdminAiAnomalyPerformanceQueryInput,
+  AdminAiAnomalyFeedbackInput,
   AdminStationListQueryInput,
   AdminCollectorCreateInput,
   AdminCollectorPatchInput,
@@ -380,6 +383,12 @@ export class AdminService {
   private async scoreReconciliationTransactions(
     transactions: ReconciliationTransaction[],
   ): Promise<Map<string, ReconciliationAnomaly>> {
+    return this.scoreAnomalyTransactions(transactions);
+  }
+
+  private async scoreAnomalyTransactions(
+    transactions: ReconciliationTransaction[],
+  ): Promise<Map<string, ReconciliationAnomaly>> {
     const result = new Map<string, ReconciliationAnomaly>();
     if (transactions.length === 0) return result;
 
@@ -428,6 +437,177 @@ export class AdminService {
       result.set(transaction.id, { ...anomaly, historySize: history.length });
     }
     return result;
+  }
+
+  private async loadAnomalyCandidates(windowStart: Date, windowEnd: Date): Promise<ReconciliationTransaction[]> {
+    const rows = await this.prisma.collectionTransaction.findMany({
+      where: { deletedAt: null, collectedAt: { gte: windowStart, lte: windowEnd } },
+      orderBy: [{ collectedAt: 'desc' }, { id: 'desc' }],
+      select: {
+        id: true,
+        merchantId: true,
+        actualLiters: true,
+        actualKg: true,
+        quality: true,
+        grade: true,
+        collectedAt: true,
+        merchant: { select: { businessName: true } },
+        collector: { select: { displayName: true } },
+      },
+    });
+    return rows.map((row) => ({
+      id: row.id,
+      merchant_id: row.merchantId,
+      merchant_name: row.merchant.businessName,
+      collector_name: row.collector.displayName,
+      liters: Number(row.actualLiters),
+      kilograms: row.actualKg === null ? null : Number(row.actualKg),
+      quality: row.quality,
+      grade: row.grade,
+      collected_at: row.collectedAt,
+    } as ReconciliationTransaction));
+  }
+
+  private async feedbackByTransactionIds(transactionIds: string[]) {
+    if (transactionIds.length === 0) return new Map<string, Awaited<ReturnType<typeof this.prisma.anomalyFeedback.findMany>>[number]>();
+    const feedback = await this.prisma.anomalyFeedback.findMany({
+      where: { transactionId: { in: transactionIds } },
+      orderBy: { updatedAt: 'desc' },
+    });
+    return new Map(feedback.map((item) => [item.transactionId, item]));
+  }
+
+  private serializeAnomalyFeedback(feedback: Awaited<ReturnType<typeof this.prisma.anomalyFeedback.findMany>>[number] | null) {
+    if (!feedback) return null;
+    return {
+      id: feedback.id,
+      verdict: feedback.verdict,
+      note: feedback.note,
+      reviewer_user_id: feedback.reviewerUserId,
+      risk_score_snapshot: feedback.riskScoreSnapshot,
+      risk_level_snapshot: feedback.riskLevelSnapshot,
+      reasons_snapshot: Array.isArray(feedback.reasonsSnapshot) ? feedback.reasonsSnapshot : [],
+      created_at: feedback.createdAt.toISOString(),
+      updated_at: feedback.updatedAt.toISOString(),
+    };
+  }
+
+  private anomalyItem(
+    transaction: ReconciliationTransaction,
+    anomaly: ReconciliationAnomaly,
+    feedback: Awaited<ReturnType<typeof this.prisma.anomalyFeedback.findMany>>[number] | null,
+  ) {
+    return {
+      id: `anomaly:${transaction.id}`,
+      transaction_id: transaction.id,
+      merchant_id: transaction.merchant_id,
+      merchant_name: typeof transaction.merchant_name === 'string' ? transaction.merchant_name : 'Quán chưa xác định',
+      collector_name: typeof transaction.collector_name === 'string' ? transaction.collector_name : null,
+      actual_liters: this.numberOrNull(transaction.liters) ?? 0,
+      actual_kg: this.numberOrNull(transaction.kilograms),
+      quality: transaction.quality,
+      grade: transaction.grade ?? null,
+      collected_at: new Date(transaction.collected_at).toISOString(),
+      risk_score: anomaly.score,
+      risk_level: anomaly.level,
+      explanation_summary: anomaly.explanationSummary,
+      reason_codes: anomaly.reasonDetails,
+      history_size: anomaly.historySize,
+      feedback: this.serializeAnomalyFeedback(feedback),
+    };
+  }
+
+  async listAiAnomalies(query: AdminAiAnomalyListQueryInput) {
+    const asOf = new Date();
+    const windowStart = new Date(asOf.getTime() - query.window_days * DAY_MS);
+    const candidates = await this.loadAnomalyCandidates(windowStart, asOf);
+    const anomalyByTransactionId = await this.scoreAnomalyTransactions(candidates);
+    const feedbackByTransaction = await this.feedbackByTransactionIds(candidates.map((candidate) => candidate.id));
+    const rows = candidates
+      .filter((candidate) => {
+        const anomaly = anomalyByTransactionId.get(candidate.id);
+        return anomaly && anomaly.level !== 'NORMAL' && (!query.risk_level || anomaly.level === query.risk_level);
+      })
+      .filter((candidate) => !query.verdict || feedbackByTransaction.get(candidate.id)?.verdict === query.verdict)
+      .map((candidate) => this.anomalyItem(candidate, anomalyByTransactionId.get(candidate.id)!, feedbackByTransaction.get(candidate.id) ?? null));
+    const offset = (query.page - 1) * query.limit;
+    return {
+      window_days: query.window_days as 30 | 90 | 180,
+      data: rows.slice(offset, offset + query.limit),
+      meta: { page: query.page, limit: query.limit, total: rows.length },
+    };
+  }
+
+  async updateAiAnomalyFeedback(transactionId: string, body: AdminAiAnomalyFeedbackInput, reviewerUserId: string) {
+    const transaction = await this.prisma.collectionTransaction.findUnique({
+      where: { id: transactionId },
+      select: { id: true, merchantId: true, actualLiters: true, actualKg: true, collectedAt: true },
+    });
+    if (!transaction) throw new NotFoundException('Không tìm thấy giao dịch bất thường.');
+    const candidate = {
+      id: transaction.id,
+      merchant_id: transaction.merchantId,
+      liters: Number(transaction.actualLiters),
+      kilograms: transaction.actualKg === null ? null : Number(transaction.actualKg),
+      collected_at: transaction.collectedAt,
+    } as ReconciliationTransaction;
+    const anomaly = (await this.scoreAnomalyTransactions([candidate])).get(transaction.id);
+    if (!anomaly) throw new BadRequestException('Không thể chấm điểm giao dịch này.');
+    const reasonsSnapshot = JSON.parse(JSON.stringify(anomaly.reasonDetails)) as Prisma.InputJsonValue;
+    const saved = await this.prisma.anomalyFeedback.upsert({
+      where: { transactionId },
+      create: {
+        transactionId,
+        verdict: body.verdict,
+        note: body.note ?? null,
+        reviewerUserId,
+        riskScoreSnapshot: anomaly.score,
+        riskLevelSnapshot: anomaly.level,
+        reasonsSnapshot,
+      },
+      update: {
+        verdict: body.verdict,
+        note: body.note ?? null,
+        reviewerUserId,
+        riskScoreSnapshot: anomaly.score,
+        riskLevelSnapshot: anomaly.level,
+        reasonsSnapshot,
+      },
+    });
+    return this.serializeAnomalyFeedback(saved);
+  }
+
+  async aiAnomalyPerformance(query: AdminAiAnomalyPerformanceQueryInput) {
+    const asOf = new Date();
+    const windowStart = new Date(asOf.getTime() - query.window_days * DAY_MS);
+    const candidates = await this.loadAnomalyCandidates(windowStart, asOf);
+    const anomalyByTransactionId = await this.scoreAnomalyTransactions(candidates);
+    const alertCandidates = candidates.filter((candidate) => anomalyByTransactionId.get(candidate.id)?.level !== 'NORMAL');
+    const feedbackByTransaction = await this.feedbackByTransactionIds(alertCandidates.map((candidate) => candidate.id));
+    const items = alertCandidates.map((candidate) => this.anomalyItem(candidate, anomalyByTransactionId.get(candidate.id)!, feedbackByTransaction.get(candidate.id) ?? null));
+    const reviewed = items.filter((item) => item.feedback !== null);
+    const confirmedCount = reviewed.filter((item) => item.feedback?.verdict === 'CONFIRMED_ANOMALY').length;
+    const falsePositiveCount = reviewed.filter((item) => item.feedback?.verdict === 'FALSE_POSITIVE').length;
+    const unsureCount = reviewed.filter((item) => item.feedback?.verdict === 'UNSURE').length;
+    const reviewedCount = reviewed.length;
+    const reasonCounts = new Map<string, number>();
+    for (const item of items) for (const reason of item.reason_codes) reasonCounts.set(reason.code, (reasonCounts.get(reason.code) ?? 0) + 1);
+    return {
+      window_days: query.window_days as 30 | 90 | 180,
+      total_alerts: items.length,
+      reviewed_count: reviewedCount,
+      unreviewed_count: items.length - reviewedCount,
+      feedback_coverage_percent: items.length === 0 ? 0 : Number(((reviewedCount / items.length) * 100).toFixed(2)),
+      confirmed_count: confirmedCount,
+      false_positive_count: falsePositiveCount,
+      unsure_count: unsureCount,
+      confirmed_rate_percent: reviewedCount === 0 ? null : Number(((confirmedCount / reviewedCount) * 100).toFixed(2)),
+      false_positive_rate_percent: reviewedCount === 0 ? null : Number(((falsePositiveCount / reviewedCount) * 100).toFixed(2)),
+      breakdown_by_risk_level: (['NORMAL', 'REVIEW', 'HIGH_RISK'] as const).map((riskLevel) => ({ risk_level: riskLevel, count: items.filter((item) => item.risk_level === riskLevel).length })),
+      breakdown_by_reason_code: [...reasonCounts.entries()].map(([code, count]) => ({ code, count })).sort((left, right) => right.count - left.count || left.code.localeCompare(right.code)),
+      recent_reviewed_items: [...reviewed].sort((left, right) => (right.feedback?.updated_at ?? '').localeCompare(left.feedback?.updated_at ?? '')).slice(0, 10),
+      explanation: 'Các tỷ lệ chỉ được tính trên những cảnh báo đã được Admin đánh giá; UNSURE không được xem là kết luận đúng hoặc sai.',
+    };
   }
 
   private withReconciliationAnomaly(

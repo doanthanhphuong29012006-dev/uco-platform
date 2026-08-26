@@ -1,5 +1,5 @@
 import type { ConfigService } from '@nestjs/config';
-import { AlertType } from '@eco-oil/shared-types';
+import { AlertType, AnomalyFeedbackVerdict } from '@eco-oil/shared-types';
 import { adminAlertListQuerySchema } from '@eco-oil/validation';
 import { AdminService } from './admin.service';
 import type { PrismaService } from '../../prisma/prisma.service';
@@ -241,6 +241,120 @@ describe('AdminService station fill forecast alerts integration', () => {
     expect(listFillAlertCandidates).not.toHaveBeenCalled();
     expect(resolvedResult.data).toHaveLength(1);
     expect(typedResult.data).toHaveLength(1);
+  });
+});
+
+describe('AdminService anomaly feedback loop', () => {
+  const targetId = '00000000-0000-4000-8000-000000000001';
+  const targetDate = new Date(Date.now() - 24 * 60 * 60 * 1_000);
+  const history = Array.from({ length: 6 }, (_, index) => ({
+    id: `10000000-0000-4000-8000-00000000000${index + 1}`,
+    merchantId,
+    actualKg: 18.2,
+    actualLiters: 20,
+    collectedAt: new Date(targetDate.getTime() - (index + 1) * 24 * 60 * 60 * 1_000),
+  }));
+  const row = {
+    id: targetId,
+    merchantId,
+    actualLiters: 60,
+    actualKg: 100,
+    quality: 'PASS',
+    grade: 'A',
+    collectedAt: targetDate,
+    merchant: { businessName: 'Quán bất thường' },
+    collector: { displayName: 'Người thu gom' },
+  };
+
+  function createAnomalyService(feedback: Array<Record<string, unknown>> = []) {
+    const candidateFindMany = jest.fn().mockResolvedValue([row]);
+    const feedbackFindMany = jest.fn().mockResolvedValue(feedback);
+    const findUnique = jest.fn().mockResolvedValue(row);
+    const upsert = jest.fn().mockResolvedValue({
+      id: 'feedback-1',
+      transactionId: targetId,
+      verdict: 'CONFIRMED_ANOMALY',
+      note: 'Đã đối chiếu',
+      reviewerUserId: 'admin-1',
+      riskScoreSnapshot: 80,
+      riskLevelSnapshot: 'REVIEW',
+      reasonsSnapshot: [],
+      createdAt: targetDate,
+      updatedAt: targetDate,
+    });
+    const prisma = {
+      collectionTransaction: { findMany: candidateFindMany, findUnique },
+      anomalyFeedback: { findMany: feedbackFindMany, upsert },
+    } as unknown as PrismaService;
+    candidateFindMany.mockImplementation(async (args: { select?: Record<string, unknown> }) =>
+      args.select?.merchant ? [row] : history,
+    );
+    const config = { get: jest.fn((_key: string, fallback: unknown) => fallback) } as unknown as ConfigService;
+    const stations = { listFillAlertCandidates: jest.fn().mockResolvedValue([]) } as unknown as StationsService;
+    return {
+      service: new AdminService(prisma, config, stations),
+      candidateFindMany,
+      feedbackFindMany,
+      findUnique,
+      upsert,
+    };
+  }
+
+  it('returns explainable anomaly items with a structured reason and feedback', async () => {
+    const { service, candidateFindMany, feedbackFindMany } = createAnomalyService();
+    const result = await service.listAiAnomalies({ window_days: 90, page: 1, limit: 20, include_inactive: false });
+
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0]).toMatchObject({
+      transaction_id: targetId,
+      merchant_name: 'Quán bất thường',
+      risk_level: 'REVIEW',
+      reason_codes: expect.arrayContaining([expect.objectContaining({ code: 'MASS_OR_VOLUME_OUTLIER' })]),
+      feedback: null,
+    });
+    expect(candidateFindMany).toHaveBeenCalledTimes(2);
+    expect(feedbackFindMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('upserts feedback with the current score and reasons snapshot', async () => {
+    const { service, upsert, findUnique } = createAnomalyService();
+    const result = await service.updateAiAnomalyFeedback(targetId, { verdict: AnomalyFeedbackVerdict.CONFIRMED_ANOMALY, note: 'Đã kiểm tra' }, 'admin-1');
+
+    expect(findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: targetId } }));
+    expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { transactionId: targetId },
+      create: expect.objectContaining({ reviewerUserId: 'admin-1', riskLevelSnapshot: 'REVIEW' }),
+      update: expect.objectContaining({ reviewerUserId: 'admin-1' }),
+    }));
+    expect(result).toMatchObject({ verdict: 'CONFIRMED_ANOMALY', reviewer_user_id: 'admin-1' });
+  });
+
+  it('calculates performance rates only from reviewed anomaly items', async () => {
+    const feedback = [{
+      id: 'feedback-1',
+      transactionId: targetId,
+      verdict: 'FALSE_POSITIVE',
+      note: null,
+      reviewerUserId: 'admin-1',
+      riskScoreSnapshot: 80,
+      riskLevelSnapshot: 'REVIEW',
+      reasonsSnapshot: [],
+      createdAt: targetDate,
+      updatedAt: targetDate,
+    }];
+    const { service } = createAnomalyService(feedback);
+    const result = await service.aiAnomalyPerformance({ window_days: 90 });
+
+    expect(result).toMatchObject({
+      total_alerts: 1,
+      reviewed_count: 1,
+      unreviewed_count: 0,
+      confirmed_count: 0,
+      false_positive_count: 1,
+      unsure_count: 0,
+      confirmed_rate_percent: 0,
+      false_positive_rate_percent: 100,
+    });
   });
 });
 

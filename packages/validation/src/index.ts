@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { AlertType, ContainerState, EntityStatus, MerchantApprovalStatus, OilGrade, OrderStatus, PaymentStatus, PriceUnit, Quality } from '@eco-oil/shared-types';
+import { AlertType, AnomalyFeedbackVerdict, ContainerState, EntityStatus, MerchantApprovalStatus, OilGrade, OrderStatus, PaymentStatus, PriceUnit, Quality } from '@eco-oil/shared-types';
 
 export const uuidSchema = z.string().uuid();
 export const phoneSchema = z.string().min(8).max(20);
@@ -339,6 +339,28 @@ export const adminAiPerformancePickupForecastQuerySchema = z.object({
   }).optional().default(90),
 });
 export type AdminAiPerformancePickupForecastQueryInput = z.infer<typeof adminAiPerformancePickupForecastQuerySchema>;
+
+const anomalyWindowSchema = z.coerce.number().int().refine((value) => value === 30 || value === 90 || value === 180, {
+  message: 'window_days must be 30, 90 or 180',
+});
+
+export const adminAiAnomalyListQuerySchema = paginationSchema.extend({
+  window_days: anomalyWindowSchema.optional().default(90),
+  risk_level: z.enum(['NORMAL', 'REVIEW', 'HIGH_RISK']).optional(),
+  verdict: z.nativeEnum(AnomalyFeedbackVerdict).optional(),
+});
+export type AdminAiAnomalyListQueryInput = z.infer<typeof adminAiAnomalyListQuerySchema>;
+
+export const adminAiAnomalyPerformanceQuerySchema = z.object({
+  window_days: anomalyWindowSchema.optional().default(90),
+});
+export type AdminAiAnomalyPerformanceQueryInput = z.infer<typeof adminAiAnomalyPerformanceQuerySchema>;
+
+export const adminAiAnomalyFeedbackSchema = z.object({
+  verdict: z.nativeEnum(AnomalyFeedbackVerdict),
+  note: z.string().trim().max(2000).optional(),
+}).strict();
+export type AdminAiAnomalyFeedbackInput = z.infer<typeof adminAiAnomalyFeedbackSchema>;
 
 const queryBooleanSchema = z.preprocess((value) => {
   if (value === 'true') return true;

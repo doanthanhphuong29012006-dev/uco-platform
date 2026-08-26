@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Patch, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Param, Patch, Post, Put, Query, Res } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import type { Response } from 'express';
 import {
@@ -8,6 +8,9 @@ import {
   adminOverviewQuerySchema,
   adminReconciliationQuerySchema,
   adminAiPerformancePickupForecastQuerySchema,
+  adminAiAnomalyListQuerySchema,
+  adminAiAnomalyPerformanceQuerySchema,
+  adminAiAnomalyFeedbackSchema,
   adminStationListQuerySchema,
   adminCollectorCreateSchema,
   adminCollectorPatchSchema,
@@ -47,6 +50,24 @@ export class AdminController {
   @Get('ai-performance/pickup-forecast')
   pickupForecastPerformance(@Query() query: Record<string, unknown>) {
     return this.service.pickupForecastPerformance(adminAiPerformancePickupForecastQuerySchema.parse(query));
+  }
+
+  @Roles(Role.ADMIN)
+  @Get('ai-anomalies')
+  aiAnomalies(@Query() query: Record<string, unknown>) {
+    return this.service.listAiAnomalies(adminAiAnomalyListQuerySchema.parse(query));
+  }
+
+  @Roles(Role.ADMIN)
+  @Put('ai-anomalies/:id/feedback')
+  updateAiAnomalyFeedback(@Param('id') id: string, @Body() body: unknown, @CurrentUser() user: AccessTokenPayload) {
+    return this.service.updateAiAnomalyFeedback(id, adminAiAnomalyFeedbackSchema.parse(body), user.sub);
+  }
+
+  @Roles(Role.ADMIN)
+  @Get('ai-performance/anomaly-detection')
+  aiAnomalyPerformance(@Query() query: Record<string, unknown>) {
+    return this.service.aiAnomalyPerformance(adminAiAnomalyPerformanceQuerySchema.parse(query));
   }
 
   @Roles(Role.ADMIN)

@@ -93,6 +93,18 @@ enum AlertSeverity {
   HIGH
 }
 
+enum AnomalyFeedbackVerdict {
+  CONFIRMED_ANOMALY
+  FALSE_POSITIVE
+  UNSURE
+}
+
+enum AnomalyRiskLevel {
+  NORMAL
+  REVIEW
+  HIGH_RISK
+}
+
 model User {
   id        String    @id @default(uuid()) @db.Uuid
   zaloId    String    @unique @map("zalo_id")
@@ -107,6 +119,7 @@ model User {
   station   Station?
   refreshTokens RefreshToken[]
   auditLogs AuditLog[]
+  anomalyFeedbacks AnomalyFeedback[]
 
   @@index([role])
   @@map("users")
@@ -300,6 +313,7 @@ model CollectionTransaction {
   alerts       Alert[]
   stationDelivery StationDelivery? @relation(fields: [stationDeliveryId], references: [id])
   payment      Payment?
+  anomalyFeedback AnomalyFeedback?
 
   @@index([stationDeliveryId])
   @@map("collection_transactions")
@@ -384,6 +398,25 @@ model Alert {
 
   @@index([type, createdAt])
   @@map("alerts")
+}
+
+model AnomalyFeedback {
+  id                String                 @id @default(uuid()) @db.Uuid
+  transactionId     String                 @unique @map("transaction_id") @db.Uuid
+  verdict           AnomalyFeedbackVerdict
+  note              String?                @db.Text
+  reviewerUserId    String                 @map("reviewer_user_id") @db.Uuid
+  riskScoreSnapshot Int                    @map("risk_score_snapshot")
+  riskLevelSnapshot AnomalyRiskLevel       @map("risk_level_snapshot")
+  reasonsSnapshot   Json                   @map("reasons_snapshot")
+  createdAt         DateTime               @default(now()) @map("created_at")
+  updatedAt         DateTime               @updatedAt @map("updated_at")
+  transaction       CollectionTransaction @relation(fields: [transactionId], references: [id])
+  reviewer          User                   @relation(fields: [reviewerUserId], references: [id])
+
+  @@index([verdict, createdAt])
+  @@index([reviewerUserId, updatedAt])
+  @@map("anomaly_feedback")
 }
 
 model AuditLog {
