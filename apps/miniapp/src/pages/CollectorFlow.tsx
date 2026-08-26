@@ -497,6 +497,35 @@ export interface LocationAttemptResult {
   error?: unknown;
 }
 
+export interface CollectionLocationResult {
+  point: GeoPoint | null;
+  usedFallback: boolean;
+}
+
+export const COLLECTION_LOCATION_TIMEOUT_MS = 2_500;
+
+export async function resolveCollectionLocation(
+  getLocation: () => Promise<GeoPoint | null>,
+  fallback: GeoPoint | null,
+  timeoutMs = COLLECTION_LOCATION_TIMEOUT_MS,
+): Promise<CollectionLocationResult> {
+  const point = await new Promise<GeoPoint | null>((resolve) => {
+    let settled = false;
+    const finish = (value: GeoPoint | null): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value && isValidGeoPoint(value) ? value : null);
+    };
+    const timer = globalThis.setTimeout(() => finish(null), timeoutMs);
+    void getLocation().then(finish, () => finish(null));
+  });
+
+  if (point) return { point, usedFallback: false };
+  const safeFallback = fallback && isValidGeoPoint(fallback) ? fallback : null;
+  return { point: safeFallback, usedFallback: safeFallback !== null };
+}
+
 export function createLocationAttemptRunner(
   getLocation: () => Promise<GeoPoint | null>,
   onError: (error: unknown) => void = logLocationFailure,
@@ -1384,17 +1413,15 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
     try {
       let currentGeo = geo;
       if (!currentGeo) {
-        try {
-          currentGeo = await zaloClient.getLocation(stop.ward_center ?? null);
-        } catch {
-          currentGeo = stop.ward_center ?? null;
-        }
+        const resolvedLocation = await resolveCollectionLocation(
+          () => zaloClient.getLocation(stop.ward_center ?? null),
+          stop.ward_center ?? null,
+        );
+        currentGeo = resolvedLocation.point;
         if (!currentGeo) {
           throw new Error('Không xác định được vị trí hiện tại hoặc tâm phường. Vui lòng bật GPS rồi thử lại.');
         }
-        if (mountedRef.current && stop.ward_center && currentGeo.lat === stop.ward_center.lat && currentGeo.lng === stop.ward_center.lng) {
-          setLocationFallback(true);
-        }
+        if (mountedRef.current) setLocationFallback(resolvedLocation.usedFallback);
         if (mountedRef.current) setGeo(currentGeo);
       }
       const payload: CollectionCreateRequest & {

@@ -362,6 +362,31 @@ test('location attempts are single-flight and can retry after completion', async
   assert.equal(calls, 2);
 });
 
+test('collection save falls back instead of waiting forever for Zalo location', async () => {
+  const { resolveCollectionLocation } = await loadPickupPriorityHelpers();
+  const fallback = { lat: 21.0333, lng: 105.85 };
+  const result = await resolveCollectionLocation(
+    () => new Promise(() => undefined),
+    fallback,
+    10,
+  );
+
+  assert.deepEqual(result, { point: fallback, usedFallback: true });
+});
+
+test('collection save keeps a valid live location and rejects an invalid fallback', async () => {
+  const { resolveCollectionLocation } = await loadPickupPriorityHelpers();
+  const live = { lat: 21.034, lng: 105.851 };
+  assert.deepEqual(await resolveCollectionLocation(async () => live, { lat: 0, lng: 0 }, 10), {
+    point: live,
+    usedFallback: false,
+  });
+  assert.deepEqual(await resolveCollectionLocation(async () => null, { lat: Number.NaN, lng: 105.85 }, 10), {
+    point: null,
+    usedFallback: false,
+  });
+});
+
 test('route refresh runner is single-flight and can retry after an error', async () => {
   const { createRouteRefreshRunner } = await loadPickupPriorityHelpers();
   let calls = 0;
