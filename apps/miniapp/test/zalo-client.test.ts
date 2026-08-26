@@ -1,6 +1,35 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+class EventHub {
+  visibilityState = 'visible';
+  private readonly listeners = new Map<string, Set<() => void>>();
+
+  addEventListener(type: string, listener: () => void): void {
+    const current = this.listeners.get(type) ?? new Set<() => void>();
+    current.add(listener);
+    this.listeners.set(type, current);
+  }
+
+  removeEventListener(type: string, listener: () => void): void {
+    this.listeners.get(type)?.delete(listener);
+  }
+
+  emit(type: string): void {
+    for (const listener of this.listeners.get(type) ?? []) listener();
+  }
+
+  listenerCount(): number {
+    let count = 0;
+    for (const listeners of this.listeners.values()) count += listeners.size;
+    return count;
+  }
+}
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
 function setBrowserGeolocation(getCurrentPosition: (...args: unknown[]) => void): void {
   Object.defineProperty(globalThis, 'navigator', {
     configurable: true,
@@ -166,6 +195,8 @@ test('real client uses distinct native camera and album sources before compressi
     count: number;
     sourceType: Array<'camera' | 'album'>;
     cameraType?: 'back' | 'front';
+    success?: (result: { filePaths: string[] }) => void;
+    fail?: (error: { code: number; message?: string }) => void;
   }> = [];
   const compressedPaths: string[] = [];
   const { RealZaloClient } = await import('../src/lib/zalo-client');
@@ -189,11 +220,182 @@ test('real client uses distinct native camera and album sources before compressi
   await client.chooseImage('camera');
   await client.chooseImage('album');
 
-  assert.deepEqual(calls, [
+  assert.deepEqual(calls.map(({ success: _success, fail: _fail, ...args }) => args), [
     { count: 1, sourceType: ['camera'], cameraType: 'back' },
     { count: 1, sourceType: ['album'] },
   ]);
   assert.deepEqual(compressedPaths, ['zalo://camera.jpg', 'zalo://album.jpg']);
+});
+
+test('real client settles from the official chooseImage success callback', async () => {
+  const { RealZaloClient } = await import('../src/lib/zalo-client');
+  const client = new RealZaloClient(
+    undefined,
+    undefined,
+    undefined,
+    async () => ({
+      scanQRCode: async () => ({ content: '' }),
+      chooseImage: async ({ success }) => {
+        success?.({ filePaths: ['zalo://callback.jpg'] });
+        return new Promise(() => undefined);
+      },
+    }),
+    async (filePath) => ({ url: filePath, width: 10, height: 10 }),
+  );
+
+  assert.deepEqual(await client.chooseImage('camera'), { url: 'zalo://callback.jpg', width: 10, height: 10 });
+});
+
+test('real client settles immediately from the official chooseImage fail callback', async () => {
+  const { RealZaloClient } = await import('../src/lib/zalo-client');
+  const client = new RealZaloClient(
+    undefined,
+    undefined,
+    undefined,
+    async () => ({
+      scanQRCode: async () => ({ content: '' }),
+      chooseImage: async ({ fail }) => {
+        fail?.({ code: -2003, message: 'User cancel' });
+        return new Promise(() => undefined);
+      },
+    }),
+  );
+
+  await assert.rejects(() => client.chooseImage('album'), { code: -2003 });
+});
+
+test('empty filePaths from the official success callback is treated as cancel', async () => {
+  const { RealZaloClient, MediaPickerCancelledError } = await import('../src/lib/zalo-client');
+  const client = new RealZaloClient(
+    undefined,
+    undefined,
+    undefined,
+    async () => ({
+      scanQRCode: async () => ({ content: '' }),
+      chooseImage: async ({ success }) => {
+        success?.({ filePaths: [] });
+        return new Promise(() => undefined);
+      },
+    }),
+  );
+
+  await assert.rejects(() => client.chooseImage('album'), MediaPickerCancelledError);
+});
+
+test('returning from a hidden picker settles an unresolved SDK promise as cancel', async () => {
+  const documentHub = new EventHub();
+  const windowHub = new EventHub();
+  const { RealZaloClient, MediaPickerCancelledError } = await import('../src/lib/zalo-client');
+  const client = new RealZaloClient(
+    undefined,
+    undefined,
+    undefined,
+    async () => ({
+      scanQRCode: async () => ({ content: '' }),
+      chooseImage: async () => new Promise(() => undefined),
+    }),
+    undefined,
+    () => ({ document: documentHub, window: windowHub }),
+  );
+
+  const pending = client.chooseImage('camera');
+  await wait(0);
+  documentHub.visibilityState = 'hidden';
+  documentHub.emit('visibilitychange');
+  documentHub.visibilityState = 'visible';
+  documentHub.emit('visibilitychange');
+
+  await assert.rejects(pending, MediaPickerCancelledError);
+  assert.equal(documentHub.listenerCount() + windowHub.listenerCount(), 0);
+});
+
+test('success during the return grace period wins over lifecycle cancel', async () => {
+  const documentHub = new EventHub();
+  const windowHub = new EventHub();
+  let callback: ((result: { filePaths: string[] }) => void) | undefined;
+  const { RealZaloClient } = await import('../src/lib/zalo-client');
+  const client = new RealZaloClient(
+    undefined,
+    undefined,
+    undefined,
+    async () => ({
+      scanQRCode: async () => ({ content: '' }),
+      chooseImage: async ({ success }) => {
+        callback = success;
+        return new Promise(() => undefined);
+      },
+    }),
+    async (filePath) => ({ url: filePath, width: 10, height: 10 }),
+    () => ({ document: documentHub, window: windowHub }),
+  );
+
+  const pending = client.chooseImage('album');
+  await wait(0);
+  documentHub.visibilityState = 'hidden';
+  documentHub.emit('visibilitychange');
+  documentHub.visibilityState = 'visible';
+  documentHub.emit('visibilitychange');
+  setTimeout(() => callback?.({ filePaths: ['zalo://late-success.jpg'] }), 100);
+
+  assert.deepEqual(await pending, { url: 'zalo://late-success.jpg', width: 10, height: 10 });
+  assert.equal(documentHub.listenerCount() + windowHub.listenerCount(), 0);
+});
+
+test('a lifecycle cancel releases the client so the picker can be opened again', async () => {
+  const documentHub = new EventHub();
+  const windowHub = new EventHub();
+  let calls = 0;
+  const { RealZaloClient, MediaPickerCancelledError } = await import('../src/lib/zalo-client');
+  const client = new RealZaloClient(
+    undefined,
+    undefined,
+    undefined,
+    async () => ({
+      scanQRCode: async () => ({ content: '' }),
+      chooseImage: async ({ success }) => {
+        calls += 1;
+        if (calls === 2) success?.({ filePaths: ['zalo://second.jpg'] });
+        return new Promise(() => undefined);
+      },
+    }),
+    async (filePath) => ({ url: filePath, width: 10, height: 10 }),
+    () => ({ document: documentHub, window: windowHub }),
+  );
+
+  const first = client.chooseImage('camera');
+  await wait(0);
+  documentHub.visibilityState = 'hidden';
+  documentHub.emit('visibilitychange');
+  documentHub.visibilityState = 'visible';
+  documentHub.emit('visibilitychange');
+  await assert.rejects(first, MediaPickerCancelledError);
+
+  assert.deepEqual(await client.chooseImage('camera'), { url: 'zalo://second.jpg', width: 10, height: 10 });
+  assert.equal(calls, 2);
+});
+
+test('explicit cleanup cancels the pending picker and removes lifecycle listeners', async () => {
+  const documentHub = new EventHub();
+  const windowHub = new EventHub();
+  const { RealZaloClient, MediaPickerCancelledError } = await import('../src/lib/zalo-client');
+  const client = new RealZaloClient(
+    undefined,
+    undefined,
+    undefined,
+    async () => ({
+      scanQRCode: async () => ({ content: '' }),
+      chooseImage: async () => new Promise(() => undefined),
+    }),
+    undefined,
+    () => ({ document: documentHub, window: windowHub }),
+  );
+
+  const pending = client.chooseImage('camera');
+  await wait(0);
+  client.cancelMediaPicker();
+
+  await assert.rejects(pending, MediaPickerCancelledError);
+  assert.equal(documentHub.listenerCount() + windowHub.listenerCount(), 0);
 });
 
 test('cancelled camera/library results release the picker outcome without adding an empty photo', async () => {

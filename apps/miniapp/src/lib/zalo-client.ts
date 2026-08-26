@@ -22,6 +22,7 @@ export interface IZaloClient {
   getLocation(fallback?: GeoPoint | null): Promise<GeoPoint | null>;
   scanQRCode(): Promise<string>;
   chooseImage(source?: ImageSource): Promise<PhotoAsset>;
+  cancelMediaPicker?(): void;
   openPhone(phoneNumber: string): Promise<void>;
   openDirections(destination: GeoPoint): Promise<void>;
   getStorage(key: string): string | null;
@@ -105,13 +106,27 @@ export interface ZaloLocationSdk {
   getLocation(): Promise<{ token?: string }>;
 }
 
+export interface ZaloMediaPickerError {
+  code: number;
+  message?: string;
+  api?: string;
+}
+
+export interface ZaloMediaPickerResult {
+  filePaths: string[];
+}
+
+export interface ZaloMediaPickerArgs {
+  count: number;
+  sourceType: ImageSource[];
+  cameraType?: 'back' | 'front';
+  success?: (result: ZaloMediaPickerResult) => void;
+  fail?: (error: ZaloMediaPickerError) => void;
+}
+
 export interface ZaloMediaSdk {
   scanQRCode(): Promise<{ content: string }>;
-  chooseImage(args: {
-    count: number;
-    sourceType: ImageSource[];
-    cameraType?: 'back' | 'front';
-  }): Promise<{ filePaths: string[] }>;
+  chooseImage(args: ZaloMediaPickerArgs): Promise<ZaloMediaPickerResult>;
 }
 
 export class MediaPickerCancelledError extends Error {
@@ -131,20 +146,103 @@ export function isMediaPickerCancelled(error: unknown): boolean {
 }
 
 const MEDIA_PICKER_WATCHDOG_MS = 90_000;
+const MEDIA_PICKER_CANCEL_GRACE_MS = 400;
 
-function settleMediaPicker<T>(operation: Promise<T>): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new MediaPickerCancelledError()), MEDIA_PICKER_WATCHDOG_MS);
-    operation.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error: unknown) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
+type MediaPickerEventTarget = {
+  addEventListener: (type: string, listener: () => void) => void;
+  removeEventListener: (type: string, listener: () => void) => void;
+};
+
+export interface MediaPickerLifecycle {
+  document: (MediaPickerEventTarget & { visibilityState?: string }) | null;
+  window: MediaPickerEventTarget | null;
+}
+
+function getMediaPickerLifecycle(): MediaPickerLifecycle {
+  const documentTarget = typeof document === 'undefined' ? null : document;
+  const windowTarget = typeof window === 'undefined' ? null : window;
+  return {
+    document: documentTarget && typeof documentTarget.addEventListener === 'function' && typeof documentTarget.removeEventListener === 'function' ? documentTarget : null,
+    window: windowTarget && typeof windowTarget.addEventListener === 'function' && typeof windowTarget.removeEventListener === 'function' ? windowTarget : null,
+  };
+}
+
+function settleMediaPicker(
+  sdk: Pick<ZaloMediaSdk, 'chooseImage'>,
+  args: Omit<ZaloMediaPickerArgs, 'success' | 'fail'>,
+  lifecycle: MediaPickerLifecycle,
+  registerCancel?: (cancel: (() => void) | null) => void,
+): Promise<ZaloMediaPickerResult> {
+  return new Promise<ZaloMediaPickerResult>((resolve, reject) => {
+    let settled = false;
+    let leftForeground = false;
+    let watchdog: ReturnType<typeof setTimeout> | null = null;
+    let graceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const clearGrace = () => {
+      if (graceTimer) clearTimeout(graceTimer);
+      graceTimer = null;
+    };
+
+    const cleanup = () => {
+      if (watchdog) clearTimeout(watchdog);
+      clearGrace();
+      registerCancel?.(null);
+      for (const [target, type, listener] of listeners) target?.removeEventListener(type, listener);
+    };
+
+    const finish = (outcome: { result: ZaloMediaPickerResult } | { error: unknown }) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if ('result' in outcome) resolve(outcome.result);
+      else reject(outcome.error);
+    };
+
+    const markLeftForeground = () => {
+      if (!settled) {
+        leftForeground = true;
+        clearGrace();
+      }
+    };
+
+    const settleCancelAfterReturn = () => {
+      if (settled || !leftForeground || graceTimer) return;
+      graceTimer = setTimeout(() => finish({ error: new MediaPickerCancelledError() }), MEDIA_PICKER_CANCEL_GRACE_MS);
+    };
+
+    const onVisibilityChange = () => {
+      if (lifecycle.document?.visibilityState === 'hidden') markLeftForeground();
+      else settleCancelAfterReturn();
+    };
+    const onBlur = () => markLeftForeground();
+    const onFocus = () => settleCancelAfterReturn();
+    const onPageShow = () => settleCancelAfterReturn();
+    const listeners: Array<[MediaPickerEventTarget | null, string, () => void]> = [
+      [lifecycle.document, 'visibilitychange', onVisibilityChange],
+      [lifecycle.document, 'pageshow', onPageShow],
+      [lifecycle.window, 'blur', onBlur],
+      [lifecycle.window, 'focus', onFocus],
+      [lifecycle.window, 'pageshow', onPageShow],
+    ];
+    for (const [target, type, listener] of listeners) target?.addEventListener(type, listener);
+
+    const success = (result: ZaloMediaPickerResult) => {
+      if (result?.filePaths?.length) finish({ result });
+      else finish({ error: new MediaPickerCancelledError() });
+    };
+    const fail = (error: ZaloMediaPickerError) => finish({ error });
+
+    registerCancel?.(() => finish({ error: new MediaPickerCancelledError() }));
+    watchdog = setTimeout(() => finish({ error: new MediaPickerCancelledError() }), MEDIA_PICKER_WATCHDOG_MS);
+    try {
+      const operation = sdk.chooseImage({ ...args, success, fail });
+      if (operation && typeof operation.then === 'function') {
+        operation.then(success, fail);
+      }
+    } catch (error) {
+      fail(error as ZaloMediaPickerError);
+    }
   });
 }
 
@@ -203,6 +301,8 @@ async function compressImage(filePath: string): Promise<PhotoAsset> {
 export class RealZaloClient implements IZaloClient {
   readonly mode = 'real' as const;
   private seedAccount: SeedAccount = { zaloId: '', phone: '' };
+  private cancelActiveMediaPicker: (() => void) | null = null;
+  private mediaPickerCancelRequested = false;
 
   constructor(
     private readonly loadSdk: () => Promise<ZaloNavigationSdk> = () => import('zmp-sdk'),
@@ -213,6 +313,7 @@ export class RealZaloClient implements IZaloClient {
     },
     private readonly loadMediaSdk: () => Promise<ZaloMediaSdk> = () => import('zmp-sdk'),
     private readonly resolveImage: (filePath: string) => Promise<PhotoAsset> = compressImage,
+    private readonly mediaPickerLifecycle: () => MediaPickerLifecycle = getMediaPickerLifecycle,
   ) {}
 
   async login(): Promise<SeedAccount> {
@@ -246,17 +347,24 @@ export class RealZaloClient implements IZaloClient {
   }
 
   async chooseImage(source: ImageSource = 'camera'): Promise<PhotoAsset> {
+    this.mediaPickerCancelRequested = false;
     const { chooseImage } = await this.loadMediaSdk();
-    const result = await settleMediaPicker(Promise.resolve().then(() => chooseImage({
+    if (this.mediaPickerCancelRequested) throw new MediaPickerCancelledError();
+    const result = await settleMediaPicker({ chooseImage }, {
       count: 1,
       sourceType: [source],
       ...(source === 'camera' ? { cameraType: 'back' as const } : {}),
-    })));
+    }, this.mediaPickerLifecycle(), (cancel) => { this.cancelActiveMediaPicker = cancel; });
     const filePath = result.filePaths?.[0];
     if (!filePath) {
       throw new MediaPickerCancelledError();
     }
     return this.resolveImage(filePath);
+  }
+
+  cancelMediaPicker(): void {
+    if (this.cancelActiveMediaPicker) this.cancelActiveMediaPicker();
+    else this.mediaPickerCancelRequested = true;
   }
 
   async openPhone(phoneNumber: string): Promise<void> {

@@ -182,7 +182,10 @@ function StationDeliveryReview({ station, candidates, expectedLiters, expectedKg
   const [clientUuid] = useState(() => crypto.randomUUID());
   const mountedRef = useRef(true);
   const mediaPickerInFlightRef = useRef(false);
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  useEffect(() => () => {
+    mountedRef.current = false;
+    zaloClient.cancelMediaPicker?.();
+  }, []);
   const actualLiters = Number(actual);
   const actualKg = Number(actualKgInput);
   const varianceKg = actualKg - expectedKg;

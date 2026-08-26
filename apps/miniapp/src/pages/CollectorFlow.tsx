@@ -999,7 +999,10 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
   const [highDeviationAcknowledgement, setHighDeviationAcknowledgement] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const mediaPickerInFlightRef = useRef(false);
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  useEffect(() => () => {
+    mountedRef.current = false;
+    zaloClient.cancelMediaPicker?.();
+  }, []);
   const capacity = Number(container.capacity_liters ?? 0);
   const enteredLiters = liters.trim() === '' ? null : Number(liters);
   const actualKg = kilograms.trim() === '' ? null : Number(kilograms);
