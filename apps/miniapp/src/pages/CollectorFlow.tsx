@@ -17,6 +17,7 @@ import { isValidGeoPoint, isZaloPermissionDenied, zaloClient } from '../lib/zalo
 import type { PhotoAsset } from '../lib/zalo-client';
 import { compressImageBlob } from '../lib/zalo-client';
 import { pickZaloPhoto } from '../lib/media-picker';
+import { analyzeOilImages, type OilImageAnalysis } from '../lib/oil-image-analyzer';
 import { StatusView } from '../components/StatusView';
 import { OilGradeSelector } from '../components/OilGradeSelector';
 import { GradePhotoPicker, isGradePhotoMissing } from '../components/GradePhotoPicker';
@@ -188,6 +189,54 @@ export function requiresPickupVolumeAcknowledgement(
 ): boolean {
   const key = getPickupVolumeDeviationKey(deviation);
   return key !== null && key !== acknowledgementKey;
+}
+
+const IMAGE_GRADE_CONFIDENCE_LABELS: Record<OilImageAnalysis['confidence'], string> = {
+  HIGH: 'Tin cậy cao',
+  MEDIUM: 'Tin cậy trung bình',
+  LOW: 'Tin cậy thấp',
+};
+
+const IMAGE_GRADE_LABELS: Record<'A' | 'B' | 'C', string> = {
+  A: 'Hạng A',
+  B: 'Hạng B',
+  C: 'Hạng C',
+};
+
+const IMAGE_GRADE_REASON_LABELS: Partial<Record<string, string>> = {
+  LIGHT_CLEAR_APPEARANCE: 'Màu sáng và khá trong',
+  MEDIUM_BROWN_APPEARANCE: 'Màu nâu trung bình',
+  DARK_APPEARANCE: 'Màu sẫm',
+  HIGH_TEXTURE_OR_SEDIMENT: 'Kết cấu/cặn nổi bật',
+  LOW_TEXTURE: 'Ít kết cấu nhìn thấy',
+  IMAGE_TOO_DARK: 'Ảnh quá tối',
+  IMAGE_OVEREXPOSED: 'Ảnh quá sáng',
+  IMAGE_TOO_BLURRY: 'Ảnh có thể bị mờ',
+  IMAGE_TOO_SMALL: 'Ảnh quá nhỏ',
+  MULTIPLE_IMAGES_DISAGREE: 'Các ảnh cho tín hiệu khác nhau',
+  INSUFFICIENT_IMAGE_SIGNAL: 'Tín hiệu hình ảnh chưa đủ',
+};
+
+export interface ImageGradeAnalysisDisplay {
+  suggestedGrade: string | null;
+  confidenceLabel: string;
+  qualityLabel: string;
+  reasons: string[];
+  summary: string;
+  canUseSuggestion: boolean;
+}
+
+export function getImageGradeAnalysisDisplay(analysis: OilImageAnalysis | null | undefined): ImageGradeAnalysisDisplay | null {
+  if (!analysis) return null;
+  const reasons = [...new Set(analysis.reason_codes.map((code) => IMAGE_GRADE_REASON_LABELS[code]).filter((label): label is string => Boolean(label)))].slice(0, 3);
+  return {
+    suggestedGrade: analysis.suggested_grade ? IMAGE_GRADE_LABELS[analysis.suggested_grade] : null,
+    confidenceLabel: IMAGE_GRADE_CONFIDENCE_LABELS[analysis.confidence],
+    qualityLabel: analysis.quality_status === 'USABLE' ? 'Ảnh có thể dùng' : analysis.quality_status === 'RETAKE_RECOMMENDED' ? 'Nên chụp lại nếu có thể' : 'Chưa hỗ trợ phân tích ảnh này',
+    reasons,
+    summary: analysis.summary,
+    canUseSuggestion: analysis.suggested_grade !== null && analysis.quality_status !== 'UNSUPPORTED',
+  };
 }
 
 type RouteOptimizationMetadata = NonNullable<CurrentRouteResponse['route_optimization']>;
@@ -988,6 +1037,9 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
   const [suspectedAdulteration, setSuspectedAdulteration] = useState(false);
   const [gradeNote, setGradeNote] = useState('');
   const [photos, setPhotos] = useState<PhotoAsset[]>([]);
+  const [imageAnalysis, setImageAnalysis] = useState<OilImageAnalysis | null>(null);
+  const [analyzingImages, setAnalyzingImages] = useState(false);
+  const [overrideAcknowledged, setOverrideAcknowledged] = useState(false);
   const [geo, setGeo] = useState<GeoPoint | null>(null);
   const [saving, setSaving] = useState(false);
   const [takingPhoto, setTakingPhoto] = useState(false);
@@ -999,8 +1051,10 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
   const [highDeviationAcknowledgement, setHighDeviationAcknowledgement] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const mediaPickerInFlightRef = useRef(false);
+  const analysisRunRef = useRef(0);
   useEffect(() => () => {
     mountedRef.current = false;
+    analysisRunRef.current += 1;
     zaloClient.cancelMediaPicker?.();
   }, []);
   const capacity = Number(container.capacity_liters ?? 0);
@@ -1023,6 +1077,12 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
   const highDeviationNeedsAcknowledgement = requiresPickupVolumeAcknowledgement(pickupVolumeDeviation, highDeviationAcknowledgement);
   const gradeRequiresPhoto = grade === OilGrade.B || grade === OilGrade.C || suspectedAdulteration;
   const gradePhotoMissing = isGradePhotoMissing(grade, suspectedAdulteration, photos.length);
+  const imageGradeDisplay = getImageGradeAnalysisDisplay(imageAnalysis);
+  const suggestedGrade = imageAnalysis?.suggested_grade ?? null;
+  const needsImageGradeOverrideAcknowledgement = Boolean(
+    grade && suggestedGrade && grade !== suggestedGrade && (imageAnalysis?.confidence === 'HIGH' || imageAnalysis?.confidence === 'MEDIUM'),
+  );
+  const imageGradeDecisionBlocked = needsImageGradeOverrideAcknowledgement && !overrideAcknowledged;
   const submitBlockReason = grade === null
     ? 'Vui lòng chọn phân hạng dầu trước khi xác nhận.'
     : invalidMass
@@ -1033,6 +1093,8 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
           ? 'Giao dịch cần kiểm tra bắt buộc có ít nhất 1 ảnh.'
           : highDeviationNeedsAcknowledgement
             ? 'Vui lòng kiểm tra lại số lít và xác nhận tiếp tục.'
+            : imageGradeDecisionBlocked
+              ? 'Gợi ý AI khác hạng đã chọn. Vui lòng xác nhận bạn muốn giữ hạng này.'
             : null;
 
   function adjustLiters(amount: number): void {
@@ -1045,11 +1107,32 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
     setKilograms(next.toFixed(1));
   }
 
+  async function analyzePhotos(nextPhotos: PhotoAsset[]): Promise<void> {
+    const run = ++analysisRunRef.current;
+    if (nextPhotos.length === 0) {
+      if (mountedRef.current) {
+        setImageAnalysis(null);
+        setAnalyzingImages(false);
+      }
+      return;
+    }
+    setAnalyzingImages(true);
+    try {
+      const result = await analyzeOilImages(nextPhotos.map((item) => item.url));
+      if (mountedRef.current && run === analysisRunRef.current) setImageAnalysis(result);
+    } finally {
+      if (mountedRef.current && run === analysisRunRef.current) setAnalyzingImages(false);
+    }
+  }
+
   function addPhoto(photo: PhotoAsset): void {
     if (!photo.url.trim()) {
       throw new Error('Ảnh không hợp lệ');
     }
-    setPhotos((current) => [...current, photo]);
+    const nextPhotos = [...photos, photo];
+    setPhotos(nextPhotos);
+    setOverrideAcknowledged(false);
+    void analyzePhotos(nextPhotos);
   }
 
   async function takePhoto(): Promise<void> {
@@ -1108,7 +1191,10 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
   }
 
   function removePhoto(index: number): void {
-    setPhotos((current) => current.filter((_, photoIndex) => photoIndex !== index));
+    const nextPhotos = photos.filter((_, photoIndex) => photoIndex !== index);
+    setPhotos(nextPhotos);
+    setOverrideAcknowledged(false);
+    void analyzePhotos(nextPhotos);
   }
 
   async function submit(): Promise<void> {
@@ -1126,6 +1212,10 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
     }
     if (highDeviationNeedsAcknowledgement) {
       setError('Vui lòng kiểm tra lại số lít và xác nhận tiếp tục.');
+      return;
+    }
+    if (imageGradeDecisionBlocked) {
+      setError('Gợi ý AI khác hạng đã chọn. Vui lòng xác nhận bạn muốn giữ hạng này.');
       return;
     }
     if (saving || success) {
@@ -1150,7 +1240,14 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
       }
       setGeo(currentGeo);
     }
-    const payload: CollectionCreateRequest = {
+    const payload: CollectionCreateRequest & {
+      image_grade_suggestion: OilGrade | null;
+      image_grade_confidence: OilImageAnalysis['confidence'] | null;
+      image_grade_model_version: OilImageAnalysis['model_version'] | null;
+      image_grade_analysis: OilImageAnalysis | null;
+      grade_decision_source: 'MANUAL' | 'AI_SUGGESTION_ACCEPTED' | 'MANUAL_OVERRIDE_AI';
+      grade_ai_override_acknowledged: boolean;
+    } = {
       client_uuid: clientUuid,
       order_id: stop.order_id,
        container_code: containerCode,
@@ -1161,6 +1258,16 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
       // The API derives grade_photo_url from photos[0]; do not duplicate a Base64 image in JSON.
       ...(gradeNote.trim() ? { grade_note: gradeNote.trim() } : {}),
       suspected_adulteration: suspectedAdulteration,
+      image_grade_suggestion: (imageAnalysis?.suggested_grade as OilGrade | null | undefined) ?? null,
+      image_grade_confidence: imageAnalysis?.confidence ?? null,
+      image_grade_model_version: imageAnalysis?.model_version ?? null,
+      image_grade_analysis: imageAnalysis ?? null,
+      grade_decision_source: imageAnalysis?.suggested_grade && grade === imageAnalysis.suggested_grade
+        ? 'AI_SUGGESTION_ACCEPTED'
+        : imageAnalysis?.suggested_grade && grade !== imageAnalysis.suggested_grade
+          ? 'MANUAL_OVERRIDE_AI'
+          : 'MANUAL',
+      grade_ai_override_acknowledged: overrideAcknowledged,
       geo: currentGeo,
       photos: photos.map((photo) => photo.url),
       collected_at: new Date().toISOString(),
@@ -1207,6 +1314,18 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
       </section>
       <section className="quality-card"><p className="section-label">Chất lượng dầu</p><div className="quality-options"><button className={quality === Quality.PASS ? 'quality-option selected' : 'quality-option'} onClick={() => setQuality(Quality.PASS)} disabled={saving}>✓ Đạt</button><button className={quality === Quality.FLAG ? 'quality-option selected flag-selected' : 'quality-option'} onClick={() => setQuality(Quality.FLAG)} disabled={saving}>⚠ Cần kiểm tra</button></div></section>
       {quality === Quality.FLAG || gradeRequiresPhoto ? <GradePhotoPicker photos={photos} busy={takingPhoto} disabled={saving} message={photoNotice} onTakePhoto={() => { void takePhoto(); }} onChooseAlbum={() => { void chooseAlbumPhoto(); }} onChooseFile={(file) => { void choosePhotoFile(file); }} onRemovePhoto={removePhoto} /> : null}
+      {analyzingImages ? <section className="image-grade-analysis image-grade-analysis-neutral" aria-live="polite"><strong>AI hỗ trợ phân hạng</strong><span>Đang phân tích ảnh…</span></section> : null}
+      {imageGradeDisplay && !analyzingImages ? (
+        <section className={`image-grade-analysis image-grade-analysis-${imageAnalysis?.confidence.toLowerCase() ?? 'low'}`} aria-label="AI hỗ trợ phân hạng">
+          <div className="image-grade-analysis-heading"><span className="image-grade-ai-label">AI hỗ trợ</span><strong>Phân tích hình ảnh thử nghiệm</strong></div>
+          {imageGradeDisplay.suggestedGrade ? <p><strong>Gợi ý: {imageGradeDisplay.suggestedGrade}</strong> · {imageGradeDisplay.confidenceLabel}</p> : <p><strong>Chưa có gợi ý phân hạng</strong> · {imageGradeDisplay.confidenceLabel}</p>}
+          <small>{imageGradeDisplay.qualityLabel}</small>
+          <small>{imageGradeDisplay.summary}</small>
+          {imageGradeDisplay.reasons.length > 0 ? <div className="image-grade-reasons">{imageGradeDisplay.reasons.map((reason, index) => <span key={`${reason}-${index}`}>{reason}</span>)}</div> : null}
+          {imageGradeDisplay.canUseSuggestion && imageAnalysis?.suggested_grade ? <button type="button" className="secondary-button image-grade-use-button" onClick={() => { setGrade(imageAnalysis.suggested_grade as OilGrade); setOverrideAcknowledged(false); }} disabled={saving}>Dùng gợi ý này</button> : null}
+          {needsImageGradeOverrideAcknowledgement ? <label className="image-grade-override"><input type="checkbox" checked={overrideAcknowledged} onChange={(event) => setOverrideAcknowledged(event.target.checked)} disabled={saving} /><span>Tôi đã kiểm tra và xác nhận giữ phân hạng đã chọn.</span></label> : null}
+        </section>
+      ) : null}
       {error ? <div className="error-panel">{error}</div> : null}
       {submitBlockReason ? <p className="error-text submit-block-reason">{submitBlockReason}</p> : null}
       <button className="submit-collection-button" onClick={() => { void submit(); }} disabled={saving || Boolean(submitBlockReason)}>{saving ? 'Đang lưu trên máy…' : 'Xác nhận thu gom'}</button>

@@ -290,6 +290,21 @@ select, input { width: 100%; min-height: 48px; border: 1px solid #cfe0d7; border
 .photo-preview { display: grid; gap: 5px; width: 92px; margin: 0; }
 .photo-preview img { width: 92px; height: 92px; border: 1px solid var(--line); border-radius: 12px; object-fit: cover; background: #edf5f0; }
 .photo-remove-button { min-height: 30px; padding: 0 5px; border: 0; border-radius: 8px; color: var(--danger); background: #fff0f0; font-size: .7rem; font-weight: 800; }
+.image-grade-analysis { display: grid; gap: 6px; margin-top: 13px; padding: 12px 14px; border: 1px solid #b9dfca; border-left: 4px solid var(--green); border-radius: 14px; color: var(--green-dark); background: #f3faf6; }
+.image-grade-analysis-medium { border-color: #9cc9ad; background: #eff8f2; }
+.image-grade-analysis-low { border-color: #ead49b; border-left-color: #b48626; color: #765b1c; background: #fff8e8; }
+.image-grade-analysis-neutral { border-color: #c8d2d4; border-left-color: #7b8e96; color: #536970; background: #f2f6f7; }
+.image-grade-analysis-heading { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.image-grade-analysis-heading strong { font-size: .82rem; }
+.image-grade-ai-label { display: inline-flex; align-items: center; min-height: 21px; padding: 3px 6px; border-radius: 6px; color: white; background: var(--green); font-size: .67rem; font-weight: 850; }
+.image-grade-analysis-low .image-grade-ai-label, .image-grade-analysis-neutral .image-grade-ai-label { background: #8a702a; }
+.image-grade-analysis p, .image-grade-analysis small { margin: 0; font-size: .77rem; line-height: 1.35; }
+.image-grade-analysis small { color: var(--muted); }
+.image-grade-reasons { display: flex; flex-wrap: wrap; gap: 5px; }
+.image-grade-reasons span { max-width: 100%; padding: 3px 6px; border-radius: 999px; color: inherit; background: #ffffffb8; font-size: .68rem; line-height: 1.2; }
+.image-grade-use-button { width: 100%; min-height: 42px; }
+.image-grade-override { display: flex; align-items: center; gap: 8px; min-height: 44px; margin: 0; font-size: .76rem; font-weight: 700; }
+.image-grade-override input { flex: 0 0 auto; width: 20px; height: 20px; accent-color: var(--green); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .submit-collection-button { margin-top: 18px; }
 .success-screen { min-height: 80vh; display: grid; place-content: center; padding: 30px; text-align: center; }
