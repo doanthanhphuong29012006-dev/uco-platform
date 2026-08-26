@@ -63,7 +63,9 @@ export function reconcileRouteProgress(
   const completed: Record<string, CompletedStop> = {};
   const completedOrderIds = new Set<string>();
   const skippedOrderIds = new Set<string>();
-  const canUseStoredCompleted = Boolean(route.route_id && storedRouteId === route.route_id);
+  const canUseStoredCompleted = route.route_id
+    ? storedRouteId === route.route_id
+    : storedRouteId === undefined;
 
   for (const stop of route.stops) {
     if (stop.route_stop_status === 'SKIPPED') {
@@ -86,6 +88,14 @@ export function reconcileRouteProgress(
     } else if (outbox) {
       completed[stop.order_id] = completedStopFromOutbox(outbox, stop);
       completedOrderIds.add(stop.order_id);
+    }
+  }
+
+  if (canUseStoredCompleted) {
+    for (const [orderId, stored] of Object.entries(storedCompleted)) {
+      if (skippedOrderIds.has(orderId) || completed[orderId]) continue;
+      completed[orderId] = stored;
+      completedOrderIds.add(orderId);
     }
   }
 

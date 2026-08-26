@@ -76,6 +76,40 @@ test('route progress only restores completed stops for the matching route and re
   assert.equal(fromOutbox.completed['order-a']?.liters, 7);
 });
 
+test('preview route keeps a locally completed stop after the API removes its collected order', async () => {
+  const { reconcileRouteProgress } = await loadPickupPriorityHelpers();
+  const collectedStop = stop({ order_id: 'order-collected' });
+  const storedCompleted = {
+    'order-collected': { liters: 21, kilograms: 19.1, clientUuid: 'client-collected', stop: collectedStop },
+  } as never;
+  const refreshedPreview = {
+    stops: [stop({ order_id: 'order-still-ready' })],
+    total_expected_liters: 20,
+    remaining_capacity_l: 80,
+  } as never;
+
+  const progress = reconcileRouteProgress(refreshedPreview, storedCompleted, undefined, []);
+  assert.deepEqual(progress.completedOrderIds, ['order-collected']);
+  assert.equal(progress.completed['order-collected']?.liters, 21);
+  assert.equal(Object.values(progress.completed).reduce((sum, item) => sum + item.liters, 0), 21);
+});
+
+test('preview route does not restore completed data that belongs to a persisted old route', async () => {
+  const { reconcileRouteProgress } = await loadPickupPriorityHelpers();
+  const storedCompleted = {
+    'order-old': { liters: 10, kilograms: 9.1, clientUuid: 'client-old', stop: stop({ order_id: 'order-old' }) },
+  } as never;
+  const refreshedPreview = {
+    stops: [stop({ order_id: 'order-new' })],
+    total_expected_liters: 20,
+    remaining_capacity_l: 80,
+  } as never;
+
+  const progress = reconcileRouteProgress(refreshedPreview, storedCompleted, 'old-route-id', []);
+  assert.deepEqual(progress.completedOrderIds, []);
+  assert.deepEqual(progress.completed, {});
+});
+
 test('pickup priority translates reason codes and preserves unknown codes safely', async () => {
   const { getPickupPriorityDisplay, pickupPriorityReasonLabel } = await loadPickupPriorityHelpers();
   const display = getPickupPriorityDisplay(stop({
