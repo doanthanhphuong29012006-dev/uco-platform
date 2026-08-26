@@ -16,7 +16,7 @@ export type OilImageReasonCode =
   | 'MULTIPLE_IMAGES_DISAGREE'
   | 'INSUFFICIENT_IMAGE_SIGNAL';
 
-export interface OilImageFeatures {
+export interface OilImageFeatures extends Record<string, number | null> {
   mean_luminance: number | null;
   dark_pixel_ratio: number | null;
   yellow_brown_ratio: number | null;

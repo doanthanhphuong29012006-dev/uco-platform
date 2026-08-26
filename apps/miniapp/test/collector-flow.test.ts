@@ -94,6 +94,30 @@ test('pickup priority display does not reorder stops and accepts insufficient da
   assert.deepEqual(errors, [null, 'Không thể mở chỉ đường. Vui lòng thử lại.']);
 });
 
+test('image grading display translates suggestion, confidence and bounded reasons', async () => {
+  const { getImageGradeAnalysisDisplay } = await loadPickupPriorityHelpers();
+  const display = getImageGradeAnalysisDisplay({
+    suggested_grade: 'C', confidence: 'HIGH', model_version: 'oil-image-heuristic-v1', analyzed_image_count: 1,
+    quality_status: 'USABLE', reason_codes: ['DARK_APPEARANCE', 'HIGH_TEXTURE_OR_SEDIMENT', 'UNKNOWN'],
+    summary: 'Gợi ý thử nghiệm.', features: { mean_luminance: 0.1 },
+  } as never);
+  assert.deepEqual(display?.reasons, ['Màu sẫm', 'Kết cấu/cặn nổi bật']);
+  assert.equal(display?.suggestedGrade, 'Hạng C');
+  assert.equal(display?.confidenceLabel, 'Tin cậy cao');
+  assert.equal(display?.canUseSuggestion, true);
+});
+
+test('image grading display keeps a low/null suggestion safe for manual review', async () => {
+  const { getImageGradeAnalysisDisplay } = await loadPickupPriorityHelpers();
+  const display = getImageGradeAnalysisDisplay({
+    suggested_grade: null, confidence: 'LOW', model_version: 'oil-image-heuristic-v1', analyzed_image_count: 1,
+    quality_status: 'RETAKE_RECOMMENDED', reason_codes: ['IMAGE_TOO_BLURRY'], summary: 'Nên chụp lại.', features: {},
+  } as never);
+  assert.equal(display?.suggestedGrade, null);
+  assert.equal(display?.canUseSuggestion, false);
+  assert.equal(display?.reasons[0], 'Ảnh có thể bị mờ');
+});
+
 test('route optimization display formats saved distance and before/after values', async () => {
   const { getRouteOptimizationDisplay, formatRouteOptimizationDistance } = await loadPickupPriorityHelpers();
   const display = getRouteOptimizationDisplay({

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ContainerState, DEFAULT_DENSITY_KG_PER_LITER, OilGrade, Quality } from '@eco-oil/shared-types';
-import type { CollectionCreateRequest, ContainerLookupResponse, CurrentRouteResponse, GeoPoint, RouteStop } from '@eco-oil/shared-types';
+import type { CollectionCreateRequest, ContainerLookupResponse, CurrentRouteResponse, GeoPoint, OilImageAnalysisPayload, RouteStop } from '@eco-oil/shared-types';
 import { ApiError } from '../lib/api';
 import { formatLiters } from '../lib/formatters';
 import { retryOutbox, type OutboxRecord } from '../lib/outbox-db';
@@ -1244,7 +1244,7 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
       image_grade_suggestion: OilGrade | null;
       image_grade_confidence: OilImageAnalysis['confidence'] | null;
       image_grade_model_version: OilImageAnalysis['model_version'] | null;
-      image_grade_analysis: OilImageAnalysis | null;
+      image_grade_analysis: OilImageAnalysisPayload | null;
       grade_decision_source: 'MANUAL' | 'AI_SUGGESTION_ACCEPTED' | 'MANUAL_OVERRIDE_AI';
       grade_ai_override_acknowledged: boolean;
     } = {
@@ -1261,7 +1261,9 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
       image_grade_suggestion: (imageAnalysis?.suggested_grade as OilGrade | null | undefined) ?? null,
       image_grade_confidence: imageAnalysis?.confidence ?? null,
       image_grade_model_version: imageAnalysis?.model_version ?? null,
-      image_grade_analysis: imageAnalysis ?? null,
+      image_grade_analysis: imageAnalysis
+        ? { ...imageAnalysis, suggested_grade: imageAnalysis.suggested_grade as OilGrade | null }
+        : null,
       grade_decision_source: imageAnalysis?.suggested_grade && grade === imageAnalysis.suggested_grade
         ? 'AI_SUGGESTION_ACCEPTED'
         : imageAnalysis?.suggested_grade && grade !== imageAnalysis.suggested_grade

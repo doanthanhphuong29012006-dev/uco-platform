@@ -1,6 +1,7 @@
 import { ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AlertSeverity, AlertType, ContainerState, EntityStatus, GradeDecisionSource, ImageGradeConfidence, MassSource, OilGrade, OrderStatus, Quality } from '@prisma/client';
+import { AlertSeverity, AlertType, ContainerState, EntityStatus, MassSource, OilGrade, OrderStatus, Quality } from '@prisma/client';
+import type { GradeDecisionSource, ImageGradeConfidence } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import type { CollectionCreateInput, CollectionListQueryInput } from '@eco-oil/validation';

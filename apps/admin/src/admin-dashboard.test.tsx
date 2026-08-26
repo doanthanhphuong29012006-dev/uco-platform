@@ -8,8 +8,8 @@ import { TransactionAnomalySummary } from './components/reconciliation-view';
 import { countStationsByFillForecast, sortStationsByFillForecast, StationForecastStatus, StationsTable } from './components/stations-view';
 import { calculateVariancePct, isAdminUser } from './lib/dashboard-utils';
 import type { StationFillForecast, StationSummaryWithForecast } from './lib/api';
-import { AiAnomalyPerformanceContent, AiPerformanceContent, errorTone, formatAiLiters } from './components/ai-performance-view';
-import type { AdminAiAnomalyItem, AdminAiAnomalyPerformanceResponse, AdminPickupForecastPerformanceResponse } from '@eco-oil/shared-types';
+import { AiAnomalyPerformanceContent, AiPerformanceContent, errorTone, formatAiLiters, ImageGradingPerformanceContent } from './components/ai-performance-view';
+import type { AdminAiAnomalyItem, AdminAiAnomalyPerformanceResponse, AdminImageGradingPerformanceResponse, AdminPickupForecastPerformanceResponse } from '@eco-oil/shared-types';
 
 afterEach(cleanup);
 
@@ -56,6 +56,32 @@ test('hiển thị bảng hiệu quả AI và tô màu sai số theo ngưỡng',
 test('hiển thị empty state khi không có điểm backtest', () => {
   render(createElement(AiPerformanceContent, { data: { ...aiPerformanceFixture, sample_count: 0, points: [] } }));
   expect(screen.getByText('Chưa có đủ dữ liệu lịch sử để backtest trong khoảng thời gian này.')).toBeInTheDocument();
+});
+
+test('hiển thị hiệu quả phân hạng ảnh và trường hợp người thu gom đổi gợi ý', () => {
+  const data: AdminImageGradingPerformanceResponse = {
+    window_days: 90, window_start: '2026-03-01T00:00:00.000Z', window_end: '2026-05-30T00:00:00.000Z',
+    analyzed_count: 2, accepted_count: 1, override_count: 1, low_confidence_count: 1, retake_recommended_count: 0,
+    agreement_count: 1, agreement_rate_percent: 50, reliability: 'INSUFFICIENT',
+    breakdown_by_confidence: [{ confidence: 'LOW', count: 1 }, { confidence: 'HIGH', count: 1 }],
+    breakdown_by_decision_source: [{ source: 'AI_SUGGESTION_ACCEPTED', count: 1 }, { source: 'MANUAL_OVERRIDE_AI', count: 1 }, { source: 'MANUAL', count: 0 }],
+    recent_disagreements: [{ transaction_id: 'tx-1', merchant_id: 'merchant-1', merchant_name: 'Quán Hàng Bạc', collected_at: '2026-05-01T00:00:00.000Z', suggested_grade: OilGrade.C, selected_grade: OilGrade.B, confidence: 'HIGH', reason_codes: ['DARK_APPEARANCE'] }],
+    explanation: 'Tỷ lệ đồng thuận không phải độ chính xác.',
+  };
+  render(createElement(ImageGradingPerformanceContent, { data }));
+  expect(screen.getByText('Phân hạng dầu qua ảnh')).toBeInTheDocument();
+  expect(screen.getByText('Dữ liệu đánh giá còn ít')).toBeInTheDocument();
+  expect(screen.getByText('50%')).toBeInTheDocument();
+  expect(screen.getByText('Quán Hàng Bạc')).toBeInTheDocument();
+});
+
+test('phân hạng ảnh không có dữ liệu hiện empty state rõ ràng', () => {
+  render(createElement(ImageGradingPerformanceContent, { data: {
+    window_days: 90, window_start: '', window_end: '', analyzed_count: 0, accepted_count: 0, override_count: 0,
+    low_confidence_count: 0, retake_recommended_count: 0, agreement_count: 0, agreement_rate_percent: null,
+    reliability: 'INSUFFICIENT', breakdown_by_confidence: [], breakdown_by_decision_source: [], recent_disagreements: [], explanation: '',
+  } }));
+  expect(screen.getByText('Chưa có dữ liệu phân tích ảnh trong khoảng thời gian này.')).toBeInTheDocument();
 });
 
 const aiAnomalyFixture: AdminAiAnomalyItem = {

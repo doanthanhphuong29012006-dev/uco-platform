@@ -531,10 +531,6 @@ export interface AdminAiAnomalyItem {
   quality: Quality;
   grade: OilGrade | null;
   collected_at: string;
-  image_grade_suggestion?: OilGrade | null;
-  image_grade_confidence?: ImageGradeConfidence | null;
-  grade_decision_source?: GradeDecisionSource | null;
-  image_grade_analysis?: OilImageAnalysisPayload | null;
   risk_score: number;
   risk_level: AnomalyRiskLevel;
   explanation_summary: string;
