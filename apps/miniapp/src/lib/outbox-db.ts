@@ -14,6 +14,8 @@ export interface OutboxRecord {
   next_attempt_at: string | null;
   created_at: string;
   synced_at: string | null;
+  updated_at?: string;
+  sync_started_at?: string | null;
   server_id?: string;
   server_response?: unknown;
 }
@@ -48,6 +50,7 @@ export interface OutboxStore {
   list(limit?: number): Promise<OutboxRecord[]>;
   deleteSyncedBefore(cutoff: Date): Promise<number>;
   stats(): Promise<OutboxStats>;
+  recoverStaleSyncing?(now: Date): Promise<number>;
 }
 
 export class EcoOilDatabase extends Dexie {
@@ -65,9 +68,10 @@ export class EcoOilDatabase extends Dexie {
   }
 }
 
-export const ecoOilDb = new EcoOilDatabase();
+export let ecoOilDb = new EcoOilDatabase();
 const OUTBOX_LIMIT_BYTES = 50 * 1024 * 1024;
 const subscribers = new Set<() => void>();
+export const OUTBOX_OPERATION_TIMEOUT_MS = 4_500;
 
 function emitChanged(): void {
   for (const listener of subscribers) {
@@ -97,7 +101,7 @@ function recordBytes(record: OutboxRecord): number {
 
 export const dexieOutboxStore: OutboxStore = {
   async addPending(record) {
-    await ecoOilDb.outbox.add(record);
+    await ecoOilDb.outbox.put(record);
     emitChanged();
   },
   async getPending(limit, now) {
@@ -139,6 +143,24 @@ export const dexieOutboxStore: OutboxStore = {
     stats.over_limit = stats.bytes > OUTBOX_LIMIT_BYTES;
     return stats;
   },
+  async recoverStaleSyncing(now) {
+    const cutoff = now.getTime() - 60_000;
+    const records = await ecoOilDb.outbox.where('status').equals('syncing').toArray();
+    const stale = records.filter((record) => {
+      const startedAt = record.sync_started_at ?? record.updated_at ?? record.created_at;
+      return new Date(startedAt).getTime() <= cutoff;
+    });
+    for (const record of stale) {
+      await ecoOilDb.outbox.put({
+        ...record,
+        status: 'pending',
+        sync_started_at: null,
+        updated_at: now.toISOString(),
+      });
+    }
+    if (stale.length > 0) emitChanged();
+    return stale.length;
+  },
 };
 
 export function subscribeOutbox(listener: () => void): () => void {
@@ -146,7 +168,69 @@ export function subscribeOutbox(listener: () => void): () => void {
   return () => subscribers.delete(listener);
 }
 
+function withDeadline<T>(operation: () => Promise<T>, timeoutMs = OUTBOX_OPERATION_TIMEOUT_MS): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Lưu dữ liệu trên máy quá thời gian cho phép')), timeoutMs);
+    operation().then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+export interface OutboxPersistenceOptions {
+  store?: OutboxStore;
+  reopen?: () => OutboxStore;
+  timeoutMs?: number;
+}
+
+function reopenDexieStore(): OutboxStore {
+  try {
+    ecoOilDb.close();
+  } catch {
+    // Continue with a fresh connection when the old IndexedDB handle is broken.
+  }
+  ecoOilDb = new EcoOilDatabase();
+  return dexieOutboxStore;
+}
+
+async function persistOutboxRecord(record: OutboxRecord, options: OutboxPersistenceOptions = {}): Promise<OutboxRecord> {
+  let store = options.store ?? dexieOutboxStore;
+  const reopen = options.reopen ?? (options.store ? () => store : reopenDexieStore);
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const existing = await withDeadline(() => store.get(record.client_uuid), options.timeoutMs);
+      if (existing) return existing;
+
+      await withDeadline(() => store.addPending(record), options.timeoutMs);
+      const saved = await withDeadline(() => store.get(record.client_uuid), options.timeoutMs);
+      if (!saved) throw new Error('Không xác nhận được dữ liệu đã lưu trên máy');
+      return saved;
+    } catch (error) {
+      lastError = error;
+      if (attempt === 0) {
+        store = reopen();
+      }
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Không lưu được dữ liệu trên máy');
+}
+
+export async function persistOutboxForTest(record: OutboxRecord, options: OutboxPersistenceOptions): Promise<OutboxRecord> {
+  return persistOutboxRecord(record, options);
+}
+
 export async function enqueueCollection(payload: CollectionCreateRequest): Promise<OutboxRecord> {
+  const now = new Date().toISOString();
   const record: OutboxRecord = {
     client_uuid: payload.client_uuid,
     type: 'collection',
@@ -155,14 +239,16 @@ export async function enqueueCollection(payload: CollectionCreateRequest): Promi
     attempts: 0,
     last_error: null,
     next_attempt_at: null,
-    created_at: new Date().toISOString(),
+    created_at: now,
     synced_at: null,
+    updated_at: now,
+    sync_started_at: null,
   };
-  await dexieOutboxStore.addPending(record);
-  return record;
+  return persistOutboxRecord(record);
 }
 
 export async function enqueueStationDelivery(payload: StationDeliveryCreateRequest): Promise<OutboxRecord> {
+  const now = new Date().toISOString();
   const record: OutboxRecord = {
     client_uuid: payload.client_uuid,
     type: 'station_delivery',
@@ -171,11 +257,12 @@ export async function enqueueStationDelivery(payload: StationDeliveryCreateReque
     attempts: 0,
     last_error: null,
     next_attempt_at: null,
-    created_at: new Date().toISOString(),
+    created_at: now,
     synced_at: null,
+    updated_at: now,
+    sync_started_at: null,
   };
-  await dexieOutboxStore.addPending(record);
-  return record;
+  return persistOutboxRecord(record);
 }
 
 export async function retryOutbox(clientUuid: string): Promise<void> {
@@ -183,7 +270,7 @@ export async function retryOutbox(clientUuid: string): Promise<void> {
   if (!record) {
     return;
   }
-  await dexieOutboxStore.update({ ...record, status: 'pending', attempts: 0, last_error: null, next_attempt_at: null });
+  await dexieOutboxStore.update({ ...record, status: 'pending', attempts: 0, last_error: null, next_attempt_at: null, sync_started_at: null, updated_at: new Date().toISOString() });
 }
 
 export async function cacheRoute(payload: CurrentRouteResponse, location: { lat: number; lng: number } | null): Promise<void> {

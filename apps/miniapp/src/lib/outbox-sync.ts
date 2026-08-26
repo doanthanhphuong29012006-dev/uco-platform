@@ -7,6 +7,8 @@ import {
   type OutboxStore,
 } from './outbox-db';
 
+const SYNC_REQUEST_TIMEOUT_MS = 30_000;
+
 export interface SyncBatchClient {
   syncBatch(items: CollectionCreateRequest[]): Promise<SyncBatchResponse>;
   createStationDelivery?(payload: StationDeliveryCreateRequest): Promise<StationDeliveryResponse>;
@@ -16,6 +18,7 @@ export interface SyncOutboxOptions {
   store?: OutboxStore;
   client?: SyncBatchClient;
   now?: () => Date;
+  syncTimeoutMs?: number;
 }
 
 export interface SyncSummary {
@@ -51,11 +54,30 @@ function failedRecord(record: OutboxRecord, message: string, now: Date): OutboxR
     attempts,
     last_error: message,
     next_attempt_at: terminal ? null : new Date(now.getTime() + backoffMs(attempts)).toISOString(),
+    sync_started_at: null,
+    updated_at: now.toISOString(),
   };
 }
 
-async function performSync({ store = dexieOutboxStore, client, now = () => new Date() }: SyncOutboxOptions): Promise<SyncSummary> {
+function withSyncTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Đồng bộ quá thời gian chờ')), timeoutMs);
+    operation.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+async function performSync({ store = dexieOutboxStore, client, now = () => new Date(), syncTimeoutMs = SYNC_REQUEST_TIMEOUT_MS }: SyncOutboxOptions): Promise<SyncSummary> {
   const currentTime = now();
+  await store.recoverStaleSyncing?.(currentTime);
   const records = await store.getPending(OUTBOX_BATCH_SIZE, currentTime);
   if (records.length === 0) {
     await store.deleteSyncedBefore(new Date(currentTime.getTime() - OUTBOX_RETENTION_DAYS * 24 * 60 * 60 * 1_000));
@@ -65,7 +87,7 @@ async function performSync({ store = dexieOutboxStore, client, now = () => new D
   const collectionRecords = records.filter((record) => record.type === 'collection');
   const stationDeliveryRecords = records.filter((record) => record.type === 'station_delivery');
   for (const record of records) {
-    await store.update({ ...record, status: 'syncing' });
+    await store.update({ ...record, status: 'syncing', sync_started_at: currentTime.toISOString(), updated_at: currentTime.toISOString() });
   }
 
   const syncClient = client ?? (await import('./api')).api;
@@ -76,12 +98,12 @@ async function performSync({ store = dexieOutboxStore, client, now = () => new D
   if (collectionRecords.length > 0) {
     sent += collectionRecords.length;
     try {
-      const response = await syncClient.syncBatch(collectionRecords.map((record) => record.payload as CollectionCreateRequest));
+      const response = await withSyncTimeout(syncClient.syncBatch(collectionRecords.map((record) => record.payload as CollectionCreateRequest)), syncTimeoutMs);
       const results = new Map(response.results.map((result) => [result.client_uuid, result]));
       for (const record of collectionRecords) {
         const result = results.get(record.client_uuid);
         if (result?.status === 'created' || result?.status === 'duplicate') {
-          await store.update({ ...record, status: 'synced', last_error: null, next_attempt_at: null, synced_at: currentTime.toISOString(), server_id: result.id });
+          await store.update({ ...record, status: 'synced', last_error: null, next_attempt_at: null, synced_at: currentTime.toISOString(), sync_started_at: null, updated_at: currentTime.toISOString(), server_id: result.id });
           synced += 1;
         } else {
           const message = result?.error
@@ -105,8 +127,8 @@ async function performSync({ store = dexieOutboxStore, client, now = () => new D
       if (!syncClient.createStationDelivery) {
         throw new Error('API nộp trạm chưa được cấu hình');
       }
-      const response = await syncClient.createStationDelivery(record.payload as StationDeliveryCreateRequest);
-      await store.update({ ...record, status: 'synced', last_error: null, next_attempt_at: null, synced_at: currentTime.toISOString(), server_id: response.id, server_response: response });
+      const response = await withSyncTimeout(syncClient.createStationDelivery(record.payload as StationDeliveryCreateRequest), syncTimeoutMs);
+      await store.update({ ...record, status: 'synced', last_error: null, next_attempt_at: null, synced_at: currentTime.toISOString(), sync_started_at: null, updated_at: currentTime.toISOString(), server_id: response.id, server_response: response });
       synced += 1;
     } catch (error) {
       await store.update(failedRecord(record, errorText(error), currentTime));
