@@ -108,6 +108,13 @@ export class CollectionsService {
       if (originalOrderStatus !== OrderStatus.READY && originalOrderStatus !== OrderStatus.ASSIGNED && originalOrderStatus !== OrderStatus.COLLECTED) {
         throw new ConflictException({ code: 'ORDER_NOT_READY', message: 'Order is not ready for collection', details: { order_id: order.id, status: order.status } });
       }
+      if (originalOrderStatus === OrderStatus.ASSIGNED && order.collectorId !== collector.id) {
+        throw new ForbiddenException({
+          code: 'ORDER_ASSIGNED_TO_OTHER_COLLECTOR',
+          message: 'Đơn đã được giao cho người thu gom khác',
+          details: { order_id: order.id },
+        });
+      }
       if (!order.containerId || !order.container || order.container.qrCode !== input.container_code) {
         throw new ConflictException({ code: 'CONTAINER_MISMATCH', message: 'Container does not match order', details: { order_id: order.id } });
       }
@@ -278,6 +285,19 @@ export class CollectionsService {
         where: { id: order.containerId },
         data: { state: ContainerState.IN_TRANSIT, lastSeenAt: new Date() },
       });
+      const activeRouteStop = await tx.collectionRouteStop.findFirst({
+        where: {
+          orderId: order.id,
+          status: 'PENDING',
+          route: { collectorId: collector.id, status: 'ACTIVE' },
+        },
+      });
+      if (activeRouteStop) {
+        await tx.collectionRouteStop.update({
+          where: { id: activeRouteStop.id },
+          data: { status: 'COLLECTED', collectedAt },
+        });
+      }
 
       const averageRows = await tx.$queryRaw<Array<{ averageLiters: number | null }>>`
         SELECT AVG("actual_liters")::float8 AS "averageLiters"

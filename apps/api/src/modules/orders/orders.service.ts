@@ -1,7 +1,8 @@
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { AlertSeverity, AlertType, ContainerState, EntityStatus, MerchantApprovalStatus, OrderStatus, OrderSource } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
-import type { OrderListQueryInput, OrderReadyInput, RouteQueryInput } from '@eco-oil/validation';
+import type { CurrentRouteResponse } from '@eco-oil/shared-types';
+import type { OrderListQueryInput, OrderReadyInput, RouteCancelInput, RouteQueryInput, RouteStartInput } from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { AccessTokenPayload } from '../auth/auth.types';
 import { optimizeCollectionRoute } from './collection-route-optimizer';
@@ -11,6 +12,44 @@ import { forecastMerchantPickupVolume } from './merchant-pickup-volume-forecast'
 import { calculatePriority } from './priority';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+type RouteCollector = {
+  id: string;
+  maxCapacityLiters: Prisma.Decimal | number;
+  status: EntityStatus;
+  collectorWards: Array<{
+    wardId: string;
+    createdAt: Date;
+    ward: { centerLat: number | null; centerLng: number | null };
+  }>;
+};
+
+type PersistedRoute = {
+  id: string;
+  clientUuid: string;
+  status: 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
+  originLat: number | null;
+  originLng: number | null;
+  vehicleCapacityLiters: Prisma.Decimal;
+  totalExpectedLiters: Prisma.Decimal;
+  remainingCapacityLiters: Prisma.Decimal;
+  optimizationSnapshot: Prisma.JsonValue;
+  capacityRiskSnapshot: Prisma.JsonValue;
+  startedAt: Date;
+  completedAt: Date | null;
+  cancelledAt: Date | null;
+  stops: Array<{
+    orderId: string;
+    sequence: number;
+    expectedLiters: Prisma.Decimal | null;
+    merchantSnapshot: Prisma.JsonValue;
+    aiSnapshot: Prisma.JsonValue;
+    status: 'PENDING' | 'COLLECTED' | 'SKIPPED';
+    collectedAt: Date | null;
+    skippedAt: Date | null;
+    skipReason: string | null;
+  }>;
+};
 
 @Injectable()
 export class OrdersService {
@@ -150,7 +189,164 @@ export class OrdersService {
     return this.serialize(cancelled);
   }
 
-  async currentRoute(user: AccessTokenPayload, query: RouteQueryInput) {
+  async currentRoute(user: AccessTokenPayload, query: RouteQueryInput): Promise<CurrentRouteResponse> {
+    const collector = await this.requireRouteCollector(user);
+    const activeRoute = await this.prisma.collectionRoute.findFirst({
+      where: { collectorId: collector.id, status: 'ACTIVE' },
+      include: { stops: { orderBy: { sequence: 'asc' } } },
+    });
+    if (activeRoute) {
+      return this.serializePersistedRoute(activeRoute as unknown as PersistedRoute);
+    }
+    return this.buildRoutePreview(collector, query);
+  }
+
+  async startRoute(user: AccessTokenPayload, input: RouteStartInput): Promise<CurrentRouteResponse> {
+    const collector = await this.requireRouteCollector(user);
+    const existingByClient = await this.prisma.collectionRoute.findUnique({
+      where: { clientUuid: input.client_uuid },
+      include: { stops: { orderBy: { sequence: 'asc' } } },
+    });
+    if (existingByClient) {
+      if (existingByClient.status === 'CANCELLED') {
+        throw new ConflictException({ code: 'ROUTE_CLIENT_UUID_CANCELLED', message: 'Client UUID đã được dùng cho một ca đã hủy', details: null });
+      }
+      return this.serializePersistedRoute(existingByClient as unknown as PersistedRoute);
+    }
+
+    const activeRoute = await this.prisma.collectionRoute.findFirst({
+      where: { collectorId: collector.id, status: 'ACTIVE' },
+      include: { stops: { orderBy: { sequence: 'asc' } } },
+    });
+    if (activeRoute) {
+      return this.serializePersistedRoute(activeRoute as unknown as PersistedRoute);
+    }
+
+    const preview = await this.buildRoutePreview(collector, { lat: input.lat, lng: input.lng });
+    if (preview.stops.length === 0) {
+      throw new ConflictException({ code: 'NO_READY_ORDERS', message: 'Hiện chưa có đơn READY để bắt đầu ca', details: null });
+    }
+    const originWard = collector.collectorWards[0]?.ward;
+    const originLat = input.lat ?? originWard?.centerLat ?? 0;
+    const originLng = input.lng ?? originWard?.centerLng ?? 0;
+    const orderIds = preview.stops.map((stop) => stop.order_id);
+
+    try {
+      const route = await this.prisma.$transaction(async (tx) => {
+        const claimed = await tx.collectionOrder.updateMany({
+          where: { id: { in: orderIds }, status: OrderStatus.READY, collectorId: null, deletedAt: null },
+          data: { status: OrderStatus.ASSIGNED, collectorId: collector.id, assignedAt: new Date() },
+        });
+        if (claimed.count !== orderIds.length) {
+          throw new ConflictException({ code: 'ROUTE_CHANGED', message: 'Tuyến đã thay đổi, vui lòng tải lại trước khi bắt đầu ca', details: null });
+        }
+        return tx.collectionRoute.create({
+          data: {
+            clientUuid: input.client_uuid,
+            collectorId: collector.id,
+            status: 'ACTIVE',
+            originLat,
+            originLng,
+            vehicleCapacityLiters: Number(collector.maxCapacityLiters),
+            totalExpectedLiters: preview.total_expected_liters,
+            remainingCapacityLiters: preview.remaining_capacity_l,
+            optimizationSnapshot: preview.route_optimization as Prisma.InputJsonValue,
+            capacityRiskSnapshot: preview.route_capacity_risk as Prisma.InputJsonValue,
+            stops: {
+              create: preview.stops.map((stop) => ({
+                orderId: stop.order_id,
+                sequence: stop.seq,
+                expectedLiters: stop.expected_liters,
+                merchantSnapshot: {
+                  name: stop.merchant.name,
+                  address: stop.merchant.address,
+                  phone: stop.merchant.phone ?? null,
+                  lat: stop.merchant.lat,
+                  lng: stop.merchant.lng,
+                  container_code: stop.container_code,
+                  distance_m: stop.distance_m,
+                  ward_center: stop.ward_center ?? null,
+                } as Prisma.InputJsonValue,
+                aiSnapshot: {
+                  priority: stop.priority,
+                  pickup_priority_score: stop.pickup_priority_score,
+                  pickup_priority_level: stop.pickup_priority_level,
+                  pickup_priority_reason_codes: stop.pickup_priority_reason_codes,
+                  pickup_volume_forecast: stop.pickup_volume_forecast,
+                } as Prisma.InputJsonValue,
+              })),
+            },
+          },
+          include: { stops: { orderBy: { sequence: 'asc' } } },
+        });
+      });
+      return this.serializePersistedRoute(route as unknown as PersistedRoute);
+    } catch (error) {
+      if (error instanceof ConflictException) throw error;
+      throw new ConflictException({ code: 'ROUTE_ALREADY_ACTIVE', message: 'Collector đã có một ca đang hoạt động', details: null });
+    }
+  }
+
+  async completeRoute(user: AccessTokenPayload): Promise<CurrentRouteResponse> {
+    const collector = await this.requireRouteCollector(user);
+    const activeRoute = await this.prisma.collectionRoute.findFirst({
+      where: { collectorId: collector.id, status: 'ACTIVE' },
+      include: { stops: { orderBy: { sequence: 'asc' } } },
+    });
+    if (!activeRoute) {
+      const completedRoute = await this.prisma.collectionRoute.findFirst({
+        where: { collectorId: collector.id, status: 'COMPLETED' },
+        orderBy: { completedAt: 'desc' },
+        include: { stops: { orderBy: { sequence: 'asc' } } },
+      });
+      if (completedRoute) return this.serializePersistedRoute(completedRoute as unknown as PersistedRoute);
+      throw new NotFoundException('Không có ca đang hoạt động');
+    }
+    const pending = activeRoute.stops.filter((stop) => stop.status === 'PENDING');
+    if (pending.length > 0) {
+      throw new ConflictException({ code: 'ROUTE_STOPS_PENDING', message: 'Chưa thể kết ca khi vẫn còn điểm chưa thu hoặc bỏ qua', details: { pending: pending.length } });
+    }
+    const completedRoute = await this.prisma.$transaction(async (tx) => {
+      await tx.collectionRoute.update({ where: { id: activeRoute.id }, data: { status: 'COMPLETED', completedAt: new Date() } });
+      return tx.collectionRoute.findUnique({ where: { id: activeRoute.id }, include: { stops: { orderBy: { sequence: 'asc' } } } });
+    });
+    if (!completedRoute) throw new NotFoundException('Không tìm thấy ca sau khi kết thúc');
+    return this.serializePersistedRoute(completedRoute as unknown as PersistedRoute);
+  }
+
+  async cancelRoute(user: AccessTokenPayload, input: RouteCancelInput): Promise<{ route_id: string; status: 'CANCELLED' }> {
+    const collector = await this.requireRouteCollector(user);
+    const activeRoute = await this.prisma.collectionRoute.findFirst({
+      where: { collectorId: collector.id, status: 'ACTIVE' },
+      include: { stops: { orderBy: { sequence: 'asc' } } },
+    });
+    if (!activeRoute) {
+      const cancelledRoute = await this.prisma.collectionRoute.findFirst({
+        where: { collectorId: collector.id, status: 'CANCELLED' },
+        orderBy: { cancelledAt: 'desc' },
+      });
+      if (cancelledRoute) return { route_id: cancelledRoute.id, status: 'CANCELLED' };
+      throw new NotFoundException('Không có ca đang hoạt động');
+    }
+    if (activeRoute.stops.some((stop) => stop.status === 'COLLECTED')) {
+      throw new ConflictException({ code: 'ROUTE_HAS_COLLECTED_STOPS', message: 'Không thể hủy ca sau khi đã thu ít nhất một điểm', details: null });
+    }
+    const cancelledAt = new Date();
+    await this.prisma.$transaction(async (tx) => {
+      await tx.collectionOrder.updateMany({
+        where: { id: { in: activeRoute.stops.map((stop) => stop.orderId) }, collectorId: collector.id, status: OrderStatus.ASSIGNED },
+        data: { status: OrderStatus.READY, collectorId: null, assignedAt: null },
+      });
+      await tx.collectionRouteStop.updateMany({
+        where: { routeId: activeRoute.id, status: 'PENDING' },
+        data: { status: 'SKIPPED', skippedAt: cancelledAt, skipReason: input.reason ?? 'Ca bị hủy' },
+      });
+      await tx.collectionRoute.update({ where: { id: activeRoute.id }, data: { status: 'CANCELLED', cancelledAt } });
+    });
+    return { route_id: activeRoute.id, status: 'CANCELLED' };
+  }
+
+  private async requireRouteCollector(user: AccessTokenPayload): Promise<RouteCollector> {
     const collector = await this.prisma.collector.findUnique({
       where: { userId: user.sub },
       include: { collectorWards: { include: { ward: true }, orderBy: { createdAt: 'asc' } } },
@@ -158,6 +354,10 @@ export class OrdersService {
     if (!collector || collector.status === EntityStatus.INACTIVE) {
       throw new NotFoundException('Collector profile not found');
     }
+    return collector as unknown as RouteCollector;
+  }
+
+  private async buildRoutePreview(collector: RouteCollector, query: RouteQueryInput): Promise<CurrentRouteResponse> {
     const originWard = collector.collectorWards[0]?.ward;
     const originLat = query.lat ?? originWard?.centerLat ?? 0;
     const originLng = query.lng ?? originWard?.centerLng ?? 0;
@@ -304,13 +504,51 @@ export class OrdersService {
       vehicle_capacity_liters: maxCapacity,
       stops: selectedCapacityRiskStops,
     });
-    // TODO(sprint-4): Persist optimized route/route_stops when route persistence is introduced.
     return {
       stops: orderedStops,
       total_expected_liters: total,
       remaining_capacity_l: Math.max(maxCapacity - total, 0),
       route_optimization: routeOptimization,
       route_capacity_risk: routeCapacityRisk,
+      route_id: null,
+      route_status: 'PREVIEW',
+      persisted: false,
+      client_uuid: null,
+      started_at: null,
+    };
+  }
+
+  private serializePersistedRoute(route: PersistedRoute): CurrentRouteResponse {
+    const stops = route.stops.map((stop) => {
+      const merchantSnapshot = stop.merchantSnapshot as Record<string, unknown>;
+      const aiSnapshot = stop.aiSnapshot as Record<string, unknown>;
+      const merchant = merchantSnapshot as unknown as CurrentRouteResponse['stops'][number]['merchant'];
+      return {
+        seq: stop.sequence,
+        order_id: stop.orderId,
+        merchant,
+        container_code: String(merchantSnapshot.container_code ?? ''),
+        expected_liters: Number(stop.expectedLiters ?? 0),
+        priority: Number(aiSnapshot.priority ?? 0),
+        distance_m: Number(merchantSnapshot.distance_m ?? 0),
+        ward_center: (merchantSnapshot.ward_center as CurrentRouteResponse['stops'][number]['ward_center']) ?? null,
+        pickup_priority_score: Number(aiSnapshot.pickup_priority_score ?? 0),
+        pickup_priority_level: aiSnapshot.pickup_priority_level as CurrentRouteResponse['stops'][number]['pickup_priority_level'],
+        pickup_priority_reason_codes: Array.isArray(aiSnapshot.pickup_priority_reason_codes) ? aiSnapshot.pickup_priority_reason_codes as string[] : [],
+        pickup_volume_forecast: aiSnapshot.pickup_volume_forecast as CurrentRouteResponse['stops'][number]['pickup_volume_forecast'],
+      };
+    });
+    return {
+      stops,
+      total_expected_liters: Number(route.totalExpectedLiters),
+      remaining_capacity_l: Number(route.remainingCapacityLiters),
+      route_optimization: route.optimizationSnapshot as CurrentRouteResponse['route_optimization'],
+      route_capacity_risk: route.capacityRiskSnapshot as CurrentRouteResponse['route_capacity_risk'],
+      route_id: route.id,
+      route_status: route.status === 'COMPLETED' ? 'COMPLETED' : 'ACTIVE',
+      persisted: true,
+      client_uuid: route.clientUuid,
+      started_at: route.startedAt.toISOString(),
     };
   }
 

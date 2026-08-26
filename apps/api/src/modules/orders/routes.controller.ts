@@ -1,6 +1,6 @@
-import { Controller, Get, Inject, Query } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Post, Query } from '@nestjs/common';
 import { Role } from '@prisma/client';
-import { routeQuerySchema } from '@eco-oil/validation';
+import { routeCancelSchema, routeQuerySchema, routeStartSchema } from '@eco-oil/validation';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import type { AccessTokenPayload } from '../auth/auth.types';
@@ -14,5 +14,23 @@ export class RoutesController {
   @Get('current')
   current(@CurrentUser() user: AccessTokenPayload, @Query() query: Record<string, unknown>) {
     return this.service.currentRoute(user, routeQuerySchema.parse(query));
+  }
+
+  @Roles(Role.COLLECTOR)
+  @Post('start')
+  start(@CurrentUser() user: AccessTokenPayload, @Body() body: unknown) {
+    return this.service.startRoute(user, routeStartSchema.parse(body));
+  }
+
+  @Roles(Role.COLLECTOR)
+  @Post('current/complete')
+  complete(@CurrentUser() user: AccessTokenPayload) {
+    return this.service.completeRoute(user);
+  }
+
+  @Roles(Role.COLLECTOR)
+  @Post('current/cancel')
+  cancel(@CurrentUser() user: AccessTokenPayload, @Body() body: unknown) {
+    return this.service.cancelRoute(user, routeCancelSchema.parse(body));
   }
 }

@@ -262,6 +262,25 @@ export const routeQuerySchema = z
   });
 export type RouteQueryInput = z.infer<typeof routeQuerySchema>;
 
+export const routeStartSchema = z.object({
+  client_uuid: uuidSchema,
+  lat: optionalCoordinate.min(-90).max(90).optional(),
+  lng: optionalCoordinate.min(-180).max(180).optional(),
+}).superRefine((value, context) => {
+  if (value.lat !== undefined && value.lng === undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['lng'], message: 'lng is required with lat' });
+  }
+  if (value.lng !== undefined && value.lat === undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['lat'], message: 'lat is required with lng' });
+  }
+});
+export type RouteStartInput = z.infer<typeof routeStartSchema>;
+
+export const routeCancelSchema = z.object({
+  reason: z.string().trim().max(500).optional(),
+});
+export type RouteCancelInput = z.infer<typeof routeCancelSchema>;
+
 export const collectionCreateSchema = z.object({
   client_uuid: uuidSchema,
   order_id: uuidSchema,

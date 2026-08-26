@@ -290,6 +290,11 @@ export interface CurrentRouteResponse {
   stops: RouteStop[];
   total_expected_liters: number;
   remaining_capacity_l: number;
+  route_id?: string | null;
+  route_status?: 'PREVIEW' | 'ACTIVE' | 'COMPLETED';
+  persisted?: boolean;
+  client_uuid?: string | null;
+  started_at?: string | null;
   route_optimization?: {
     estimated_distance_before_m: number | null;
     estimated_distance_after_m: number | null;
@@ -307,6 +312,11 @@ export interface CurrentRouteResponse {
     forecast_coverage_pct: number;
     reason_codes: string[];
   };
+}
+
+export interface CollectionRouteCancelResponse {
+  route_id: string;
+  status: 'CANCELLED';
 }
 
 export interface ContainerLookupResponse {
