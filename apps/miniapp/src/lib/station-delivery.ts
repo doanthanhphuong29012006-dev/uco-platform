@@ -97,10 +97,18 @@ export async function loadStationRecommendations(
     return {
       status: 'error',
       stations: [],
-      error: error instanceof Error ? error.message : 'Không thể tải danh sách trạm.',
+      error: stationRecommendationErrorMessage(error),
     };
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);
     setLoading(false);
   }
+}
+
+export function stationRecommendationErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message.trim() : '';
+  if (/failed to fetch|network\s*error|network request failed|load failed/i.test(message)) {
+    return 'Đang ngoại tuyến hoặc không kết nối được máy chủ. Hãy bật mạng rồi thử lại.';
+  }
+  return message || 'Không thể tải danh sách trạm. Vui lòng thử lại.';
 }

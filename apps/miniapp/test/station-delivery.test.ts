@@ -72,6 +72,21 @@ test('station recommendation request stops loading and exposes retryable error',
   assert.deepEqual(result, { status: 'error', stations: [], error: 'Mất kết nối máy chủ' });
 });
 
+test('station recommendation translates browser network errors into Vietnamese guidance', async () => {
+  const loading: boolean[] = [];
+  const result = await loadStationRecommendations(
+    async () => { throw new TypeError('Failed to fetch'); },
+    (value) => loading.push(value),
+  );
+
+  assert.deepEqual(loading, [true, false]);
+  assert.deepEqual(result, {
+    status: 'error',
+    stations: [],
+    error: 'Đang ngoại tuyến hoặc không kết nối được máy chủ. Hãy bật mạng rồi thử lại.',
+  });
+});
+
 test('empty station recommendation response has an explicit empty state', async () => {
   const loading: boolean[] = [];
   const result = await loadStationRecommendations(async () => [], (value) => loading.push(value));
