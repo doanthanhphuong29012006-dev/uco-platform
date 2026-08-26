@@ -1,15 +1,15 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { AlertSeverity, Role, type AuthUser } from '@eco-oil/shared-types';
+import { AlertSeverity, AnomalyFeedbackVerdict, OilGrade, Quality, Role, type AuthUser } from '@eco-oil/shared-types';
 import { createElement } from 'react';
-import { afterEach, expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
 import { KpiCards } from './components/kpi-cards';
-import { AlertListItem } from './components/alerts-view';
+import { AiAnomalyListItem, AlertListItem } from './components/alerts-view';
 import { TransactionAnomalySummary } from './components/reconciliation-view';
 import { countStationsByFillForecast, sortStationsByFillForecast, StationForecastStatus, StationsTable } from './components/stations-view';
 import { calculateVariancePct, isAdminUser } from './lib/dashboard-utils';
 import type { StationFillForecast, StationSummaryWithForecast } from './lib/api';
-import { AiPerformanceContent, errorTone, formatAiLiters } from './components/ai-performance-view';
-import type { AdminPickupForecastPerformanceResponse } from '@eco-oil/shared-types';
+import { AiAnomalyPerformanceContent, AiPerformanceContent, errorTone, formatAiLiters } from './components/ai-performance-view';
+import type { AdminAiAnomalyItem, AdminAiAnomalyPerformanceResponse, AdminPickupForecastPerformanceResponse } from '@eco-oil/shared-types';
 
 afterEach(cleanup);
 
@@ -56,6 +56,60 @@ test('hiển thị bảng hiệu quả AI và tô màu sai số theo ngưỡng',
 test('hiển thị empty state khi không có điểm backtest', () => {
   render(createElement(AiPerformanceContent, { data: { ...aiPerformanceFixture, sample_count: 0, points: [] } }));
   expect(screen.getByText('Chưa có đủ dữ liệu lịch sử để backtest trong khoảng thời gian này.')).toBeInTheDocument();
+});
+
+const aiAnomalyFixture: AdminAiAnomalyItem = {
+  id: 'anomaly:transaction-1',
+  transaction_id: 'transaction-1',
+  merchant_id: 'merchant-1',
+  merchant_name: 'Quán bất thường',
+  collector_name: 'Người thu gom',
+  actual_liters: 60,
+  actual_kg: 55,
+  quality: Quality.PASS,
+  grade: OilGrade.A,
+  collected_at: '2026-03-02T00:00:00.000Z',
+  risk_score: 42,
+  risk_level: 'REVIEW',
+  explanation_summary: 'Phát hiện tín hiệu cần xem xét.',
+  reason_codes: [{ code: 'MASS_OR_VOLUME_OUTLIER', label: 'Khối lượng bất thường', description: 'Lệch lịch sử.', contribution: 20, evidence: { value: 60 }, severity: AlertSeverity.HIGH }],
+  history_size: 6,
+  feedback: null,
+};
+
+test('hiển thị giải thích anomaly và gửi feedback từ giao diện', () => {
+  const onSave = vi.fn();
+  render(createElement(AiAnomalyListItem, { item: aiAnomalyFixture, onSave, saving: false }));
+  fireEvent.click(screen.getByRole('button', { name: 'Xem giải thích' }));
+  expect(screen.getByText('Khối lượng bất thường')).toBeInTheDocument();
+  expect(screen.getByText(/Bằng chứng:/)).toBeInTheDocument();
+  fireEvent.change(screen.getByRole('combobox'), { target: { value: 'CONFIRMED_ANOMALY' } });
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Đã đối chiếu' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Lưu đánh giá' }));
+  expect(onSave).toHaveBeenCalledWith('transaction-1', AnomalyFeedbackVerdict.CONFIRMED_ANOMALY, 'Đã đối chiếu');
+});
+
+test('hiển thị hiệu quả phản hồi anomaly và trạng thái mẫu ít', () => {
+  const data: AdminAiAnomalyPerformanceResponse = {
+    window_days: 90,
+    total_alerts: 1,
+    reviewed_count: 1,
+    unreviewed_count: 0,
+    feedback_coverage_percent: 100,
+    confirmed_count: 1,
+    false_positive_count: 0,
+    unsure_count: 0,
+    confirmed_rate_percent: 100,
+    false_positive_rate_percent: 0,
+    breakdown_by_risk_level: [{ risk_level: 'REVIEW', count: 1 }],
+    breakdown_by_reason_code: [{ code: 'MASS_OR_VOLUME_OUTLIER', count: 1 }],
+    recent_reviewed_items: [{ ...aiAnomalyFixture, feedback: { id: 'feedback-1', verdict: AnomalyFeedbackVerdict.CONFIRMED_ANOMALY, note: null, reviewer_user_id: 'admin-1', risk_score_snapshot: 42, risk_level_snapshot: 'REVIEW', reasons_snapshot: aiAnomalyFixture.reason_codes, created_at: '2026-03-02T00:00:00.000Z', updated_at: '2026-03-02T00:00:00.000Z' } }],
+    explanation: 'Các tỷ lệ chỉ được tính trên cảnh báo đã đánh giá.',
+  };
+  render(createElement(AiAnomalyPerformanceContent, { data }));
+  expect(screen.getByText('Phát hiện bất thường')).toBeInTheDocument();
+  expect(screen.getByText('Dữ liệu phản hồi còn ít')).toBeInTheDocument();
+  expect(screen.getByText('100%')).toBeInTheDocument();
 });
 
 test('render đúng các số liệu KPI', () => {

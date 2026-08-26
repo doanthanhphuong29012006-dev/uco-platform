@@ -1,6 +1,10 @@
 import { ApiError, createApiClient } from '@eco-oil/api-client';
 import type {
   AdminAlert,
+  AdminAiAnomaliesResponse,
+  AdminAnomalyFeedback,
+  AdminAiAnomalyPerformanceResponse,
+  AnomalyFeedbackVerdict,
   AdminCollectorPerformance,
   AdminCollectorSummary,
   AdminMerchantSummary,
@@ -72,6 +76,12 @@ export const api = {
   overview: (from?: string, to?: string) => client.request<AdminOverviewResponse>(`/admin/overview${query({ from, to })}`),
   pickupForecastPerformance: (windowDays: 30 | 90 | 180 = 90) =>
     client.request<AdminPickupForecastPerformanceResponse>(`/admin/ai-performance/pickup-forecast${query({ window_days: windowDays })}`),
+  aiAnomalies: (params: { window_days?: 30 | 90 | 180; risk_level?: string; verdict?: AnomalyFeedbackVerdict; page?: number; limit?: number } = {}) =>
+    client.request<AdminAiAnomaliesResponse>(`/admin/ai-anomalies${query({ window_days: 90, page: 1, limit: 100, ...params })}`),
+  updateAiAnomalyFeedback: (transactionId: string, body: { verdict: AnomalyFeedbackVerdict; note?: string }) =>
+    client.request<AdminAnomalyFeedback>(`/admin/ai-anomalies/${transactionId}/feedback`, { method: 'PUT', body }),
+  aiAnomalyPerformance: (windowDays: 30 | 90 | 180 = 90) =>
+    client.request<AdminAiAnomalyPerformanceResponse>(`/admin/ai-performance/anomaly-detection${query({ window_days: windowDays })}`),
   reconciliation: (date: string) => client.request<AdminReconciliationResponse>(`/admin/reconciliation?date=${date}`),
   reconciliationCsv: (date: string) => client.request<string>(`/admin/reconciliation/export?date=${date}`),
   alerts: (params: { type?: string; resolved?: boolean; page?: number; limit?: number }) =>
