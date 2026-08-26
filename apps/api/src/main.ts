@@ -4,6 +4,18 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { configureBodyParser } from './http/body-parser';
 
+export const CORS_METHODS = ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'] as const;
+
+export function createCorsOptions(corsOrigins: string[]) {
+  return {
+    origin: corsOrigins,
+    credentials: true,
+    methods: [...CORS_METHODS],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    exposedHeaders: ['X-Idempotent-Replay'],
+  };
+}
+
 async function bootstrap(): Promise<void> {
   if (Object.prototype.hasOwnProperty.call(process.env, 'JWT_SECRET') && !process.env.JWT_SECRET?.trim()) {
     throw new Error('JWT_SECRET is required and cannot be empty');
@@ -24,15 +36,11 @@ async function bootstrap(): Promise<void> {
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean);
-  app.enableCors({
-    origin: corsOrigins,
-    credentials: true,
-    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-    exposedHeaders: ['X-Idempotent-Replay'],
-  });
+  app.enableCors(createCorsOptions(corsOrigins));
   const port = Number(config.get<string>('PORT') ?? '3000');
   await app.listen(port, '0.0.0.0');
 }
 
-void bootstrap();
+if (process.env.NODE_ENV !== 'test') {
+  void bootstrap();
+}
