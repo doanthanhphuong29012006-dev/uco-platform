@@ -1,13 +1,17 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { AlertSeverity, Role, type AuthUser } from '@eco-oil/shared-types';
 import { createElement } from 'react';
-import { expect, test } from 'vitest';
+import { afterEach, expect, test } from 'vitest';
 import { KpiCards } from './components/kpi-cards';
 import { AlertListItem } from './components/alerts-view';
 import { TransactionAnomalySummary } from './components/reconciliation-view';
 import { countStationsByFillForecast, sortStationsByFillForecast, StationForecastStatus, StationsTable } from './components/stations-view';
 import { calculateVariancePct, isAdminUser } from './lib/dashboard-utils';
 import type { StationFillForecast, StationSummaryWithForecast } from './lib/api';
+import { AiPerformanceContent, errorTone, formatAiLiters } from './components/ai-performance-view';
+import type { AdminPickupForecastPerformanceResponse } from '@eco-oil/shared-types';
+
+afterEach(cleanup);
 
 const user = (role: Role): AuthUser => ({
   id: 'user-1', zalo_id: 'zalo-test', phone: '0900000000', name: 'Test', role, merchantId: null, collectorId: null, merchantApprovalStatus: null, merchantRejectionReason: null,
@@ -17,6 +21,41 @@ test('guard từ chối tài khoản không phải ADMIN', () => {
   expect(isAdminUser(user(Role.MERCHANT))).toBe(false);
   expect(isAdminUser(user(Role.COLLECTOR))).toBe(false);
   expect(isAdminUser(user(Role.ADMIN))).toBe(true);
+});
+
+const aiPerformanceFixture: AdminPickupForecastPerformanceResponse = {
+  window_days: 90,
+  window_start: '2026-01-01T00:00:00.000Z',
+  window_end: '2026-03-31T00:00:00.000Z',
+  sample_count: 2,
+  mae_liters: 1.2,
+  wape_pct: 8.5,
+  bias_liters: -0.4,
+  accuracy_pct: 91.5,
+  within_10_pct_count: 1,
+  within_20_pct_count: 2,
+  reliability: 'INSUFFICIENT',
+  points: [
+    { merchant_id: 'merchant-1', merchant_name: 'Quán A', collected_at: '2026-03-01T00:00:00.000Z', predicted_liters: 15, actual_liters: 15, absolute_error_liters: 0, error_percentage_pct: 0, confidence: 'HIGH', history_sample_size: 5, direction: 'MATCH' },
+    { merchant_id: 'merchant-1', merchant_name: 'Quán A', collected_at: '2026-03-02T00:00:00.000Z', predicted_liters: 14, actual_liters: 20, absolute_error_liters: 6, error_percentage_pct: 30, confidence: 'LOW', history_sample_size: 1, direction: 'LOWER_THAN_ACTUAL' },
+  ],
+  explanation: { method: 'ROLLING_ORIGIN', summary: 'Đánh giá được backtest chỉ bằng dữ liệu có trước mỗi lần thu gom.', data_leakage_prevention: 'Chỉ dùng dữ liệu trước thời điểm thu.' },
+};
+
+test('hiển thị bảng hiệu quả AI và tô màu sai số theo ngưỡng', () => {
+  render(createElement(AiPerformanceContent, { data: aiPerformanceFixture }));
+  expect(screen.getByText('Độ chính xác ước tính')).toBeInTheDocument();
+  expect(screen.getByText('91,5%')).toBeInTheDocument();
+  expect(screen.getAllByText('15 lít')).toHaveLength(2);
+  expect(screen.getByText('Đánh giá được backtest chỉ bằng dữ liệu có trước mỗi lần thu gom.')).toBeInTheDocument();
+  expect(errorTone(aiPerformanceFixture.points[0]!)).toBe('green');
+  expect(errorTone(aiPerformanceFixture.points[1]!)).toBe('red');
+  expect(formatAiLiters(null)).toBe('—');
+});
+
+test('hiển thị empty state khi không có điểm backtest', () => {
+  render(createElement(AiPerformanceContent, { data: { ...aiPerformanceFixture, sample_count: 0, points: [] } }));
+  expect(screen.getByText('Chưa có đủ dữ liệu lịch sử để backtest trong khoảng thời gian này.')).toBeInTheDocument();
 });
 
 test('render đúng các số liệu KPI', () => {

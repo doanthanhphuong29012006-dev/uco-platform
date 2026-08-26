@@ -5,6 +5,7 @@ import type {
   AdminCollectorSummary,
   AdminMerchantSummary,
   AdminOverviewResponse,
+  AdminPickupForecastPerformanceResponse,
   AdminReconciliationResponse,
   AdminStationSummary,
   AdminContainerSummary,
@@ -69,6 +70,8 @@ export const api = {
   me: () => client.request<AuthUser>('/auth/me'),
   logout: (refreshToken: string) => client.request('/auth/logout', { method: 'POST', body: { refresh_token: refreshToken } }),
   overview: (from?: string, to?: string) => client.request<AdminOverviewResponse>(`/admin/overview${query({ from, to })}`),
+  pickupForecastPerformance: (windowDays: 30 | 90 | 180 = 90) =>
+    client.request<AdminPickupForecastPerformanceResponse>(`/admin/ai-performance/pickup-forecast${query({ window_days: windowDays })}`),
   reconciliation: (date: string) => client.request<AdminReconciliationResponse>(`/admin/reconciliation?date=${date}`),
   reconciliationCsv: (date: string) => client.request<string>(`/admin/reconciliation/export?date=${date}`),
   alerts: (params: { type?: string; resolved?: boolean; page?: number; limit?: number }) =>
