@@ -56,6 +56,8 @@ function historicalRow(id: string, daysBefore: number, merchant = merchantId) {
     merchantId: merchant,
     actualKg: 18 + daysBefore / 10,
     actualLiters: 20 + daysBefore / 10,
+    massSource: 'SCALE',
+    densityFactor: null,
     collectedAt: new Date(candidateTime.getTime() - daysBefore * 24 * 60 * 60 * 1_000),
   };
 }
@@ -259,6 +261,8 @@ describe('AdminService anomaly feedback loop', () => {
     merchantId,
     actualLiters: 60,
     actualKg: 100,
+    massSource: 'SCALE',
+    densityFactor: null,
     quality: 'PASS',
     grade: 'A',
     collectedAt: targetDate,
@@ -266,8 +270,12 @@ describe('AdminService anomaly feedback loop', () => {
     collector: { displayName: 'Người thu gom' },
   };
 
-  function createAnomalyService(feedback: Array<Record<string, unknown>> = []) {
-    const candidateFindMany = jest.fn().mockResolvedValue([row]);
+  function createAnomalyService(
+    feedback: Array<Record<string, unknown>> = [],
+    candidateRow = row,
+    historyRows = history,
+  ) {
+    const candidateFindMany = jest.fn().mockResolvedValue([candidateRow]);
     const feedbackFindMany = jest.fn().mockResolvedValue(feedback);
     const findUnique = jest.fn().mockResolvedValue(row);
     const upsert = jest.fn().mockResolvedValue({
@@ -287,7 +295,7 @@ describe('AdminService anomaly feedback loop', () => {
       anomalyFeedback: { findMany: feedbackFindMany, upsert },
     } as unknown as PrismaService;
     candidateFindMany.mockImplementation(async (args: { select?: Record<string, unknown> }) =>
-      args.select?.merchant ? [row] : history,
+      args.select?.merchant ? [candidateRow] : historyRows,
     );
     const config = { get: jest.fn((_key: string, fallback: unknown) => fallback) } as unknown as ConfigService;
     const stations = { listFillAlertCandidates: jest.fn().mockResolvedValue([]) } as unknown as StationsService;
@@ -355,6 +363,42 @@ describe('AdminService anomaly feedback loop', () => {
       confirmed_rate_percent: 0,
       false_positive_rate_percent: 100,
     });
+  });
+
+  it('lists a measured 20 liter and 50 kilogram transaction as a density anomaly', async () => {
+    const physicalCandidate = {
+      ...row,
+      actualLiters: 20,
+      actualKg: 50,
+      massSource: 'SCALE',
+      densityFactor: null,
+    };
+    const estimatedHistory = Array.from({ length: 6 }, (_, index) => ({
+      ...historicalRow(`estimated-${index}`, index + 1),
+      actualKg: 18.2,
+      actualLiters: 20,
+      massSource: 'ESTIMATED_FROM_VOLUME',
+    }));
+    const { service } = createAnomalyService([], physicalCandidate, estimatedHistory);
+
+    const result = await service.listAiAnomalies({ window_days: 90, page: 1, limit: 20, include_inactive: false });
+
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0]).toMatchObject({
+      transaction_id: targetId,
+      risk_level: 'REVIEW',
+      reason_codes: expect.arrayContaining([
+        expect.objectContaining({
+          code: 'DENSITY_OUTLIER',
+          evidence: expect.objectContaining({
+            actual_density: 2.5,
+            mass_source: 'SCALE',
+            source: 'DOMAIN_DENSITY_BASELINE',
+          }),
+        }),
+      ]),
+    });
+    expect((result.data[0].reason_codes[0] as { description: string }).description).toEqual(expect.any(String));
   });
 });
 

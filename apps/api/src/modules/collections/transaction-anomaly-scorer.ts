@@ -21,10 +21,18 @@ export type TransactionAnomalyInput = {
   merchantId?: string | null;
   actualKg?: number | null;
   actualLiters?: number | null;
+  massSource?: 'SCALE' | 'ESTIMATED_FROM_VOLUME' | null;
+  densityFactor?: number | null;
+  expectedDensityKgPerLiter?: number | null;
   collectedAt: Date | string | number;
 };
 
 type SignalStatus = 'NOT_EVALUATED' | 'NORMAL' | 'ANOMALOUS';
+type SignalFallback =
+  | 'INSUFFICIENT_HISTORY'
+  | 'ZERO_MAD_RELATIVE_DEVIATION'
+  | 'CONFIGURED_DENSITY_BASELINE'
+  | null;
 
 export type TransactionAnomalySignal = {
   status: SignalStatus;
@@ -34,7 +42,7 @@ export type TransactionAnomalySignal = {
   robustZScore: number | null;
   sampleSize: number;
   contribution: number;
-  fallback: 'INSUFFICIENT_HISTORY' | 'ZERO_MAD_RELATIVE_DEVIATION' | null;
+  fallback: SignalFallback;
 };
 
 export type TransactionAnomalyResult = {
@@ -54,6 +62,8 @@ export type TransactionAnomalyResult = {
 };
 
 const MIN_HISTORY = 5;
+const DENSITY_MAX_CONTRIBUTION = 35;
+const DENSITY_CONFIG_DEVIATION_THRESHOLD = 0.2;
 const ROBUST_Z_THRESHOLD = 3.5;
 const ROBUST_Z_FULL_SCORE = 8;
 const MAD_SCALE = 0.67448975;
@@ -90,6 +100,7 @@ function evaluateSignal(
   samples: number[],
   maximumContribution: number,
   zeroMadRelativeThreshold: number,
+  zeroMadScoreCapRatio = ZERO_MAD_SCORE_CAP_RATIO,
 ): TransactionAnomalySignal {
   if (value === null || !Number.isFinite(value) || samples.length < MIN_HISTORY) {
     return emptySignal(samples.length, value);
@@ -121,7 +132,7 @@ function evaluateSignal(
 
   const relativeDeviation =
     Math.abs(center) > Number.EPSILON ? Math.abs(value - center) / Math.abs(center) : Math.abs(value - center);
-  const fallbackCap = maximumContribution * ZERO_MAD_SCORE_CAP_RATIO;
+  const fallbackCap = maximumContribution * zeroMadScoreCapRatio;
   const contribution =
     relativeDeviation <= zeroMadRelativeThreshold
       ? 0
@@ -135,6 +146,39 @@ function evaluateSignal(
     sampleSize: samples.length,
     contribution,
     fallback: 'ZERO_MAD_RELATIVE_DEVIATION',
+  };
+}
+
+function evaluateConfiguredDensitySignal(
+  value: number | null,
+  expectedDensity: number | null,
+  sampleSize: number,
+): TransactionAnomalySignal {
+  if (
+    value === null ||
+    expectedDensity === null ||
+    !Number.isFinite(value) ||
+    !Number.isFinite(expectedDensity) ||
+    expectedDensity <= 0
+  ) {
+    return emptySignal(sampleSize, value);
+  }
+
+  const relativeDeviation = Math.abs(value - expectedDensity) / expectedDensity;
+  const excessRatio = Math.max(
+    0,
+    (relativeDeviation - DENSITY_CONFIG_DEVIATION_THRESHOLD) / (1 - DENSITY_CONFIG_DEVIATION_THRESHOLD),
+  );
+  const contribution = Math.min(DENSITY_MAX_CONTRIBUTION, excessRatio * DENSITY_MAX_CONTRIBUTION);
+  return {
+    status: contribution > 0 ? 'ANOMALOUS' : 'NORMAL',
+    value,
+    median: expectedDensity,
+    mad: null,
+    robustZScore: null,
+    sampleSize,
+    contribution,
+    fallback: 'CONFIGURED_DENSITY_BASELINE',
   };
 }
 
@@ -219,6 +263,29 @@ function signalEvidence(signal: TransactionAnomalySignal): Record<string, unknow
   };
 }
 
+function densityEvidence(
+  signal: TransactionAnomalySignal,
+  transaction: TransactionAnomalyInput,
+): Record<string, unknown> {
+  const actualDensity = signal.value;
+  const expectedDensity = signal.median;
+  const relativeDeviationPercent =
+    actualDensity !== null && expectedDensity !== null && expectedDensity > 0
+      ? Number(((Math.abs(actualDensity - expectedDensity) / expectedDensity) * 100).toFixed(2))
+      : null;
+  return {
+    ...signalEvidence(signal),
+    actual_density: rounded(actualDensity),
+    expected_density: rounded(expectedDensity),
+    relative_deviation_percent: relativeDeviationPercent,
+    mass_source: transaction.massSource ?? null,
+    density_factor: transaction.densityFactor ?? null,
+    source: signal.fallback === 'CONFIGURED_DENSITY_BASELINE'
+      ? 'DOMAIN_DENSITY_BASELINE'
+      : 'SCALE_HISTORY_BASELINE',
+  };
+}
+
 function reasonSeverity(signal: TransactionAnomalySignal, fallback: TransactionAnomalyReasonSeverity): TransactionAnomalyReasonSeverity {
   if (signal.contribution >= 20) return 'HIGH';
   if (signal.contribution >= 10) return 'MEDIUM';
@@ -239,17 +306,29 @@ export function scoreTransactionAnomaly(
 
   const targetKg = positiveNumber(transaction.actualKg);
   const targetLiters = positiveNumber(transaction.actualLiters);
-  const targetDensity = targetKg !== null && targetLiters !== null ? targetKg / targetLiters : null;
-  const densitySamples = historyWithTime
+  const targetDensity = transaction.massSource === 'SCALE' && targetKg !== null && targetLiters !== null
+    ? targetKg / targetLiters
+    : null;
+  const scaleDensitySamples = historyWithTime
+    .filter(({ item }) => item.massSource === 'SCALE')
     .map(({ item }) => {
       const kilograms = positiveNumber(item.actualKg);
       const liters = positiveNumber(item.actualLiters);
       return kilograms !== null && liters !== null ? kilograms / liters : null;
     })
     .filter((value): value is number => value !== null);
-  const density = evaluateSignal(targetDensity, densitySamples, 35, 0.15);
+  const density = targetDensity === null
+    ? emptySignal(scaleDensitySamples.length, null)
+    : scaleDensitySamples.length >= MIN_HISTORY
+      ? evaluateSignal(targetDensity, scaleDensitySamples, DENSITY_MAX_CONTRIBUTION, 0.15, 1)
+      : evaluateConfiguredDensitySignal(
+          targetDensity,
+          positiveNumber(transaction.expectedDensityKgPerLiter),
+          scaleDensitySamples.length,
+        );
 
   const kilograms = historyWithTime
+    .filter(({ item }) => item.massSource === 'SCALE')
     .map(({ item }) => positiveNumber(item.actualKg))
     .filter((value): value is number => value !== null);
   const liters = historyWithTime
@@ -299,7 +378,7 @@ export function scoreTransactionAnomaly(
     return {
       ...presentation,
       contribution: signal.contribution > 0 ? rounded(signal.contribution) : null,
-      evidence: signalEvidence(signal),
+      evidence: reason === 'DENSITY_OUTLIER' ? densityEvidence(signal, transaction) : signalEvidence(signal),
       severity: reasonSeverity(signal, presentation.severity),
     };
   });

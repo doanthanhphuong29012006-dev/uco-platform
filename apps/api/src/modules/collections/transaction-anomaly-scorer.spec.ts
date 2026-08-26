@@ -8,6 +8,7 @@ function history(values: Array<{ kilograms: number; liters: number }>): Transact
     merchantId,
     actualKg: value.kilograms,
     actualLiters: value.liters,
+    massSource: 'SCALE',
     collectedAt: new Date(targetDate.getTime() - (index + 2) * 24 * 60 * 60 * 1_000),
   }));
 }
@@ -28,6 +29,7 @@ describe('scoreTransactionAnomaly', () => {
       merchantId,
       actualKg: 60,
       actualLiters: 65.9,
+      massSource: 'SCALE' as const,
       collectedAt: targetDate,
     };
     const first = scoreTransactionAnomaly(normalHistory, candidate);
@@ -48,6 +50,7 @@ describe('scoreTransactionAnomaly', () => {
       merchantId,
       actualKg: 18,
       actualLiters: 20,
+      massSource: 'SCALE',
       collectedAt: targetDate,
     });
 
@@ -62,6 +65,7 @@ describe('scoreTransactionAnomaly', () => {
       merchantId,
       actualKg: 18.4,
       actualLiters: 20.2,
+      massSource: 'SCALE',
       collectedAt: targetDate,
     });
 
@@ -75,6 +79,7 @@ describe('scoreTransactionAnomaly', () => {
       merchantId,
       actualKg: 18.4,
       actualLiters: 10,
+      massSource: 'SCALE',
       collectedAt: targetDate,
     });
 
@@ -88,6 +93,7 @@ describe('scoreTransactionAnomaly', () => {
       merchantId,
       actualKg: 60,
       actualLiters: 65.9,
+      massSource: 'SCALE',
       collectedAt: targetDate,
     });
 
@@ -101,6 +107,7 @@ describe('scoreTransactionAnomaly', () => {
       merchantId,
       actualKg: 100,
       actualLiters: 10,
+      massSource: 'SCALE',
       collectedAt: targetDate,
     });
 
@@ -120,6 +127,7 @@ describe('scoreTransactionAnomaly', () => {
       merchantId,
       actualKg: 80,
       actualLiters: 40,
+      massSource: 'SCALE',
       collectedAt: targetDate,
     });
 
@@ -131,8 +139,8 @@ describe('scoreTransactionAnomaly', () => {
 
   it('always clamps the score to the inclusive 0-100 range', () => {
     const candidates: TransactionAnomalyInput[] = [
-      { merchantId, actualKg: 18.4, actualLiters: 20.2, collectedAt: targetDate },
-      { merchantId, actualKg: 500, actualLiters: 1, collectedAt: '2026-08-20T19:00:00.000Z' },
+      { merchantId, actualKg: 18.4, actualLiters: 20.2, massSource: 'SCALE', collectedAt: targetDate },
+      { merchantId, actualKg: 500, actualLiters: 1, massSource: 'SCALE', collectedAt: '2026-08-20T19:00:00.000Z' },
       { merchantId, actualKg: null, actualLiters: null, collectedAt: 'invalid-date' },
     ];
 
@@ -141,5 +149,76 @@ describe('scoreTransactionAnomaly', () => {
       expect(result.score).toBeGreaterThanOrEqual(0);
       expect(result.score).toBeLessThanOrEqual(100);
     }
+  });
+
+  it('detects a physically implausible measured density against the configured baseline', () => {
+    const estimatedHistory = Array.from({ length: 6 }, (_, index) => ({
+      merchantId,
+      actualKg: 18.2,
+      actualLiters: 20,
+      massSource: 'ESTIMATED_FROM_VOLUME' as const,
+      collectedAt: new Date(targetDate.getTime() - (index + 1) * 24 * 60 * 60 * 1_000),
+    }));
+    const result = scoreTransactionAnomaly(estimatedHistory, {
+      merchantId,
+      actualKg: 50,
+      actualLiters: 20,
+      massSource: 'SCALE',
+      densityFactor: null,
+      expectedDensityKgPerLiter: 0.91,
+      collectedAt: targetDate,
+    });
+
+    expect(result.score).toBeGreaterThanOrEqual(30);
+    expect(['REVIEW', 'HIGH_RISK']).toContain(result.level);
+    expect(result.reasons).toContain('DENSITY_OUTLIER');
+    expect(result.reasonDetails).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'DENSITY_OUTLIER',
+        evidence: expect.objectContaining({
+          actual_density: 2.5,
+          expected_density: 0.91,
+          relative_deviation_percent: expect.closeTo(174.73, 1),
+          mass_source: 'SCALE',
+          source: 'DOMAIN_DENSITY_BASELINE',
+        }),
+      }),
+    ]));
+  });
+
+  it('keeps a normal measured density unflagged', () => {
+    const result = scoreTransactionAnomaly([], {
+      merchantId,
+      actualKg: 18.2,
+      actualLiters: 20,
+      massSource: 'SCALE',
+      expectedDensityKgPerLiter: 0.91,
+      collectedAt: targetDate,
+    });
+
+    expect(result.level).toBe('NORMAL');
+    expect(result.reasons).toEqual([]);
+  });
+
+  it('does not treat estimated kilogram values as measured mass history', () => {
+    const estimatedHistory = Array.from({ length: 6 }, (_, index) => ({
+      merchantId,
+      actualKg: 100,
+      actualLiters: 20,
+      massSource: 'ESTIMATED_FROM_VOLUME' as const,
+      collectedAt: new Date(targetDate.getTime() - (index + 1) * 24 * 60 * 60 * 1_000),
+    }));
+    const result = scoreTransactionAnomaly(estimatedHistory, {
+      merchantId,
+      actualKg: 30,
+      actualLiters: 20,
+      massSource: 'SCALE',
+      expectedDensityKgPerLiter: 0.91,
+      collectedAt: targetDate,
+    });
+
+    expect(result.explanation.massOrVolume.metric).toBe('LITER');
+    expect(result.explanation.massOrVolume.sampleSize).toBe(6);
+    expect(result.reasonDetails.filter((reason) => reason.code === 'DENSITY_OUTLIER')).toHaveLength(1);
   });
 });

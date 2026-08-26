@@ -27,6 +27,7 @@ import type {
   MerchantApprovalInput,
 } from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
+import { getDensityKgPerLiter } from '../../config/mass.constants';
 import {
   scoreTransactionAnomaly,
   type TransactionAnomalyInput,
@@ -71,6 +72,8 @@ type ReconciliationTransaction = Record<string, unknown> & {
   id: string;
   merchant_id: string;
   collected_at: Date | string;
+  mass_source?: string | null;
+  density_factor?: number | null;
 };
 
 type ReconciliationAnomaly = TransactionAnomalyResult & { historySize: number };
@@ -231,10 +234,11 @@ export class AdminService {
             'id', ct."id",
             'merchant_id', ct."merchant_id",
             'merchant_name', m."business_name",
-            'liters', ct."actual_liters"::float8,
-            'kilograms', ct."actual_kg"::float8,
-            'mass_source', ct."mass_source"::text,
-            'grade', ct."grade"::text,
+             'liters', ct."actual_liters"::float8,
+             'kilograms', ct."actual_kg"::float8,
+             'mass_source', ct."mass_source"::text,
+             'density_factor', ct."density_factor"::float8,
+             'grade', ct."grade"::text,
             'suspected_adulteration', ct."suspected_adulteration",
             'collected_at', ct."collected_at"
           ) ORDER BY ct."collected_at"), '[]'::json) AS transactions
@@ -269,10 +273,11 @@ export class AdminService {
           'id', ct."id",
           'merchant_id', ct."merchant_id",
           'merchant_name', m."business_name",
-          'liters', ct."actual_liters"::float8,
-          'kilograms', ct."actual_kg"::float8,
-          'mass_source', ct."mass_source"::text,
-          'grade', ct."grade"::text,
+           'liters', ct."actual_liters"::float8,
+           'kilograms', ct."actual_kg"::float8,
+           'mass_source', ct."mass_source"::text,
+           'density_factor', ct."density_factor"::float8,
+           'grade', ct."grade"::text,
           'suspected_adulteration', ct."suspected_adulteration",
           'collected_at', ct."collected_at"
         ) ORDER BY ct."collected_at"), '[]'::json) AS items
@@ -391,6 +396,7 @@ export class AdminService {
   ): Promise<Map<string, ReconciliationAnomaly>> {
     const result = new Map<string, ReconciliationAnomaly>();
     if (transactions.length === 0) return result;
+    const expectedDensityKgPerLiter = getDensityKgPerLiter(this.config);
 
     const merchantIds = [...new Set(transactions.map((transaction) => transaction.merchant_id))];
     const latestCollectedAt = new Date(
@@ -403,7 +409,15 @@ export class AdminService {
             deletedAt: null,
             collectedAt: { lt: latestCollectedAt },
           },
-          select: { id: true, merchantId: true, actualKg: true, actualLiters: true, collectedAt: true },
+          select: {
+            id: true,
+            merchantId: true,
+            actualKg: true,
+            actualLiters: true,
+            massSource: true,
+            densityFactor: true,
+            collectedAt: true,
+          },
           orderBy: [{ merchantId: 'asc' }, { collectedAt: 'asc' }],
         })
       : [];
@@ -415,6 +429,9 @@ export class AdminService {
         merchantId: row.merchantId,
         actualKg: row.actualKg === null ? null : Number(row.actualKg),
         actualLiters: Number(row.actualLiters),
+        massSource: row.massSource,
+        densityFactor: row.densityFactor === null ? null : Number(row.densityFactor),
+        expectedDensityKgPerLiter,
         collectedAt: row.collectedAt,
       });
       historyByMerchant.set(row.merchantId, merchantHistory);
@@ -432,6 +449,11 @@ export class AdminService {
         merchantId: transaction.merchant_id,
         actualKg: this.numberOrNull(transaction.kilograms),
         actualLiters: this.numberOrNull(transaction.liters),
+        massSource: transaction.mass_source === 'SCALE' || transaction.mass_source === 'ESTIMATED_FROM_VOLUME'
+          ? transaction.mass_source
+          : null,
+        densityFactor: this.numberOrNull(transaction.density_factor),
+        expectedDensityKgPerLiter,
         collectedAt: transaction.collected_at,
       });
       result.set(transaction.id, { ...anomaly, historySize: history.length });
@@ -448,6 +470,8 @@ export class AdminService {
         merchantId: true,
         actualLiters: true,
         actualKg: true,
+        massSource: true,
+        densityFactor: true,
         quality: true,
         grade: true,
         collectedAt: true,
@@ -462,6 +486,8 @@ export class AdminService {
       collector_name: row.collector.displayName,
       liters: Number(row.actualLiters),
       kilograms: row.actualKg === null ? null : Number(row.actualKg),
+      mass_source: row.massSource,
+      density_factor: row.densityFactor === null ? null : Number(row.densityFactor),
       quality: row.quality,
       grade: row.grade,
       collected_at: row.collectedAt,
@@ -541,7 +567,15 @@ export class AdminService {
   async updateAiAnomalyFeedback(transactionId: string, body: AdminAiAnomalyFeedbackInput, reviewerUserId: string) {
     const transaction = await this.prisma.collectionTransaction.findUnique({
       where: { id: transactionId },
-      select: { id: true, merchantId: true, actualLiters: true, actualKg: true, collectedAt: true },
+      select: {
+        id: true,
+        merchantId: true,
+        actualLiters: true,
+        actualKg: true,
+        massSource: true,
+        densityFactor: true,
+        collectedAt: true,
+      },
     });
     if (!transaction) throw new NotFoundException('Không tìm thấy giao dịch bất thường.');
     const candidate = {
@@ -549,6 +583,8 @@ export class AdminService {
       merchant_id: transaction.merchantId,
       liters: Number(transaction.actualLiters),
       kilograms: transaction.actualKg === null ? null : Number(transaction.actualKg),
+      mass_source: transaction.massSource,
+      density_factor: transaction.densityFactor === null ? null : Number(transaction.densityFactor),
       collected_at: transaction.collectedAt,
     } as ReconciliationTransaction;
     const anomaly = (await this.scoreAnomalyTransactions([candidate])).get(transaction.id);
@@ -621,6 +657,11 @@ export class AdminService {
         merchantId: typeof merchantId === 'string' ? merchantId : null,
         actualKg: this.numberOrNull(transaction.kilograms),
         actualLiters: this.numberOrNull(transaction.liters),
+        massSource: transaction.mass_source === 'SCALE' || transaction.mass_source === 'ESTIMATED_FROM_VOLUME'
+          ? transaction.mass_source
+          : null,
+        densityFactor: this.numberOrNull(transaction.density_factor),
+        expectedDensityKgPerLiter: getDensityKgPerLiter(this.config),
         collectedAt:
           typeof transaction.collected_at === 'string' || transaction.collected_at instanceof Date
             ? transaction.collected_at
