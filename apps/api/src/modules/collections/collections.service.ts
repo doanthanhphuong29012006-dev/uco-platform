@@ -1,6 +1,6 @@
 import { ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AlertSeverity, AlertType, ContainerState, EntityStatus, MassSource, OilGrade, OrderStatus, Quality } from '@prisma/client';
+import { AlertSeverity, AlertType, ContainerState, EntityStatus, GradeDecisionSource, ImageGradeConfidence, MassSource, OilGrade, OrderStatus, Quality } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import type { CollectionCreateInput, CollectionListQueryInput } from '@eco-oil/validation';
@@ -23,6 +23,12 @@ type InsertedTransaction = {
   grade_photo_url: string | null;
   grade_note: string | null;
   suspected_adulteration: boolean;
+  image_grade_suggestion: OilGrade | null;
+  image_grade_confidence: ImageGradeConfidence | null;
+  image_grade_model_version: string | null;
+  image_grade_analysis: Prisma.JsonValue | null;
+  grade_decision_source: GradeDecisionSource | null;
+  grade_ai_override_acknowledged: boolean;
   quality: Quality;
   photos: Prisma.JsonValue;
   collected_at: Date;
@@ -45,6 +51,12 @@ type CollectionRow = {
   grade_photo_url: string | null;
   grade_note: string | null;
   suspected_adulteration: boolean;
+  image_grade_suggestion: OilGrade | null;
+  image_grade_confidence: ImageGradeConfidence | null;
+  image_grade_model_version: string | null;
+  image_grade_analysis: Prisma.JsonValue | null;
+  grade_decision_source: GradeDecisionSource | null;
+  grade_ai_override_acknowledged: boolean;
   quality: Quality;
   photos: Prisma.JsonValue;
   collected_at: Date;
@@ -139,6 +151,39 @@ export class CollectionsService {
         });
       }
 
+      const decisionSource = input.grade_decision_source ?? 'MANUAL';
+      const imageSuggestion = input.image_grade_suggestion ?? null;
+      const imageConfidence = input.image_grade_confidence ?? null;
+      const imageAnalysis = input.image_grade_analysis ?? null;
+      if (imageAnalysis && (imageAnalysis.suggested_grade !== imageSuggestion || imageAnalysis.confidence !== imageConfidence)) {
+        throw new UnprocessableEntityException({
+          code: 'IMAGE_GRADE_METADATA_INCONSISTENT',
+          message: 'Thông tin phân tích ảnh không khớp với gợi ý phân hạng.',
+          details: null,
+        });
+      }
+      if (decisionSource === 'AI_SUGGESTION_ACCEPTED' && imageSuggestion !== input.grade) {
+        throw new UnprocessableEntityException({
+          code: 'IMAGE_GRADE_DECISION_INVALID',
+          message: 'Phân hạng được chấp nhận phải khớp với gợi ý từ ảnh.',
+          details: null,
+        });
+      }
+      if (decisionSource === 'MANUAL_OVERRIDE_AI' && (!imageSuggestion || imageSuggestion === input.grade)) {
+        throw new UnprocessableEntityException({
+          code: 'IMAGE_GRADE_DECISION_INVALID',
+          message: 'Ghi đè gợi ý ảnh cần có gợi ý khác với phân hạng đã chọn.',
+          details: null,
+        });
+      }
+      if (decisionSource === 'MANUAL_OVERRIDE_AI' && (imageConfidence === 'HIGH' || imageConfidence === 'MEDIUM') && input.grade_ai_override_acknowledged !== true) {
+        throw new UnprocessableEntityException({
+          code: 'IMAGE_GRADE_OVERRIDE_ACK_REQUIRED',
+          message: 'Cần xác nhận khi giữ phân hạng khác với gợi ý ảnh có độ tin cậy trung bình hoặc cao.',
+          details: null,
+        });
+      }
+
       const massSource = hasKilograms ? MassSource.SCALE : MassSource.ESTIMATED_FROM_VOLUME;
       const storedDensityFactor = !hasLiters || !hasKilograms ? densityFactor : null;
 
@@ -161,7 +206,7 @@ export class CollectionsService {
           INSERT INTO "collection_transactions" (
             "id", "client_uuid", "order_id", "container_id", "merchant_id", "collector_id",
             "actual_liters", "quality", "geo_point", "photos", "collected_at", "created_at"
-            , "synced_at", "actual_kg", "mass_source", "density_factor", "grade", "grade_photo_url", "grade_note", "suspected_adulteration"
+            , "synced_at", "actual_kg", "mass_source", "density_factor", "grade", "grade_photo_url", "grade_note", "suspected_adulteration", "image_grade_suggestion", "image_grade_confidence", "image_grade_model_version", "image_grade_analysis", "grade_decision_source", "grade_ai_override_acknowledged"
           ) VALUES (
             ${randomUUID()}::uuid,
             ${input.client_uuid},
@@ -183,6 +228,12 @@ export class CollectionsService {
             ${gradePhotoUrl},
             ${input.grade_note ?? null},
             ${input.suspected_adulteration}
+            , ${imageSuggestion}::"OilGrade"
+            , ${imageConfidence}::"ImageGradeConfidence"
+            , ${input.image_grade_model_version ?? null}
+            , ${imageAnalysis ? JSON.stringify(imageAnalysis) : null}::jsonb
+            , ${decisionSource}::"GradeDecisionSource"
+            , ${input.grade_ai_override_acknowledged === true}
           )
           ON CONFLICT ("client_uuid") DO NOTHING
           RETURNING *
@@ -191,7 +242,8 @@ export class CollectionsService {
           inserted."merchant_id", inserted."collector_id", inserted."actual_liters"::float8 AS "actual_liters",
           inserted."actual_kg"::float8 AS "actual_kg", inserted."mass_source"::text AS "mass_source", inserted."density_factor"::float8 AS "density_factor",
           inserted."grade"::text AS "grade", inserted."grade_photo_url", inserted."grade_note", inserted."suspected_adulteration",
-          inserted."quality"::text AS "quality", inserted."photos", inserted."collected_at", inserted."created_at",
+           inserted."quality"::text AS "quality", inserted."photos", inserted."collected_at", inserted."created_at",
+           inserted."image_grade_suggestion"::text AS "image_grade_suggestion", inserted."image_grade_confidence"::text AS "image_grade_confidence", inserted."image_grade_model_version", inserted."image_grade_analysis", inserted."grade_decision_source"::text AS "grade_decision_source", inserted."grade_ai_override_acknowledged",
           inserted."deleted_at", ST_Y(inserted."geo_point"::geometry)::float8 AS "geo_lat",
           ST_X(inserted."geo_point"::geometry)::float8 AS "geo_lng"
         FROM inserted
@@ -324,7 +376,7 @@ export class CollectionsService {
     const [rows, countRows] = await Promise.all([
       this.prisma.$queryRaw<CollectionRow[]>`
         SELECT ct."id", ct."client_uuid", ct."order_id", ct."container_id", ct."merchant_id", ct."collector_id",
-          ct."actual_liters"::float8 AS "actual_liters", ct."actual_kg"::float8 AS "actual_kg", ct."mass_source"::text AS "mass_source", ct."density_factor"::float8 AS "density_factor", ct."grade"::text AS "grade", ct."grade_photo_url", ct."grade_note", ct."suspected_adulteration", ct."quality"::text AS "quality", ct."photos",
+          ct."actual_liters"::float8 AS "actual_liters", ct."actual_kg"::float8 AS "actual_kg", ct."mass_source"::text AS "mass_source", ct."density_factor"::float8 AS "density_factor", ct."grade"::text AS "grade", ct."grade_photo_url", ct."grade_note", ct."suspected_adulteration", ct."image_grade_suggestion"::text AS "image_grade_suggestion", ct."image_grade_confidence"::text AS "image_grade_confidence", ct."image_grade_model_version", ct."image_grade_analysis", ct."grade_decision_source"::text AS "grade_decision_source", ct."grade_ai_override_acknowledged", ct."quality"::text AS "quality", ct."photos",
           ct."collected_at", ct."created_at", c."qr_code" AS "container_code",
           ST_Y(ct."geo_point"::geometry)::float8 AS "geo_lat", ST_X(ct."geo_point"::geometry)::float8 AS "geo_lng"
         FROM "collection_transactions" ct
@@ -351,7 +403,7 @@ export class CollectionsService {
   private async loadByClientUuid(tx: Prisma.TransactionClient, clientUuid: string): Promise<CollectionRow | null> {
     const rows = await tx.$queryRaw<CollectionRow[]>`
       SELECT ct."id", ct."client_uuid", ct."order_id", ct."container_id", ct."merchant_id", ct."collector_id",
-        ct."actual_liters"::float8 AS "actual_liters", ct."actual_kg"::float8 AS "actual_kg", ct."mass_source"::text AS "mass_source", ct."density_factor"::float8 AS "density_factor", ct."grade"::text AS "grade", ct."grade_photo_url", ct."grade_note", ct."suspected_adulteration", ct."quality"::text AS "quality", ct."photos",
+        ct."actual_liters"::float8 AS "actual_liters", ct."actual_kg"::float8 AS "actual_kg", ct."mass_source"::text AS "mass_source", ct."density_factor"::float8 AS "density_factor", ct."grade"::text AS "grade", ct."grade_photo_url", ct."grade_note", ct."suspected_adulteration", ct."image_grade_suggestion"::text AS "image_grade_suggestion", ct."image_grade_confidence"::text AS "image_grade_confidence", ct."image_grade_model_version", ct."image_grade_analysis", ct."grade_decision_source"::text AS "grade_decision_source", ct."grade_ai_override_acknowledged", ct."quality"::text AS "quality", ct."photos",
         ct."collected_at", ct."created_at", c."qr_code" AS "container_code",
         ST_Y(ct."geo_point"::geometry)::float8 AS "geo_lat", ST_X(ct."geo_point"::geometry)::float8 AS "geo_lng"
       FROM "collection_transactions" ct
@@ -365,7 +417,7 @@ export class CollectionsService {
   private async loadById(tx: Prisma.TransactionClient, id: string): Promise<CollectionRow | null> {
     const rows = await tx.$queryRaw<CollectionRow[]>`
       SELECT ct."id", ct."client_uuid", ct."order_id", ct."container_id", ct."merchant_id", ct."collector_id",
-        ct."actual_liters"::float8 AS "actual_liters", ct."actual_kg"::float8 AS "actual_kg", ct."mass_source"::text AS "mass_source", ct."density_factor"::float8 AS "density_factor", ct."grade"::text AS "grade", ct."grade_photo_url", ct."grade_note", ct."suspected_adulteration", ct."quality"::text AS "quality", ct."photos",
+        ct."actual_liters"::float8 AS "actual_liters", ct."actual_kg"::float8 AS "actual_kg", ct."mass_source"::text AS "mass_source", ct."density_factor"::float8 AS "density_factor", ct."grade"::text AS "grade", ct."grade_photo_url", ct."grade_note", ct."suspected_adulteration", ct."image_grade_suggestion"::text AS "image_grade_suggestion", ct."image_grade_confidence"::text AS "image_grade_confidence", ct."image_grade_model_version", ct."image_grade_analysis", ct."grade_decision_source"::text AS "grade_decision_source", ct."grade_ai_override_acknowledged", ct."quality"::text AS "quality", ct."photos",
         ct."collected_at", ct."created_at", c."qr_code" AS "container_code",
         ST_Y(ct."geo_point"::geometry)::float8 AS "geo_lat", ST_X(ct."geo_point"::geometry)::float8 AS "geo_lng"
       FROM "collection_transactions" ct
@@ -393,6 +445,12 @@ export class CollectionsService {
       grade_photo_url: row.grade_photo_url,
       grade_note: row.grade_note,
       suspected_adulteration: row.suspected_adulteration,
+      image_grade_suggestion: row.image_grade_suggestion,
+      image_grade_confidence: row.image_grade_confidence,
+      image_grade_model_version: row.image_grade_model_version,
+      image_grade_analysis: row.image_grade_analysis,
+      grade_decision_source: row.grade_decision_source,
+      grade_ai_override_acknowledged: row.grade_ai_override_acknowledged,
       quality: row.quality,
       geo: row.geo_lat === null || row.geo_lng === null ? null : { lat: row.geo_lat, lng: row.geo_lng },
       photos: row.photos,

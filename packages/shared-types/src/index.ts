@@ -72,6 +72,20 @@ export enum OilGrade {
   C = 'C',
 }
 
+export type ImageGradeConfidence = 'LOW' | 'MEDIUM' | 'HIGH';
+export type GradeDecisionSource = 'MANUAL' | 'AI_SUGGESTION_ACCEPTED' | 'MANUAL_OVERRIDE_AI';
+
+export interface OilImageAnalysisPayload {
+  suggested_grade: OilGrade | null;
+  confidence: ImageGradeConfidence;
+  model_version: 'oil-image-heuristic-v1';
+  analyzed_image_count: number;
+  quality_status: 'USABLE' | 'RETAKE_RECOMMENDED' | 'UNSUPPORTED';
+  reason_codes: string[];
+  summary: string;
+  features: Record<string, number | null>;
+}
+
 export enum PriceUnit {
   PER_LITER = 'PER_LITER',
   PER_KG = 'PER_KG',
@@ -344,13 +358,19 @@ export interface CollectionCreateRequest {
   grade_photo_url?: string;
   grade_note?: string;
   suspected_adulteration?: boolean;
+  image_grade_suggestion?: OilGrade | null;
+  image_grade_confidence?: ImageGradeConfidence | null;
+  image_grade_model_version?: 'oil-image-heuristic-v1' | null;
+  image_grade_analysis?: OilImageAnalysisPayload | null;
+  grade_decision_source?: GradeDecisionSource;
+  grade_ai_override_acknowledged?: boolean;
   quality: Quality;
   geo: GeoPoint;
   photos: string[];
   collected_at?: string;
 }
 
-export interface CollectionTransactionResponse extends Omit<CollectionCreateRequest, 'grade' | 'grade_photo_url' | 'grade_note' | 'suspected_adulteration'> {
+export interface CollectionTransactionResponse extends Omit<CollectionCreateRequest, 'grade' | 'grade_photo_url' | 'grade_note' | 'suspected_adulteration' | 'image_grade_suggestion' | 'image_grade_confidence' | 'image_grade_model_version' | 'image_grade_analysis' | 'grade_decision_source' | 'grade_ai_override_acknowledged'> {
   id: string;
   actual_liters: number;
   container_id: string;
@@ -364,6 +384,12 @@ export interface CollectionTransactionResponse extends Omit<CollectionCreateRequ
   grade_photo_url: string | null;
   grade_note: string | null;
   suspected_adulteration: boolean;
+  image_grade_suggestion: OilGrade | null;
+  image_grade_confidence: ImageGradeConfidence | null;
+  image_grade_model_version: 'oil-image-heuristic-v1' | null;
+  image_grade_analysis: OilImageAnalysisPayload | null;
+  grade_decision_source: GradeDecisionSource | null;
+  grade_ai_override_acknowledged: boolean;
 }
 
 export interface SyncBatchResult {

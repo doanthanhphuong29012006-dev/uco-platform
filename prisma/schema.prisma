@@ -105,6 +105,18 @@ enum AnomalyRiskLevel {
   HIGH_RISK
 }
 
+enum ImageGradeConfidence {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum GradeDecisionSource {
+  MANUAL
+  AI_SUGGESTION_ACCEPTED
+  MANUAL_OVERRIDE_AI
+}
+
 model User {
   id        String    @id @default(uuid()) @db.Uuid
   zaloId    String    @unique @map("zalo_id")
@@ -298,6 +310,12 @@ model CollectionTransaction {
   gradePhotoUrl String?             @map("grade_photo_url") @db.Text
   gradeNote    String?              @map("grade_note") @db.Text
   suspectedAdulteration Boolean     @default(false) @map("suspected_adulteration")
+  imageGradeSuggestion OilGrade?    @map("image_grade_suggestion")
+  imageGradeConfidence ImageGradeConfidence? @map("image_grade_confidence")
+  imageGradeModelVersion String?     @map("image_grade_model_version") @db.VarChar(64)
+  imageGradeAnalysis Json?           @map("image_grade_analysis")
+  gradeDecisionSource GradeDecisionSource? @map("grade_decision_source")
+  gradeAiOverrideAcknowledged Boolean @default(false) @map("grade_ai_override_acknowledged")
   quality      Quality
   geoPoint     Unsupported("geography(Point, 4326)")? @map("geo_point")
   photos       Json               @default("[]")
