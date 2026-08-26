@@ -8,6 +8,7 @@ import type {
   AdminAlertListQueryInput,
   AdminOverviewQueryInput,
   AdminReconciliationQueryInput,
+  AdminAiPerformancePickupForecastQueryInput,
   AdminStationListQueryInput,
   AdminCollectorCreateInput,
   AdminCollectorPatchInput,
@@ -31,6 +32,7 @@ import {
 import { buildContainerQrCode, containerQrPrefix, normalizeWardCode, wardLookupKey } from '../containers/qr-code';
 import type { StationFillAlertCandidate } from '../stations/station-fill-alert';
 import { StationsService } from '../stations/stations.service';
+import { evaluatePickupVolumeBacktest } from '../orders/merchant-pickup-volume-backtester';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -336,6 +338,22 @@ export class AdminService {
       has_estimated_mass: Boolean(row?.has_estimated_mass),
       by_collector: enrichedByCollector,
       undelivered_transactions: enrichedUndelivered,
+    };
+  }
+
+  async pickupForecastPerformance(query: AdminAiPerformancePickupForecastQueryInput) {
+    const asOf = new Date();
+    const windowStart = new Date(asOf.getTime() - query.window_days * DAY_MS);
+    const observations = await this.prisma.findPickupForecastBacktestObservations(windowStart, asOf);
+    const result = evaluatePickupVolumeBacktest(observations, {
+      evaluation_from: windowStart,
+      evaluation_to: asOf,
+    });
+    return {
+      window_days: query.window_days as 30 | 90 | 180,
+      window_start: windowStart.toISOString(),
+      window_end: asOf.toISOString(),
+      ...result,
     };
   }
 

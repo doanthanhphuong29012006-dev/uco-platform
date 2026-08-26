@@ -244,6 +244,73 @@ describe('AdminService station fill forecast alerts integration', () => {
   });
 });
 
+describe('AdminService pickup forecast performance', () => {
+  it('loads one bounded batch and returns an empty, insufficient result without fake points', async () => {
+    const findPickupForecastBacktestObservations = jest.fn().mockResolvedValue([]);
+    const prisma = { findPickupForecastBacktestObservations } as unknown as PrismaService;
+    const config = { get: jest.fn() } as unknown as ConfigService;
+    const stations = { listFillAlertCandidates: jest.fn() } as unknown as StationsService;
+    const service = new AdminService(prisma, config, stations);
+
+    const result = await service.pickupForecastPerformance({ window_days: 90 });
+
+    expect(findPickupForecastBacktestObservations).toHaveBeenCalledTimes(1);
+    expect(findPickupForecastBacktestObservations.mock.calls[0]?.[0]).toBeInstanceOf(Date);
+    expect(findPickupForecastBacktestObservations.mock.calls[0]?.[1]).toBeInstanceOf(Date);
+    expect(result).toMatchObject({
+      window_days: 90,
+      sample_count: 0,
+      reliability: 'INSUFFICIENT',
+      mae_liters: null,
+      wape_pct: null,
+      bias_liters: null,
+      accuracy_pct: null,
+      points: [],
+    });
+  });
+
+  it('evaluates only observations inside the requested window and preserves rolling-origin details', async () => {
+    const now = Date.now();
+    const dayMs = 24 * 60 * 60 * 1_000;
+    const findPickupForecastBacktestObservations = jest.fn().mockResolvedValue([
+      {
+        merchant_id: merchantId,
+        merchant_name: 'Quán thử nghiệm',
+        collected_at: new Date(now - 2 * dayMs),
+        actual_liters: 10,
+        declared_estimated_liters: null,
+        container_capacity_liters: 30,
+      },
+      {
+        merchant_id: merchantId,
+        merchant_name: 'Quán thử nghiệm',
+        collected_at: new Date(now - dayMs),
+        actual_liters: 10,
+        declared_estimated_liters: null,
+        container_capacity_liters: 30,
+      },
+      {
+        merchant_id: merchantId,
+        merchant_name: 'Quán thử nghiệm',
+        collected_at: new Date(now + dayMs),
+        actual_liters: 999,
+        declared_estimated_liters: null,
+        container_capacity_liters: 30,
+      },
+    ]);
+    const prisma = { findPickupForecastBacktestObservations } as unknown as PrismaService;
+    const config = { get: jest.fn() } as unknown as ConfigService;
+    const stations = { listFillAlertCandidates: jest.fn() } as unknown as StationsService;
+    const service = new AdminService(prisma, config, stations);
+
+    const result = await service.pickupForecastPerformance({ window_days: 30 });
+
+    expect(result.sample_count).toBe(1);
+    expect(result.points[0]).toMatchObject({ actual_liters: 10, history_sample_size: 1 });
+    expect(result.points.some((point) => point.actual_liters === 999)).toBe(false);
+  });
+});
+
 describe('admin alert resolution query contract', () => {
   it('parses query string false as false and true as true', () => {
     expect(adminAlertListQuerySchema.parse({ page: '1', limit: '20', resolved: 'false' }).resolved).toBe(false);

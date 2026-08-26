@@ -47,6 +47,11 @@ export type PickupForecastBacktestResult = {
 
 type OrderedObservation = PickupForecastBacktestObservation & { original_index: number; collected_at_ms: number };
 
+export type PickupForecastBacktestOptions = {
+  evaluation_from?: Date | string;
+  evaluation_to?: Date | string;
+};
+
 function parseTimestamp(value: Date | string): number | null {
   const timestamp = new Date(value).getTime();
   return Number.isFinite(timestamp) ? timestamp : null;
@@ -74,7 +79,10 @@ function isWithinRelativeError(absoluteError: number, actual: number, threshold:
 
 export function evaluatePickupVolumeBacktest(
   observations: PickupForecastBacktestObservation[],
+  options: PickupForecastBacktestOptions = {},
 ): PickupForecastBacktestResult {
+  const evaluationFrom = options.evaluation_from === undefined ? null : parseTimestamp(options.evaluation_from);
+  const evaluationTo = options.evaluation_to === undefined ? null : parseTimestamp(options.evaluation_to);
   const ordered = observations
     .map((observation, original_index) => ({
       ...observation,
@@ -86,6 +94,8 @@ export function evaluatePickupVolumeBacktest(
 
   const points: PickupForecastBacktestPoint[] = [];
   for (const target of ordered) {
+    if (evaluationFrom !== null && target.collected_at_ms < evaluationFrom) continue;
+    if (evaluationTo !== null && target.collected_at_ms > evaluationTo) continue;
     const actual = finiteNonNegative(target.actual_liters);
     if (actual === null) continue;
 

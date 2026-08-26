@@ -510,6 +510,41 @@ export interface AdminAlert {
   resolved_at: string | null;
 }
 
+export type PickupForecastBacktestReliability = 'INSUFFICIENT' | 'LOW' | 'MEDIUM' | 'HIGH';
+
+export interface AdminPickupForecastBacktestPoint {
+  merchant_id: string;
+  merchant_name: string;
+  collected_at: string;
+  predicted_liters: number;
+  actual_liters: number;
+  absolute_error_liters: number;
+  error_percentage_pct: number | null;
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT_DATA';
+  history_sample_size: number;
+  direction: 'HIGHER_THAN_ACTUAL' | 'LOWER_THAN_ACTUAL' | 'MATCH';
+}
+
+export interface AdminPickupForecastPerformanceResponse {
+  window_days: 30 | 90 | 180;
+  window_start: string;
+  window_end: string;
+  sample_count: number;
+  mae_liters: number | null;
+  wape_pct: number | null;
+  bias_liters: number | null;
+  accuracy_pct: number | null;
+  within_10_pct_count: number;
+  within_20_pct_count: number;
+  reliability: PickupForecastBacktestReliability;
+  points: AdminPickupForecastBacktestPoint[];
+  explanation: {
+    method: 'ROLLING_ORIGIN';
+    summary: string;
+    data_leakage_prevention: string;
+  };
+}
+
 export interface AdminCollectorSummary {
   id: string;
   display_name: string;

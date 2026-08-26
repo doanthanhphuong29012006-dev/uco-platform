@@ -149,4 +149,66 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       safeLimit,
     );
   }
+
+  async findPickupForecastBacktestObservations(
+    windowStart: Date,
+    windowEnd: Date,
+  ): Promise<Array<{
+    merchant_id: string;
+    merchant_name: string;
+    collected_at: Date;
+    actual_liters: number;
+    declared_estimated_liters: number | null;
+    container_capacity_liters: number | null;
+  }>> {
+    return this.$queryRaw`
+      WITH window_transactions AS (
+        SELECT
+          ct."merchant_id" AS merchant_id,
+          m."business_name" AS merchant_name,
+          ct."collected_at" AS collected_at,
+          ct."actual_liters"::float8 AS actual_liters,
+          o."expected_liters"::float8 AS declared_estimated_liters,
+          c."capacity_liters"::float8 AS container_capacity_liters
+        FROM "collection_transactions" ct
+        JOIN "merchants" m ON m."id" = ct."merchant_id"
+        LEFT JOIN "collection_orders" o ON o."id" = ct."order_id"
+        LEFT JOIN "containers" c ON c."id" = ct."container_id"
+        WHERE ct."deleted_at" IS NULL
+          AND ct."quality" = 'PASS'::"Quality"
+          AND ct."collected_at" >= ${windowStart}
+          AND ct."collected_at" <= ${windowEnd}
+      ),
+      previous_ranked AS (
+        SELECT
+          ct."merchant_id" AS merchant_id,
+          m."business_name" AS merchant_name,
+          ct."collected_at" AS collected_at,
+          ct."actual_liters"::float8 AS actual_liters,
+          NULL::float8 AS declared_estimated_liters,
+          c."capacity_liters"::float8 AS container_capacity_liters,
+          ROW_NUMBER() OVER (
+            PARTITION BY ct."merchant_id"
+            ORDER BY ct."collected_at" DESC, ct."id" DESC
+          ) AS row_number
+        FROM "collection_transactions" ct
+        JOIN "merchants" m ON m."id" = ct."merchant_id"
+        LEFT JOIN "containers" c ON c."id" = ct."container_id"
+        WHERE ct."deleted_at" IS NULL
+          AND ct."quality" = 'PASS'::"Quality"
+          AND ct."collected_at" < ${windowStart}
+      ),
+      previous_transactions AS (
+        SELECT merchant_id, merchant_name, collected_at, actual_liters, declared_estimated_liters, container_capacity_liters
+        FROM previous_ranked
+        WHERE row_number <= 5
+      )
+      SELECT merchant_id, merchant_name, collected_at, actual_liters, declared_estimated_liters, container_capacity_liters
+      FROM previous_transactions
+      UNION ALL
+      SELECT merchant_id, merchant_name, collected_at, actual_liters, declared_estimated_liters, container_capacity_liters
+      FROM window_transactions
+      ORDER BY merchant_id, collected_at ASC
+    `;
+  }
 }

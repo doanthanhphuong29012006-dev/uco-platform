@@ -333,6 +333,13 @@ export const adminReconciliationQuerySchema = z.object({
 });
 export type AdminReconciliationQueryInput = z.infer<typeof adminReconciliationQuerySchema>;
 
+export const adminAiPerformancePickupForecastQuerySchema = z.object({
+  window_days: z.coerce.number().int().refine((value) => value === 30 || value === 90 || value === 180, {
+    message: 'window_days must be 30, 90 or 180',
+  }).optional().default(90),
+});
+export type AdminAiPerformancePickupForecastQueryInput = z.infer<typeof adminAiPerformancePickupForecastQuerySchema>;
+
 const queryBooleanSchema = z.preprocess((value) => {
   if (value === 'true') return true;
   if (value === 'false') return false;

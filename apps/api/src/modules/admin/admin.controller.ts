@@ -7,6 +7,7 @@ import {
   adminMerchantListQuerySchema,
   adminOverviewQuerySchema,
   adminReconciliationQuerySchema,
+  adminAiPerformancePickupForecastQuerySchema,
   adminStationListQuerySchema,
   adminCollectorCreateSchema,
   adminCollectorPatchSchema,
@@ -40,6 +41,12 @@ export class AdminController {
   @Get('reconciliation')
   reconciliation(@Query() query: Record<string, unknown>) {
     return this.service.reconciliation(adminReconciliationQuerySchema.parse(query));
+  }
+
+  @Roles(Role.ADMIN)
+  @Get('ai-performance/pickup-forecast')
+  pickupForecastPerformance(@Query() query: Record<string, unknown>) {
+    return this.service.pickupForecastPerformance(adminAiPerformancePickupForecastQuerySchema.parse(query));
   }
 
   @Roles(Role.ADMIN)
