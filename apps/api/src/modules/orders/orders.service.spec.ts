@@ -2,6 +2,7 @@ import type { PrismaService, RouteOrderRow } from '../../prisma/prisma.service';
 import { OrdersService } from './orders.service';
 
 const collector = {
+  id: 'collector-01',
   maxCapacityLiters: 100,
   status: 'ACTIVE',
   collectorWards: [{ wardId: 'ward-01', createdAt: new Date('2026-01-01'), ward: { centerLat: 10, centerLng: 106 } }],
@@ -33,10 +34,63 @@ function createService(rows: RouteOrderRow[], maxCapacityLiters = 100) {
   const findRecentCollectionHistoryByMerchantIds = jest.fn().mockResolvedValue([]);
   const prisma = {
     collector: { findUnique: jest.fn().mockResolvedValue({ ...collector, maxCapacityLiters }) },
+    collectionRoute: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      findUnique: jest.fn().mockResolvedValue(null),
+    },
     findReadyOrdersForRoute,
     findRecentCollectionHistoryByMerchantIds,
   } as unknown as PrismaService;
   return { service: new OrdersService(prisma), findReadyOrdersForRoute, findRecentCollectionHistoryByMerchantIds };
+}
+
+function persistedRoute(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'route-01',
+    clientUuid: '11111111-1111-4111-8111-111111111111',
+    status: 'ACTIVE',
+    originLat: 10,
+    originLng: 106,
+    vehicleCapacityLiters: 100,
+    totalExpectedLiters: 20,
+    remainingCapacityLiters: 80,
+    optimizationSnapshot: { optimization_applied: false, reason_codes: ['INSUFFICIENT_STOPS'] },
+    capacityRiskSnapshot: { level: 'UNDERUTILIZED', confidence: 'LOW', forecast_coverage_pct: 0, reason_codes: [] },
+    startedAt: new Date('2026-08-26T08:00:00.000Z'),
+    completedAt: null,
+    cancelledAt: null,
+    stops: [{
+      orderId: 'order-01', sequence: 1, expectedLiters: 20,
+      merchantSnapshot: { name: 'Quán thử nghiệm', address: 'Địa chỉ', phone: '0900000001', lat: 10, lng: 106, container_code: 'ECO-UCO-Q3P7-001', distance_m: 1000, ward_center: { lat: 10, lng: 106 } },
+      aiSnapshot: { priority: 10, pickup_priority_score: 25, pickup_priority_level: 'NORMAL', pickup_priority_reason_codes: [], pickup_volume_forecast: { predicted_liters: 20, confidence: 'LOW', sample_size: 0, reason_codes: ['DECLARED_ESTIMATE_ONLY'] } },
+      status: 'PENDING', collectedAt: null, skippedAt: null, skipReason: null,
+    }],
+    ...overrides,
+  };
+}
+
+function createLifecycleService() {
+  const route = persistedRoute();
+  const tx = {
+    collectionOrder: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    collectionRoute: {
+      create: jest.fn().mockResolvedValue(route),
+      update: jest.fn(),
+      findUnique: jest.fn().mockResolvedValue(route),
+    },
+    collectionRouteStop: { count: jest.fn().mockResolvedValue(0), updateMany: jest.fn() },
+  };
+  const prisma = {
+    collector: { findUnique: jest.fn().mockResolvedValue({ ...collector, id: 'collector-01' }) },
+    collectionRoute: {
+      findUnique: jest.fn().mockResolvedValue(null),
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
+    findReadyOrdersForRoute: jest.fn().mockResolvedValue([routeRow()]),
+    findRecentCollectionHistoryByMerchantIds: jest.fn().mockResolvedValue([]),
+    $transaction: jest.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
+  } as unknown as PrismaService;
+  return { service: new OrdersService(prisma), prisma, tx, route };
 }
 
 describe('OrdersService currentRoute pickup priority', () => {
@@ -311,5 +365,37 @@ describe('OrdersService currentRoute pickup priority', () => {
     expect(result.stops.map((stop) => stop.order_id)).toEqual(['risk-b', 'risk-a']);
     expect(result.stops.map((stop) => stop.seq)).toEqual([1, 2]);
     expect(result.route_optimization).toBeDefined();
+  });
+});
+
+describe('OrdersService persisted collection route lifecycle', () => {
+  it('starts one server-owned route and returns the persisted snapshot', async () => {
+    const { service, prisma, tx } = createLifecycleService();
+    const result = await service.startRoute({ sub: 'collector-user' } as never, {
+      client_uuid: '22222222-2222-4222-8222-222222222222', lat: 10, lng: 106,
+    });
+
+    expect(result.persisted).toBe(true);
+    expect(result.route_status).toBe('ACTIVE');
+    expect(result.stops.map((stop) => stop.order_id)).toEqual(['order-01']);
+    expect((prisma as unknown as { collectionRoute: { findFirst: jest.Mock } }).collectionRoute.findFirst).toHaveBeenCalledTimes(1);
+    expect(tx.collectionOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ status: 'READY' }),
+      data: expect.objectContaining({ status: 'ASSIGNED', collectorId: 'collector-01' }),
+    }));
+  });
+
+  it('returns the active snapshot on reload without recomputing preview or history', async () => {
+    const { service, prisma, route } = createLifecycleService();
+    const db = prisma as unknown as { collectionRoute: { findFirst: jest.Mock }; findReadyOrdersForRoute: jest.Mock; findRecentCollectionHistoryByMerchantIds: jest.Mock };
+    db.collectionRoute.findFirst.mockResolvedValue(route);
+
+    const result = await service.currentRoute({ sub: 'collector-user' } as never, { lat: 99, lng: 99 } as never);
+
+    expect(result.persisted).toBe(true);
+    expect(result.route_id).toBe('route-01');
+    expect(result.stops[0]).toMatchObject({ order_id: 'order-01', priority: 10, merchant: { phone: '0900000001' } });
+    expect(db.findReadyOrdersForRoute).not.toHaveBeenCalled();
+    expect(db.findRecentCollectionHistoryByMerchantIds).not.toHaveBeenCalled();
   });
 });

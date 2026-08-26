@@ -1,7 +1,7 @@
 process.env.NODE_ENV = 'test';
 
 import { INestApplication, ValidationPipe } from '@nestjs/common';
-import { ContainerState, OrderStatus } from '@prisma/client';
+import { CollectionRouteStatus, CollectionRouteStopStatus, ContainerState, OrderStatus } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
@@ -39,6 +39,8 @@ describe('Full merchant-to-station working shift (e2e)', () => {
     // Keep this end-to-end scenario isolated from other suites sharing uco_test.
     await prisma.alert.deleteMany();
     await prisma.payment.deleteMany();
+    await prisma.collectionRouteStop.deleteMany();
+    await prisma.collectionRoute.deleteMany();
     await prisma.stationDelivery.deleteMany();
     await prisma.collectionTransaction.deleteMany();
     await prisma.auditLog.deleteMany();
@@ -82,6 +84,14 @@ describe('Full merchant-to-station working shift (e2e)', () => {
     );
     expect(route.body.stops.map((stop: { order_id: string }) => stop.order_id).sort()).toEqual([...orderIds].sort());
 
+    const startedRoute = await request(app.getHttpServer())
+      .post('/api/v1/routes/start')
+      .set('Authorization', `Bearer ${collectorToken}`)
+      .send({ client_uuid: randomUUID(), lat: 10.7818, lng: 106.6851 })
+      .expect(201);
+    expect(startedRoute.body.persisted).toBe(true);
+    expect(startedRoute.body.stops.map((stop: { order_id: string }) => stop.order_id).sort()).toEqual([...orderIds].sort());
+
     const collectedAt = new Date().toISOString();
     for (const stop of route.body.stops as Array<{ order_id: string; container_code: string; expected_liters: number; merchant: { lat: number; lng: number } }>) {
       const container = await request(app.getHttpServer())
@@ -115,6 +125,12 @@ describe('Full merchant-to-station working shift (e2e)', () => {
       }
     }
 
+    await request(app.getHttpServer())
+      .post('/api/v1/routes/current/complete')
+      .set('Authorization', `Bearer ${collectorToken}`)
+      .expect(200)
+      .expect((response) => expect(response.body.route_status).toBe('COMPLETED'));
+
     const stationChoice = await request(app.getHttpServer())
       .get(`/api/v1/stations/recommend?lat=10.7818&lng=106.6851&liters=${totalLiters}`)
       .set('Authorization', `Bearer ${collectorToken}`)
@@ -140,13 +156,18 @@ describe('Full merchant-to-station working shift (e2e)', () => {
       expect(reconciliation.body.undelivered_transactions).toEqual([]);
     }
 
-    const [orders, transactions, containers] = await Promise.all([
+    const [orders, transactions, containers, routeStops, routes] = await Promise.all([
       prisma.collectionOrder.findMany({ where: { id: { in: orderIds } }, select: { status: true } }),
       prisma.collectionTransaction.findMany({ where: { clientUuid: { in: clientUuids } }, select: { actualLiters: true } }),
       prisma.container.findMany({ where: { id: { in: fixtures.map((fixture) => fixture.containerId) } }, select: { state: true } }),
+      prisma.collectionRouteStop.findMany({ select: { status: true } }),
+      prisma.collectionRoute.findMany({ where: { status: CollectionRouteStatus.COMPLETED }, select: { status: true } }),
     ]);
     expect(orders.every((order) => order.status === OrderStatus.COLLECTED)).toBe(true);
     expect(containers.filter((container) => container.state === ContainerState.AT_STATION)).toHaveLength(3);
+    expect(routeStops).toHaveLength(3);
+    expect(routeStops.every((stop) => stop.status === CollectionRouteStopStatus.COLLECTED)).toBe(true);
+    expect(routes).toHaveLength(1);
     expect(transactions.reduce((sum, transaction) => sum + Number(transaction.actualLiters), 0)).toBe(totalLiters);
     expect(reconciliation.body.collected_liters).toBe(totalLiters);
     expect(reconciliation.body.delivered_liters).toBe(totalLiters);

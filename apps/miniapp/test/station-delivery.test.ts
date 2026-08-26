@@ -178,3 +178,22 @@ test('station lookup failure preserves pending IN_TRANSIT delivery data', async 
 
   assert.deepEqual(pendingStationDeliveryStorage.load(collectorId), shift);
 });
+
+test('active route snapshot and client uuid survive Mini App reload', async () => {
+  const { pendingStationDeliveryStorage } = await import('../src/lib/storage');
+  const collectorId = 'collector-active-route';
+  const activeRoute = {
+    stops: [{ seq: 1, order_id: 'order-01', merchant: { name: 'Quán thử nghiệm', address: null, lat: 10, lng: 106 }, container_code: 'ECO-UCO-Q3P7-001', expected_liters: 20, priority: 1, distance_m: 100, pickup_priority_score: 10, pickup_priority_level: 'LOW', pickup_priority_reason_codes: [] }],
+    total_expected_liters: 20,
+    remaining_capacity_l: 80,
+    route_id: 'route-01',
+    route_status: 'ACTIVE',
+    persisted: true,
+    client_uuid: '11111111-1111-4111-8111-111111111111',
+    started_at: '2026-08-26T08:00:00.000Z',
+  } as never;
+  const shift = { completed: {}, totalStops: 1, savedAt: new Date().toISOString(), activeRoute, routeClientUuid: activeRoute.client_uuid };
+  pendingStationDeliveryStorage.save(collectorId, shift);
+  assert.deepEqual(pendingStationDeliveryStorage.load(collectorId), shift);
+  pendingStationDeliveryStorage.clear(collectorId);
+});
