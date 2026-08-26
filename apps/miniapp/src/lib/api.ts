@@ -8,6 +8,7 @@ import type {
   CollectionTransactionResponse,
   ContainerLookupResponse,
   CurrentRouteResponse,
+  CollectionRouteCancelResponse,
   GeoPoint,
   MerchantDashboardResponse,
   MerchantTransaction,
@@ -177,6 +178,15 @@ export const api = {
     const query = location ? `?lat=${location.lat}&lng=${location.lng}` : '';
     return request<CurrentRouteResponse>(`/routes/current${query}`);
   },
+  startRoute: (clientUuid: string, location?: GeoPoint) => request<CurrentRouteResponse>('/routes/start', {
+    method: 'POST',
+    body: { client_uuid: clientUuid, ...(location ? { lat: location.lat, lng: location.lng } : {}) },
+  }),
+  completeCurrentRoute: () => request<CurrentRouteResponse>('/routes/current/complete', { method: 'POST' }),
+  cancelCurrentRoute: (reason?: string) => request<CollectionRouteCancelResponse>('/routes/current/cancel', {
+    method: 'POST',
+    body: reason ? { reason } : {},
+  }),
   containerByQr: (code: string) => request<ContainerLookupResponse>(`/containers/by-qr/${encodeURIComponent(code)}`),
   createCollection: (payload: CollectionCreateRequest) =>
     request<CollectionTransactionResponse>('/collections', { method: 'POST', body: payload }),

@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ContainerState, DEFAULT_DENSITY_KG_PER_LITER, OilGrade, Quality } from '@eco-oil/shared-types';
 import type { CollectionCreateRequest, ContainerLookupResponse, CurrentRouteResponse, GeoPoint, OilImageAnalysisPayload, RouteStop } from '@eco-oil/shared-types';
-import { ApiError } from '../lib/api';
+import { ApiError, api } from '../lib/api';
 import { formatLiters } from '../lib/formatters';
 import { retryOutbox, type OutboxRecord } from '../lib/outbox-db';
 import { useOnlineStatus, useOutboxRows, useOutboxStats } from '../lib/outbox-hooks';
@@ -599,7 +599,10 @@ export function CollectorFlow() {
   const [locationDenied, setLocationDenied] = useState(false);
   const [completed, setCompleted] = useState<Record<string, CompletedStop>>(restoredShift?.completed ?? {});
   const [initialStopCount, setInitialStopCount] = useState<number | null>(restoredShift?.totalStops ?? null);
-  const [shiftStarted, setShiftStarted] = useState(false);
+  const [routeClientUuid] = useState(() => restoredShift?.routeClientUuid ?? crypto.randomUUID());
+  const [shiftStarted, setShiftStarted] = useState(() => Boolean(restoredShift?.activeRoute?.persisted));
+  const [shiftError, setShiftError] = useState<string | null>(null);
+  const [finishing, setFinishing] = useState(false);
   const [prefetching, setPrefetching] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshNotice, setRefreshNotice] = useState<RouteRefreshNotice | null>(null);
@@ -628,7 +631,16 @@ export function CollectorFlow() {
 
   const route = useQuery<RouteLoadResult>({
     queryKey: ['collector-route', location],
-    queryFn: () => loadRouteWithCache(location ?? undefined),
+    queryFn: async () => {
+      try {
+        return await loadRouteWithCache(location ?? undefined);
+      } catch (error) {
+        if (restoredShift?.activeRoute) {
+          return { route: restoredShift.activeRoute, fromCache: true, cachedAt: restoredShift.savedAt };
+        }
+        throw error;
+      }
+    },
     staleTime: 15_000,
   });
 
@@ -696,14 +708,64 @@ export function CollectorFlow() {
     }
   }, [initialStopCount, route.data]);
 
+  useEffect(() => {
+    const activeRoute = route.data?.route;
+    if (!activeRoute?.persisted || !collectorStorageId) return;
+    setShiftStarted(true);
+    pendingStationDeliveryStorage.save(collectorStorageId, {
+      completed,
+      totalStops: initialStopCount ?? activeRoute.stops.length,
+      savedAt: new Date().toISOString(),
+      activeRoute,
+      routeClientUuid: activeRoute.client_uuid ?? routeClientUuid,
+    });
+  }, [collectorStorageId, completed, initialStopCount, route.data?.route, routeClientUuid]);
+
   async function startShift(): Promise<void> {
     if (!route.data || prefetching) {
       return;
     }
+    if (!online) {
+      setShiftError('Cần kết nối mạng một lần để bắt đầu ca và giữ tuyến.');
+      return;
+    }
     setPrefetching(true);
+    setShiftError(null);
     try {
-      await prefetchRouteData(route.data.route, location);
+      const startedRoute = route.data.route.persisted
+        ? route.data.route
+        : await api.startRoute(routeClientUuid, location ?? undefined);
+      await prefetchRouteData(startedRoute, location);
+      queryClient.setQueryData(['collector-route', location], { route: startedRoute, fromCache: false, cachedAt: null });
+      if (collectorStorageId) {
+        pendingStationDeliveryStorage.save(collectorStorageId, {
+          completed,
+          totalStops: initialStopCount ?? startedRoute.stops.length,
+          savedAt: new Date().toISOString(),
+          activeRoute: startedRoute,
+          routeClientUuid: startedRoute.client_uuid ?? routeClientUuid,
+        });
+      }
       setShiftStarted(true);
+    } catch (error) {
+      setShiftError(error instanceof ApiError ? error.message : 'Không thể bắt đầu ca. Vui lòng thử lại.');
+    } finally {
+      setPrefetching(false);
+    }
+  }
+
+  async function cancelShift(): Promise<void> {
+    if (!shiftStarted || Object.keys(completed).length > 0 || prefetching) return;
+    if (typeof window !== 'undefined' && !window.confirm('Bạn có chắc muốn hủy ca thu gom này không?')) return;
+    setPrefetching(true);
+    setShiftError(null);
+    try {
+      await api.cancelCurrentRoute();
+      if (collectorStorageId) pendingStationDeliveryStorage.clear(collectorStorageId);
+      setShiftStarted(false);
+      await queryClient.invalidateQueries({ queryKey: ['collector-route'] });
+    } catch (error) {
+      setShiftError(error instanceof ApiError ? error.message : 'Không thể hủy ca. Vui lòng thử lại.');
     } finally {
       setPrefetching(false);
     }
@@ -719,6 +781,8 @@ export function CollectorFlow() {
         completed: nextCompleted,
         totalStops,
         savedAt: new Date().toISOString(),
+        activeRoute: route.data?.route.persisted ? route.data.route : undefined,
+        routeClientUuid: route.data?.route.client_uuid ?? routeClientUuid,
       });
     }
     setScreen({ name: 'route' });
@@ -729,10 +793,24 @@ export function CollectorFlow() {
     if (collectorStorageId) pendingStationDeliveryStorage.clear(collectorStorageId);
   }
 
-  function finishShift(): void {
+  async function finishShift(): Promise<void> {
+    if (finishing) return;
+    setFinishing(true);
+    setShiftError(null);
+    try {
+      if (route.data?.route.persisted && online) {
+        await api.completeCurrentRoute();
+      }
+    } catch (error) {
+      setShiftError(error instanceof ApiError ? error.message : 'Không thể kết ca. Vui lòng thử lại.');
+      return;
+    } finally {
+      setFinishing(false);
+    }
     clearPersistedShift();
     setCompleted({});
     setInitialStopCount(route.data?.route.stops.length ?? 0);
+    setShiftStarted(false);
     setScreen({ name: 'route' });
   }
 
@@ -772,8 +850,10 @@ export function CollectorFlow() {
         outboxRows={outboxRows}
         outboxStats={outboxStats}
         shiftStarted={shiftStarted}
+        shiftError={shiftError}
         prefetching={prefetching}
         onStartShift={() => { void startShift(); }}
+        onCancelShift={() => { void cancelShift(); }}
         onOpenQr={(stop) => setScreen({ name: 'qr', stop })}
         onOpenSummary={() => setScreen({ name: 'summary' })}
         onOpenOutbox={() => setScreen({ name: 'outbox' })}
@@ -804,17 +884,19 @@ interface CollectorRouteScreenProps {
   outboxRows: OutboxRecord[];
   outboxStats: ReturnType<typeof useOutboxStats>;
   shiftStarted: boolean;
+  shiftError: string | null;
   prefetching: boolean;
   refreshing: boolean;
   refreshNotice: RouteRefreshNotice | null;
   onStartShift: () => void;
+  onCancelShift: () => void;
   onOpenQr: (stop: RouteStop) => void;
   onOpenSummary: () => void;
   onOpenOutbox: () => void;
   onRefresh: () => void;
 }
 
-function CollectorRouteScreen({ stops, route, location, locationDenied, completed, totalStops, outboxRows, outboxStats, shiftStarted, prefetching, refreshing, refreshNotice, onStartShift, onOpenQr, onOpenSummary, onOpenOutbox, onRefresh }: CollectorRouteScreenProps) {
+function CollectorRouteScreen({ stops, route, location, locationDenied, completed, totalStops, outboxRows, outboxStats, shiftStarted, shiftError, prefetching, refreshing, refreshNotice, onStartShift, onCancelShift, onOpenQr, onOpenSummary, onOpenOutbox, onRefresh }: CollectorRouteScreenProps) {
   const vehicleCapacity = route.route.total_expected_liters + route.route.remaining_capacity_l;
   const routeFill = vehicleCapacity > 0 ? Math.min(100, Math.round((route.route.total_expected_liters / vehicleCapacity) * 100)) : 0;
   const completedLiters = Object.values(completed).reduce((sum, item) => sum + item.liters, 0);
@@ -835,7 +917,8 @@ function CollectorRouteScreen({ stops, route, location, locationDenied, complete
       {locationDenied ? <div className="location-banner">Không lấy được vị trí GPS, đang dùng vị trí trung tâm phường. Giao dịch có thể bị đánh dấu cần kiểm tra.</div> : null}
       {route.fromCache ? <div className="offline-cache-banner">Đang dùng dữ liệu lúc {formatTime(route.cachedAt)}</div> : null}
       <OutboxIssueNotice rows={outboxRows} stats={outboxStats} onOpen={onOpenOutbox} />
-      {!shiftStarted ? <button className="start-shift-button" onClick={onStartShift} disabled={prefetching}>{prefetching ? 'Đang lưu tuyến và mã QR…' : 'Bắt đầu ca — lưu tuyến offline'}</button> : <div className="shift-ready-note">✓ Tuyến và mã QR đã sẵn sàng khi mất sóng</div>}
+      {!shiftStarted ? <button className="start-shift-button" onClick={onStartShift} disabled={prefetching}>{prefetching ? 'Đang lưu tuyến và mã QR…' : 'Bắt đầu ca — lưu tuyến offline'}</button> : <div className="shift-ready-note">✓ Tuyến và mã QR đã sẵn sàng khi mất sóng{route.route.started_at ? ` · Bắt đầu lúc ${formatTime(route.route.started_at)}` : ''} <button className="text-button" onClick={onCancelShift} disabled={prefetching || Object.keys(completed).length > 0}>Hủy ca</button></div>}
+      {shiftError ? <p className="error-text" role="alert">{shiftError}</p> : null}
       <section className="route-capacity-card">
         <div className="route-capacity-top"><span>Tổng lít dự kiến</span><strong>{formatLiters(route.route.total_expected_liters)} / {formatLiters(vehicleCapacity)}</strong></div>
         <div className="route-progress"><span className={routeFill >= 80 ? 'route-progress-high' : ''} style={{ width: `${routeFill}%` }} /></div>

@@ -1,4 +1,4 @@
-import type { RouteStop } from '@eco-oil/shared-types';
+import type { CurrentRouteResponse, RouteStop } from '@eco-oil/shared-types';
 import type { nativeStorage as ZaloNativeStorage } from 'zmp-sdk';
 
 const ACCESS_TOKEN_KEY = 'eco_oil.access_token';
@@ -144,6 +144,8 @@ export interface PendingStationDeliveryShift {
   completed: Record<string, PendingStationDeliveryStop>;
   totalStops: number;
   savedAt: string;
+  activeRoute?: CurrentRouteResponse;
+  routeClientUuid?: string;
 }
 
 export interface PendingStationDeliveryStorage {
