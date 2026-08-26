@@ -536,6 +536,9 @@ export class OrdersService {
         pickup_priority_level: aiSnapshot.pickup_priority_level as CurrentRouteResponse['stops'][number]['pickup_priority_level'],
         pickup_priority_reason_codes: Array.isArray(aiSnapshot.pickup_priority_reason_codes) ? aiSnapshot.pickup_priority_reason_codes as string[] : [],
         pickup_volume_forecast: aiSnapshot.pickup_volume_forecast as CurrentRouteResponse['stops'][number]['pickup_volume_forecast'],
+        route_stop_status: stop.status,
+        collected_at: stop.collectedAt?.toISOString() ?? null,
+        skipped_at: stop.skippedAt?.toISOString() ?? null,
       };
     });
     return {

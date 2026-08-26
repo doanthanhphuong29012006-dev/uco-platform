@@ -283,6 +283,9 @@ export interface RouteStop {
     sample_size: number;
     reason_codes: string[];
   };
+  route_stop_status?: 'PENDING' | 'COLLECTED' | 'SKIPPED';
+  collected_at?: string | null;
+  skipped_at?: string | null;
   ward_center?: GeoPoint | null;
 }
 

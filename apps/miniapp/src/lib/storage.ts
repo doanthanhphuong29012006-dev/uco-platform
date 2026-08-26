@@ -145,6 +145,7 @@ export interface PendingStationDeliveryShift {
   totalStops: number;
   savedAt: string;
   activeRoute?: CurrentRouteResponse;
+  routeId?: string;
   routeClientUuid?: string;
 }
 
@@ -165,6 +166,12 @@ export const pendingStationDeliveryStorage: PendingStationDeliveryStorage = {
     try {
       const parsed = JSON.parse(value) as PendingStationDeliveryShift;
       if (!parsed || typeof parsed !== 'object' || !parsed.completed || typeof parsed.totalStops !== 'number') {
+        return null;
+      }
+      if (parsed.routeId !== undefined && typeof parsed.routeId !== 'string') {
+        return null;
+      }
+      if (parsed.activeRoute?.route_id && parsed.routeId && parsed.activeRoute.route_id !== parsed.routeId) {
         return null;
       }
       return parsed;

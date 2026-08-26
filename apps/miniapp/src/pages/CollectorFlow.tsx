@@ -39,6 +39,59 @@ export interface CompletedStop {
   stop: RouteStop;
 }
 
+export interface ReconciledRouteProgress {
+  completed: Record<string, CompletedStop>;
+  completedOrderIds: string[];
+  skippedOrderIds: string[];
+}
+
+function completedStopFromOutbox(row: OutboxRecord, stop: RouteStop): CompletedStop {
+  const payload = row.payload as Partial<CollectionCreateRequest>;
+  const kilograms = typeof payload.actual_kg === 'number' && Number.isFinite(payload.actual_kg) ? payload.actual_kg : null;
+  const liters = typeof payload.actual_liters === 'number' && Number.isFinite(payload.actual_liters)
+    ? payload.actual_liters
+    : kilograms === null ? 0 : kilograms / DEFAULT_DENSITY_KG_PER_LITER;
+  return { liters, kilograms, clientUuid: row.client_uuid, stop };
+}
+
+export function reconcileRouteProgress(
+  route: CurrentRouteResponse,
+  storedCompleted: Record<string, CompletedStop>,
+  storedRouteId: string | undefined,
+  outboxRows: OutboxRecord[],
+): ReconciledRouteProgress {
+  const completed: Record<string, CompletedStop> = {};
+  const completedOrderIds = new Set<string>();
+  const skippedOrderIds = new Set<string>();
+  const canUseStoredCompleted = Boolean(route.route_id && storedRouteId === route.route_id);
+
+  for (const stop of route.stops) {
+    if (stop.route_stop_status === 'SKIPPED') {
+      skippedOrderIds.add(stop.order_id);
+      continue;
+    }
+    if (stop.route_stop_status === 'COLLECTED') {
+      completedOrderIds.add(stop.order_id);
+    }
+
+    const stored = canUseStoredCompleted ? storedCompleted[stop.order_id] : undefined;
+    const outbox = outboxRows.find((row) => {
+      if (row.type !== 'collection') return false;
+      const payload = row.payload as Partial<CollectionCreateRequest>;
+      return payload.order_id === stop.order_id && ['pending', 'syncing', 'synced', 'failed'].includes(row.status);
+    });
+    if (stored) {
+      completed[stop.order_id] = stored;
+      completedOrderIds.add(stop.order_id);
+    } else if (outbox) {
+      completed[stop.order_id] = completedStopFromOutbox(outbox, stop);
+      completedOrderIds.add(stop.order_id);
+    }
+  }
+
+  return { completed, completedOrderIds: [...completedOrderIds], skippedOrderIds: [...skippedOrderIds] };
+}
+
 const PICKUP_PRIORITY_LEVELS = {
   URGENT: { label: 'Khẩn cấp', className: 'urgent' },
   HIGH: { label: 'Ưu tiên cao', className: 'high' },
@@ -594,7 +647,8 @@ export function CollectorFlow() {
   const queryClient = useQueryClient();
   const collectorStorageId = useAuthStore((state) => state.user?.collectorId ?? state.user?.id ?? null);
   const [restoredShift] = useState(() => collectorStorageId ? pendingStationDeliveryStorage.load(collectorStorageId) : null);
-  const [screen, setScreen] = useState<CollectorScreen>(() => Object.keys(restoredShift?.completed ?? {}).length > 0 ? { name: 'summary' } : { name: 'route' });
+  const restoredRouteId = restoredShift?.routeId ?? restoredShift?.activeRoute?.route_id ?? undefined;
+  const [screen, setScreen] = useState<CollectorScreen>(() => restoredRouteId && Object.keys(restoredShift?.completed ?? {}).length > 0 ? { name: 'summary' } : { name: 'route' });
   const [location, setLocation] = useState<GeoPoint | null>(null);
   const [locationDenied, setLocationDenied] = useState(false);
   const [completed, setCompleted] = useState<Record<string, CompletedStop>>(restoredShift?.completed ?? {});
@@ -643,6 +697,18 @@ export function CollectorFlow() {
     },
     staleTime: 15_000,
   });
+  const routeProgress = route.data
+    ? reconcileRouteProgress(route.data.route, completed, route.data.route.route_id ?? restoredRouteId, outboxRows)
+    : { completed, completedOrderIds: Object.keys(completed), skippedOrderIds: [] };
+
+  useEffect(() => {
+    const loadedRouteId = route.data?.route.route_id;
+    if (!loadedRouteId || !restoredRouteId || loadedRouteId === restoredRouteId) return;
+    setCompleted({});
+    setInitialStopCount(route.data?.route.stops.length ?? 0);
+    setShiftStarted(Boolean(route.data?.route.persisted));
+    setScreen({ name: 'route' });
+  }, [restoredRouteId, route.data?.route.route_id, route.data?.route.persisted, route.data?.route.stops.length]);
 
   if (refreshRunner.current === null) {
     refreshRunner.current = createRouteRefreshRunner(
@@ -717,6 +783,7 @@ export function CollectorFlow() {
       totalStops: initialStopCount ?? activeRoute.stops.length,
       savedAt: new Date().toISOString(),
       activeRoute,
+      routeId: activeRoute.route_id ?? undefined,
       routeClientUuid: activeRoute.client_uuid ?? routeClientUuid,
     });
   }, [collectorStorageId, completed, initialStopCount, route.data?.route, routeClientUuid]);
@@ -743,6 +810,7 @@ export function CollectorFlow() {
           totalStops: initialStopCount ?? startedRoute.stops.length,
           savedAt: new Date().toISOString(),
           activeRoute: startedRoute,
+          routeId: startedRoute.route_id ?? undefined,
           routeClientUuid: startedRoute.client_uuid ?? routeClientUuid,
         });
       }
@@ -782,6 +850,7 @@ export function CollectorFlow() {
         totalStops,
         savedAt: new Date().toISOString(),
         activeRoute: route.data?.route.persisted ? route.data.route : undefined,
+        routeId: route.data?.route.route_id ?? restoredRouteId,
         routeClientUuid: route.data?.route.client_uuid ?? routeClientUuid,
       });
     }
@@ -830,22 +899,28 @@ export function CollectorFlow() {
       />
     );
   } else if (screen.name === 'summary') {
-    content = <CollectorSummaryScreen route={route.data?.route} completed={completed} totalStops={initialStopCount ?? route.data?.route.stops.length ?? 0} onBack={() => setScreen({ name: 'route' })} onOpenDelivery={() => setScreen({ name: 'station-delivery' })} />;
+    content = <CollectorSummaryScreen route={route.data?.route} completed={routeProgress.completed} completedCount={routeProgress.completedOrderIds.length} totalStops={initialStopCount ?? route.data?.route.stops.length ?? 0} onBack={() => setScreen({ name: 'route' })} onOpenDelivery={() => setScreen({ name: 'station-delivery' })} />;
   } else if (screen.name === 'station-delivery') {
-    content = <StationDeliveryFlow completed={completed} onBack={() => setScreen({ name: 'summary' })} onDeliverySynced={clearPersistedShift} onFinish={finishShift} />;
+    content = <StationDeliveryFlow completed={routeProgress.completed} onBack={() => setScreen({ name: 'summary' })} onDeliverySynced={clearPersistedShift} onFinish={finishShift} />;
   } else if (route.isPending && !route.data) {
     content = <StatusView title="Đang tải tuyến hôm nay…" />;
   } else if (route.isError && !route.data) {
     content = <StatusView title="Chưa tải được tuyến" message="Chưa có dữ liệu tuyến trên máy. Kiểm tra kết nối rồi thử lại." action={{ label: 'Thử lại', onClick: () => { void route.refetch(); } }} />;
   } else if (route.data) {
-    const activeStops = route.data.route.stops.filter((stop) => completed[stop.order_id] === undefined);
+    const activeStopIds = new Set(routeProgress.completedOrderIds);
+    const skippedStopIds = new Set(routeProgress.skippedOrderIds);
+    const activeStops = route.data.route.stops.filter((stop) => {
+      if (skippedStopIds.has(stop.order_id) || stop.route_stop_status === 'COLLECTED') return false;
+      const localRecord = findRowForStop(outboxRows, stop);
+      return !activeStopIds.has(stop.order_id) || localRecord?.status === 'pending' || localRecord?.status === 'syncing' || localRecord?.status === 'failed';
+    });
     content = (
       <CollectorRouteScreen
         stops={activeStops}
         route={route.data}
         location={location}
         locationDenied={locationDenied}
-        completed={completed}
+        completed={routeProgress.completed}
         totalStops={initialStopCount ?? route.data.route.stops.length}
         outboxRows={outboxRows}
         outboxStats={outboxStats}
@@ -1306,31 +1381,30 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
     }
     setSaving(true);
     setError(null);
-    let currentGeo = geo;
-    if (!currentGeo) {
-      try {
-        currentGeo = await zaloClient.getLocation(stop.ward_center ?? null);
-      } catch {
-        currentGeo = stop.ward_center ?? null;
-      }
+    try {
+      let currentGeo = geo;
       if (!currentGeo) {
-        setError('Không xác định được vị trí hiện tại hoặc tâm phường. Vui lòng bật GPS rồi thử lại.');
-        setSaving(false);
-        return;
+        try {
+          currentGeo = await zaloClient.getLocation(stop.ward_center ?? null);
+        } catch {
+          currentGeo = stop.ward_center ?? null;
+        }
+        if (!currentGeo) {
+          throw new Error('Không xác định được vị trí hiện tại hoặc tâm phường. Vui lòng bật GPS rồi thử lại.');
+        }
+        if (mountedRef.current && stop.ward_center && currentGeo.lat === stop.ward_center.lat && currentGeo.lng === stop.ward_center.lng) {
+          setLocationFallback(true);
+        }
+        if (mountedRef.current) setGeo(currentGeo);
       }
-      if (stop.ward_center && currentGeo.lat === stop.ward_center.lat && currentGeo.lng === stop.ward_center.lng) {
-        setLocationFallback(true);
-      }
-      setGeo(currentGeo);
-    }
-    const payload: CollectionCreateRequest & {
+      const payload: CollectionCreateRequest & {
       image_grade_suggestion: OilGrade | null;
       image_grade_confidence: OilImageAnalysis['confidence'] | null;
       image_grade_model_version: OilImageAnalysis['model_version'] | null;
       image_grade_analysis: OilImageAnalysisPayload | null;
       grade_decision_source: 'MANUAL' | 'AI_SUGGESTION_ACCEPTED' | 'MANUAL_OVERRIDE_AI';
       grade_ai_override_acknowledged: boolean;
-    } = {
+      } = {
       client_uuid: clientUuid,
       order_id: stop.order_id,
        container_code: containerCode,
@@ -1356,16 +1430,23 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
       geo: currentGeo,
       photos: photos.map((photo) => photo.url),
       collected_at: new Date().toISOString(),
-    };
-    try {
+      };
       await enqueueCollection(payload);
-      setSuccess(true);
-      void syncOutbox();
-      window.setTimeout(() => onSuccess(actualLiters, actualKg, clientUuid), 450);
-    } catch {
-      setError('Chưa lưu được dữ liệu trên máy. Đừng đóng màn hình, thử lại nhé.');
+      if (mountedRef.current) {
+        setSuccess(true);
+        void syncOutbox();
+        window.setTimeout(() => {
+          if (mountedRef.current) onSuccess(actualLiters, actualKg, clientUuid);
+        }, 450);
+      }
+    } catch (submitError) {
+      if (mountedRef.current) {
+        setError(submitError instanceof Error && submitError.message.startsWith('Không xác định được vị trí')
+          ? submitError.message
+          : 'Không lưu được giao dịch trên máy. Dữ liệu chưa được ghi, vui lòng thử lại.');
+      }
     } finally {
-      setSaving(false);
+      if (mountedRef.current) setSaving(false);
     }
   }
 
@@ -1418,10 +1499,9 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
   );
 }
 
-function CollectorSummaryScreen({ route, completed, totalStops, onBack, onOpenDelivery }: { route: CurrentRouteResponse | undefined; completed: Record<string, CompletedStop>; totalStops: number; onBack: () => void; onOpenDelivery: () => void }) {
+function CollectorSummaryScreen({ route, completed, completedCount, totalStops, onBack, onOpenDelivery }: { route: CurrentRouteResponse | undefined; completed: Record<string, CompletedStop>; completedCount: number; totalStops: number; onBack: () => void; onOpenDelivery: () => void }) {
   const totalCollected = Object.values(completed).reduce((sum, item) => sum + item.liters, 0);
   const totalCollectedKg = Object.values(completed).reduce((sum, item) => sum + (item.kilograms ?? item.liters * DEFAULT_DENSITY_KG_PER_LITER), 0);
-  const completedCount = Object.keys(completed).length;
   const displayedTotalStops = Math.max(totalStops, completedCount);
   const vehicleCapacity = route ? route.total_expected_liters + route.remaining_capacity_l : 0;
   return (
