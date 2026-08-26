@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react';
 import { Role } from '@eco-oil/shared-types';
 import type { AdminWardSummary, DevAccount } from '@eco-oil/shared-types';
-import { api } from '../lib/api';
+import { ApiError, api } from '../lib/api';
 import { zaloClient } from '../lib/zalo-client';
 import { useAuthStore } from '../stores/auth-store';
+import { getSeedLoginCredentials, shouldShowDevelopmentLogin } from './login-screen-logic';
 
 export function LoginScreen() {
   const [selectedId, setSelectedId] = useState('');
   const [devAccounts, setDevAccounts] = useState<DevAccount[]>([]);
   const [devAccountsError, setDevAccountsError] = useState<string | null>(null);
+  const [backendMockDetected, setBackendMockDetected] = useState(false);
   const [sdkUnavailable, setSdkUnavailable] = useState(zaloClient.mode === 'mock');
   const busy = useAuthStore((state) => state.busy);
   const error = useAuthStore((state) => state.error);
@@ -21,14 +23,23 @@ export function LoginScreen() {
   const [wardLoadError, setWardLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!sdkUnavailable) return;
+    let active = true;
     void api.devAccounts().then((items) => {
+      if (!active) return;
+      setBackendMockDetected(true);
       setDevAccounts(items);
       setSelectedId((current) => current || items[0]?.zalo_id || '');
     }).catch((reason) => {
+      if (!active) return;
+      if (reason instanceof ApiError && reason.status === 404) {
+        setBackendMockDetected(false);
+        setDevAccountsError(null);
+        return;
+      }
       setDevAccountsError(reason instanceof Error ? reason.message : 'Không tải được tài khoản thử nghiệm.');
     });
-  }, [sdkUnavailable]);
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     if (!registering) return;
@@ -48,10 +59,11 @@ export function LoginScreen() {
   }
 
   async function handleSeedLogin() {
+    const credentials = getSeedLoginCredentials(devAccounts, selectedId);
     const account = devAccounts.find((item) => item.zalo_id === selectedId);
-    if (!account?.phone) return;
-    zaloClient.setSeedAccount({ zaloId: account.zalo_id, phone: account.phone, name: account.name ?? undefined });
-    await loginSeed(account.zalo_id, account.phone);
+    if (!credentials || !account) return;
+    zaloClient.setSeedAccount({ zaloId: credentials.zaloId, phone: credentials.phone, name: account.name ?? undefined });
+    await loginSeed(credentials.zaloId, credentials.phone);
   }
 
   async function handleRegister() {
@@ -74,8 +86,9 @@ export function LoginScreen() {
       <p className="eyebrow">ECO-OIL</p>
       <h1>Thu gom dầu dễ dàng</h1>
       <p className="lead">Đăng nhập để báo can sẵn sàng và theo dõi lịch sử thu gom của quán.</p>
-      <button className="primary-button" onClick={() => void handleZaloLogin()} disabled={busy}>{busy ? 'Đang đăng nhập…' : 'Đăng nhập bằng Zalo'}</button>
-      {sdkUnavailable ? (
+      <button className="primary-button" onClick={() => void handleZaloLogin()} disabled={busy || backendMockDetected}>{backendMockDetected ? 'Chọn tài khoản thử nghiệm để tiếp tục' : busy ? 'Đang đăng nhập…' : 'Đăng nhập bằng Zalo'}</button>
+      {backendMockDetected ? <p className="error-text">Backend đang ở môi trường phát triển. Chọn tài khoản thử nghiệm để tiếp tục.</p> : null}
+      {shouldShowDevelopmentLogin(backendMockDetected, sdkUnavailable) ? (
         <section className="dev-login-card">
           <p className="section-label">Môi trường phát triển</p>
           <label htmlFor="seed-account">Chọn tài khoản thử nghiệm</label>
