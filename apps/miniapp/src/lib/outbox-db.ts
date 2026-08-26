@@ -35,6 +35,39 @@ export interface CachedContainerRecord {
   updated_at: string;
 }
 
+export interface StationReceiptTransaction {
+  transaction_id: string;
+  merchant_name: string;
+  liters: number;
+  kilograms: number | null;
+  collected_at: string | null;
+}
+
+export interface StoredStationReceipt {
+  receipt_id: string;
+  client_uuid: string;
+  station_id: string;
+  station_name: string;
+  collector_id: string;
+  created_at: string;
+  expected_liters: number;
+  expected_kg: number | null;
+  actual_liters: number | null;
+  actual_kg: number | null;
+  variance_liters: number | null;
+  variance_kg: number | null;
+  variance_pct: number | null;
+  units: { volume: 'lít'; mass: 'kg' };
+  transactions: StationReceiptTransaction[];
+}
+
+interface StationReceiptRecord {
+  key: string;
+  owner_id: string;
+  created_at: string;
+  receipt: StoredStationReceipt;
+}
+
 export interface OutboxStats {
   pending: number;
   syncing: number;
@@ -59,6 +92,7 @@ export class EcoOilDatabase extends Dexie {
   outbox!: Table<OutboxRecord, string>;
   routeCache!: Table<CachedRouteRecord, string>;
   containerCache!: Table<CachedContainerRecord, string>;
+  stationReceipts!: Table<StationReceiptRecord, string>;
 
   constructor() {
     super('eco-oil-miniapp');
@@ -66,6 +100,12 @@ export class EcoOilDatabase extends Dexie {
       outbox: '&client_uuid,status,next_attempt_at,created_at,synced_at',
       routeCache: '&key,updated_at',
       containerCache: '&qr_code,updated_at',
+    });
+    this.version(2).stores({
+      outbox: '&client_uuid,status,next_attempt_at,created_at,synced_at',
+      routeCache: '&key,updated_at',
+      containerCache: '&qr_code,updated_at',
+      stationReceipts: '&key,owner_id,created_at',
     });
   }
 }
@@ -310,6 +350,27 @@ export async function cacheContainer(payload: ContainerLookupResponse): Promise<
 
 export async function getCachedContainer(qrCode: string): Promise<CachedContainerRecord | undefined> {
   return ecoOilDb.containerCache.get(qrCode);
+}
+
+function stationReceiptKey(ownerId: string, receiptId: string): string {
+  return `${ownerId}:${receiptId}`;
+}
+
+export async function saveStationReceipt(ownerId: string, receipt: StoredStationReceipt): Promise<void> {
+  if (!ownerId.trim()) throw new Error('Thiếu tài khoản để lưu biên nhận');
+  const key = stationReceiptKey(ownerId, receipt.receipt_id);
+  await ecoOilDb.stationReceipts.put({ key, owner_id: ownerId, created_at: receipt.created_at, receipt });
+  const saved = await ecoOilDb.stationReceipts.get(key);
+  if (!saved || saved.receipt.receipt_id !== receipt.receipt_id || saved.owner_id !== ownerId) {
+    throw new Error('Không xác nhận được biên nhận đã lưu trên máy');
+  }
+}
+
+export async function getLatestStationReceipt(ownerId: string): Promise<StoredStationReceipt | null> {
+  if (!ownerId.trim()) return null;
+  const records = await ecoOilDb.stationReceipts.where('owner_id').equals(ownerId).toArray();
+  records.sort((left, right) => right.created_at.localeCompare(left.created_at));
+  return records[0]?.receipt ?? null;
 }
 
 export const OUTBOX_RETENTION_DAYS = 7;

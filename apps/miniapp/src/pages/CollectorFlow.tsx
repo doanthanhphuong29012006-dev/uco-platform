@@ -5,7 +5,7 @@ import { ContainerState, DEFAULT_DENSITY_KG_PER_LITER, OilGrade, Quality } from 
 import type { CollectionCreateRequest, ContainerLookupResponse, CurrentRouteResponse, GeoPoint, OilImageAnalysisPayload, RouteStop } from '@eco-oil/shared-types';
 import { ApiError, api } from '../lib/api';
 import { formatLiters } from '../lib/formatters';
-import { retryOutbox, type OutboxRecord } from '../lib/outbox-db';
+import { getLatestStationReceipt, retryOutbox, type OutboxRecord, type StoredStationReceipt } from '../lib/outbox-db';
 import { useOnlineStatus, useOutboxRows, useOutboxStats } from '../lib/outbox-hooks';
 import { loadRouteWithCache, lookupContainerWithCache, prefetchRouteData, type RouteLoadResult } from '../lib/offline-cache';
 import { enqueueCollection } from '../lib/outbox-db';
@@ -31,6 +31,7 @@ type CollectorScreen =
   | { name: 'entry'; stop: RouteStop; container: ContainerLookupResponse; containerCode: string }
   | { name: 'summary' }
   | { name: 'station-delivery' }
+  | { name: 'receipt-view' }
   | { name: 'outbox' };
 
 export interface CompletedStop {
@@ -698,6 +699,7 @@ export function CollectorFlow() {
   const [shiftStarted, setShiftStarted] = useState(() => Boolean(restoredShift?.activeRoute?.persisted));
   const [shiftError, setShiftError] = useState<string | null>(null);
   const [finishing, setFinishing] = useState(false);
+  const [lastReceipt, setLastReceipt] = useState<StoredStationReceipt | null>(null);
   const [prefetching, setPrefetching] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshNotice, setRefreshNotice] = useState<RouteRefreshNotice | null>(null);
@@ -752,6 +754,24 @@ export function CollectorFlow() {
     setScreen({ name: 'route' });
   }, [restoredRouteId, route.data?.route.route_id, route.data?.route.persisted, route.data?.route.stops.length]);
 
+  useEffect(() => {
+    let active = true;
+    if (!collectorStorageId) {
+      setLastReceipt(null);
+      return () => {
+        active = false;
+      };
+    }
+    void getLatestStationReceipt(collectorStorageId).then((receipt) => {
+      if (active) setLastReceipt(receipt);
+    }).catch(() => {
+      if (active) setLastReceipt(null);
+    });
+    return () => {
+      active = false;
+    };
+  }, [collectorStorageId]);
+
   if (refreshRunner.current === null) {
     refreshRunner.current = createRouteRefreshRunner(
       async () => {
@@ -782,26 +802,6 @@ export function CollectorFlow() {
     );
   }
   const refreshRoute = refreshRunner.current;
-
-  useEffect(() => {
-    const completedEntries = Object.values(completed);
-    if (completedEntries.length === 0) return;
-    const transactionIds = completedEntries.map((entry) => outboxRows.find((row) => row.type === 'collection' && row.client_uuid === entry.clientUuid)?.server_id);
-    if (transactionIds.some((id) => !id)) return;
-    const delivered = outboxRows.some((row) => {
-      if (row.type !== 'station_delivery' || row.status !== 'synced') return false;
-      const payload = row.payload as { transaction_ids?: string[] };
-      return transactionIds.every((id) => payload.transaction_ids?.includes(id as string));
-    });
-    if (!delivered) return;
-    if (collectorStorageId) pendingStationDeliveryStorage.clear(collectorStorageId);
-    setPendingDelivery(null);
-    if (screen.name !== 'station-delivery') {
-      setCompleted({});
-      setInitialStopCount(route.data?.route.stops.length ?? 0);
-      setScreen({ name: 'route' });
-    }
-  }, [collectorStorageId, completed, outboxRows, route.data?.route.stops.length, screen.name]);
 
   useEffect(() => {
     const wardCenter = route.data?.route.stops.find((stop) => stop.ward_center)?.ward_center;
@@ -909,8 +909,8 @@ export function CollectorFlow() {
     setPendingDelivery(null);
   }
 
-  async function finishShift(): Promise<void> {
-    if (finishing) return;
+  async function finishShift(): Promise<boolean> {
+    if (finishing) return false;
     setFinishing(true);
     setShiftError(null);
     try {
@@ -919,7 +919,7 @@ export function CollectorFlow() {
       }
     } catch (error) {
       setShiftError(error instanceof ApiError ? error.message : 'Không thể kết ca. Vui lòng thử lại.');
-      return;
+      return false;
     } finally {
       setFinishing(false);
     }
@@ -928,11 +928,14 @@ export function CollectorFlow() {
     setInitialStopCount(route.data?.route.stops.length ?? 0);
     setShiftStarted(false);
     setScreen({ name: 'route' });
+    return true;
   }
 
   let content: ReactNode;
   if (screen.name === 'outbox') {
     content = <OutboxQueueScreen onBack={() => setScreen({ name: 'route' })} />;
+  } else if (screen.name === 'receipt-view' && lastReceipt) {
+    content = <SavedStationReceiptView receipt={lastReceipt} onBack={() => setScreen({ name: 'route' })} />;
   } else if (screen.name === 'qr') {
      content = <CollectorQrScreen stop={screen.stop} onBack={() => setScreen({ name: 'route' })} onContinue={(container, containerCode) => setScreen({ name: 'entry', stop: screen.stop, container, containerCode })} />;
   } else if (screen.name === 'entry') {
@@ -948,7 +951,7 @@ export function CollectorFlow() {
   } else if (screen.name === 'summary') {
     content = <CollectorSummaryScreen route={route.data?.route} completed={routeProgress.completed} completedCount={routeProgress.completedOrderIds.length} totalStops={initialStopCount ?? route.data?.route.stops.length ?? 0} onBack={() => setScreen({ name: 'route' })} onOpenDelivery={() => setScreen({ name: 'station-delivery' })} />;
   } else if (screen.name === 'station-delivery') {
-    content = <StationDeliveryFlow completed={routeProgress.completed} pendingDelivery={pendingDelivery} routeId={route.data?.route.route_id ?? restoredRouteId} onPendingDelivery={(draft) => setPendingDelivery(draft)} onBack={() => setScreen({ name: 'summary' })} onDeliverySynced={() => { setPendingDelivery(null); clearPersistedShift(); }} onFinish={finishShift} />;
+    content = <StationDeliveryFlow completed={routeProgress.completed} pendingDelivery={pendingDelivery} collectorId={collectorStorageId} routeId={route.data?.route.route_id ?? restoredRouteId} onPendingDelivery={(draft) => setPendingDelivery(draft)} onReceiptSaved={setLastReceipt} onBack={() => setScreen({ name: 'summary' })} onFinish={finishShift} />;
   } else if (route.isPending && !route.data) {
     content = <StatusView title="Đang tải tuyến hôm nay…" />;
   } else if (route.isError && !route.data) {
@@ -982,6 +985,8 @@ export function CollectorFlow() {
         refreshing={refreshing}
         refreshNotice={refreshNotice}
         onRefresh={() => { void refreshRoute(); }}
+        lastReceipt={lastReceipt}
+        onOpenLastReceipt={() => setScreen({ name: 'receipt-view' })}
       />
     );
   } else {
@@ -1010,15 +1015,17 @@ interface CollectorRouteScreenProps {
   prefetching: boolean;
   refreshing: boolean;
   refreshNotice: RouteRefreshNotice | null;
+  lastReceipt: StoredStationReceipt | null;
   onStartShift: () => void;
   onCancelShift: () => void;
   onOpenQr: (stop: RouteStop) => void;
   onOpenSummary: () => void;
   onOpenOutbox: () => void;
   onRefresh: () => void;
+  onOpenLastReceipt: () => void;
 }
 
-function CollectorRouteScreen({ stops, route, location, locationDenied, completed, totalStops, outboxRows, outboxStats, shiftStarted, shiftError, prefetching, refreshing, refreshNotice, onStartShift, onCancelShift, onOpenQr, onOpenSummary, onOpenOutbox, onRefresh }: CollectorRouteScreenProps) {
+function CollectorRouteScreen({ stops, route, location, locationDenied, completed, totalStops, outboxRows, outboxStats, shiftStarted, shiftError, prefetching, refreshing, refreshNotice, lastReceipt, onStartShift, onCancelShift, onOpenQr, onOpenSummary, onOpenOutbox, onRefresh, onOpenLastReceipt }: CollectorRouteScreenProps) {
   const vehicleCapacity = route.route.total_expected_liters + route.route.remaining_capacity_l;
   const routeFill = vehicleCapacity > 0 ? Math.min(100, Math.round((route.route.total_expected_liters / vehicleCapacity) * 100)) : 0;
   const completedLiters = Object.values(completed).reduce((sum, item) => sum + item.liters, 0);
@@ -1038,6 +1045,7 @@ function CollectorRouteScreen({ stops, route, location, locationDenied, complete
       {!location && !locationDenied ? <div className="location-banner">Đang xin quyền vị trí để tính tuyến gần nhất…</div> : null}
       {locationDenied ? <div className="location-banner">Không lấy được vị trí GPS, đang dùng vị trí trung tâm phường. Giao dịch có thể bị đánh dấu cần kiểm tra.</div> : null}
       {route.fromCache ? <div className="offline-cache-banner">Đang dùng dữ liệu lúc {formatTime(route.cachedAt)}</div> : null}
+      {lastReceipt ? <section className="receipt-saved-banner" role="status"><strong>Đã lưu biên nhận trên máy</strong><span>Mã phiếu: {lastReceipt.receipt_id}</span><button className="text-button" onClick={onOpenLastReceipt}>Xem lại biên nhận</button></section> : null}
       <OutboxIssueNotice rows={outboxRows} stats={outboxStats} onOpen={onOpenOutbox} />
       {!shiftStarted ? <button className="start-shift-button" onClick={onStartShift} disabled={prefetching}>{prefetching ? 'Đang lưu tuyến và mã QR…' : 'Bắt đầu ca — lưu tuyến offline'}</button> : <div className="shift-ready-note">✓ Tuyến và mã QR đã sẵn sàng khi mất sóng{route.route.started_at ? ` · Bắt đầu lúc ${formatTime(route.route.started_at)}` : ''} <button className="text-button" onClick={onCancelShift} disabled={prefetching || Object.keys(completed).length > 0}>Hủy ca</button></div>}
       {shiftError ? <p className="error-text" role="alert">{shiftError}</p> : null}
@@ -1540,6 +1548,26 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
       {error ? <div className="error-panel">{error}</div> : null}
       {submitBlockReason ? <p className="error-text submit-block-reason">{submitBlockReason}</p> : null}
       <button className="submit-collection-button" onClick={() => { void submit(); }} disabled={saving || Boolean(submitBlockReason)}>{saving ? 'Đang lưu trên máy…' : 'Xác nhận thu gom'}</button>
+    </div>
+  );
+}
+
+function SavedStationReceiptView({ receipt, onBack }: { receipt: StoredStationReceipt; onBack: () => void }) {
+  return (
+    <div className="page-content collector-content station-page receipt-page">
+      <button className="back-button" onClick={onBack}>← Về tuyến hôm nay</button>
+      <header className="collector-screen-heading"><p className="eyebrow">BIÊN NHẬN ĐÃ LƯU</p><h1>{receipt.station_name}</h1><p>Mã phiếu: {receipt.receipt_id}</p></header>
+      <section className="receipt-card">
+        <dl>
+          <div><dt>Trạm</dt><dd>{receipt.station_id} · {receipt.station_name}</dd></div>
+          <div><dt>Người thu gom</dt><dd>{receipt.collector_id}</dd></div>
+          <div><dt>Tổng server đối soát</dt><dd>{formatLiters(receipt.expected_liters)} {receipt.units.volume}</dd></div>
+          <div><dt>Thực tế đổ</dt><dd>{receipt.actual_liters === null ? 'Không có dữ liệu' : `${formatLiters(receipt.actual_liters)} ${receipt.units.volume}`}</dd></div>
+          <div><dt>Chênh lệch</dt><dd>{receipt.variance_liters === null ? 'Không có dữ liệu' : `${receipt.variance_liters.toFixed(1)} ${receipt.units.volume}`}</dd></div>
+          <div><dt>Thời gian</dt><dd>{formatTime(receipt.created_at)}</dd></div>
+        </dl>
+      </section>
+      <section className="delivery-transactions-card"><h2>Danh sách giao dịch ({receipt.transactions.length})</h2>{receipt.transactions.map((transaction) => <div className="delivery-transaction-row" key={transaction.transaction_id}><div><strong>{transaction.merchant_name}</strong><span>{transaction.transaction_id}</span></div><b>{formatLiters(transaction.liters)} {receipt.units.volume} · {(transaction.kilograms ?? 0).toFixed(1)} {receipt.units.mass}</b></div>)}</section>
     </div>
   );
 }

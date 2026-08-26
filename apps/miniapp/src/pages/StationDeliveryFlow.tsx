@@ -4,7 +4,7 @@ import { DEFAULT_DENSITY_KG_PER_LITER, DeliveryStatus } from '@eco-oil/shared-ty
 import type { CollectionCreateRequest, GeoPoint, StationDeliveryCreateRequest, StationDeliveryResponse, StationRecommendation } from '@eco-oil/shared-types';
 import { api } from '../lib/api';
 import { formatCurrency, formatLiters } from '../lib/formatters';
-import { enqueueStationDelivery, retryOutbox, type OutboxRecord } from '../lib/outbox-db';
+import { enqueueStationDelivery, retryOutbox, saveStationReceipt, type OutboxRecord, type StoredStationReceipt } from '../lib/outbox-db';
 import { syncOutbox } from '../lib/outbox-sync';
 import { useOutboxRows } from '../lib/outbox-hooks';
 import { zaloClient } from '../lib/zalo-client';
@@ -26,17 +26,18 @@ interface DeliveryCandidate extends CompletedStop {
 interface StationDeliveryFlowProps {
   completed: Record<string, CompletedStop>;
   pendingDelivery: PendingStationDeliveryDraft | null;
+  collectorId: string | null;
   routeId?: string;
   onPendingDelivery: (draft: PendingStationDeliveryDraft) => void;
+  onReceiptSaved: (receipt: StoredStationReceipt) => void;
   onBack: () => void;
-  onDeliverySynced: () => void;
-  onFinish: () => void;
+  onFinish: () => Promise<boolean>;
 }
 
 const VARIANCE_THRESHOLD = 0.02;
 const PRICE_PER_LITER = Number(import.meta.env.VITE_ESTIMATED_PRICE_PER_LITER ?? 8000);
 
-export function StationDeliveryFlow({ completed, pendingDelivery, routeId, onPendingDelivery, onBack, onDeliverySynced, onFinish }: StationDeliveryFlowProps) {
+export function StationDeliveryFlow({ completed, pendingDelivery, collectorId, routeId, onPendingDelivery, onReceiptSaved, onBack, onFinish }: StationDeliveryFlowProps) {
   const [screen, setScreen] = useState<DeliveryScreen>(pendingDelivery ? 'receipt' : 'select');
   const [location, setLocation] = useState<GeoPoint | null>(null);
   const [locationDenied, setLocationDenied] = useState(false);
@@ -131,7 +132,7 @@ export function StationDeliveryFlow({ completed, pendingDelivery, routeId, onPen
   }
 
   if (screen === 'receipt' && selectedStation && deliveryClientUuid) {
-    return <StationDeliveryReceipt station={selectedStation} clientUuid={deliveryClientUuid} expectedLiters={expectedLiters} rows={rows} onDeliverySynced={onDeliverySynced} onCloseOut={() => setScreen('closeout')} onBack={onBack} />;
+    return <StationDeliveryReceipt station={selectedStation} clientUuid={deliveryClientUuid} collectorId={collectorId} expectedLiters={expectedLiters} candidates={candidates} rows={rows} onReceiptSaved={onReceiptSaved} onCloseOut={onFinish} onBack={onBack} />;
   }
 
   return <ShiftCloseout candidates={candidates} onFinish={onFinish} />;
@@ -297,19 +298,97 @@ function StationDeliveryReview({ station, candidates, expectedLiters, expectedKg
   );
 }
 
-function StationDeliveryReceipt({ station, clientUuid, expectedLiters, rows, onDeliverySynced, onCloseOut, onBack }: { station: StationRecommendation; clientUuid: string; expectedLiters: number; rows: OutboxRecord[]; onDeliverySynced: () => void; onCloseOut: () => void; onBack: () => void }) {
+function buildStationReceipt({ station, clientUuid, collectorId, expectedLiters, candidates, row, response }: {
+  station: StationRecommendation;
+  clientUuid: string;
+  collectorId: string;
+  expectedLiters: number;
+  candidates: DeliveryCandidate[];
+  row: OutboxRecord;
+  response: StationDeliveryResponse;
+}): StoredStationReceipt {
+  const payload = row.payload as StationDeliveryCreateRequest;
+  const actualLiters = response.actual_liters ?? payload.actual_liters;
+  const actualKg = response.actual_kg ?? payload.actual_kg ?? null;
+  return {
+    receipt_id: response.id,
+    client_uuid: clientUuid,
+    station_id: station.id,
+    station_name: station.name,
+    collector_id: collectorId,
+    created_at: response.created_at,
+    expected_liters: response.expected_liters ?? expectedLiters,
+    expected_kg: response.expected_kg ?? null,
+    actual_liters: actualLiters,
+    actual_kg: actualKg,
+    variance_liters: response.variance_l,
+    variance_kg: response.variance_kg,
+    variance_pct: response.variance_pct,
+    units: { volume: 'lít', mass: 'kg' },
+    transactions: candidates.map((item) => ({
+      transaction_id: item.record.server_id as string,
+      merchant_name: item.stop.merchant.name,
+      liters: collectionLiters(item.collection),
+      kilograms: collectionKilograms(item.collection),
+      collected_at: item.collection.collected_at ?? item.record.created_at,
+    })),
+  };
+}
+
+function StationDeliveryReceipt({ station, clientUuid, collectorId, expectedLiters, candidates, rows, onReceiptSaved, onCloseOut, onBack }: { station: StationRecommendation; clientUuid: string; collectorId: string | null; expectedLiters: number; candidates: DeliveryCandidate[]; rows: OutboxRecord[]; onReceiptSaved: (receipt: StoredStationReceipt) => void; onCloseOut: () => Promise<boolean>; onBack: () => void }) {
   const row = rows.find((item) => item.client_uuid === clientUuid);
   const response = row?.server_response as StationDeliveryResponse | undefined;
   const actual = response?.actual_liters ?? Number((row?.payload as StationDeliveryCreateRequest | undefined)?.actual_liters ?? 0);
   const flagged = response?.status === DeliveryStatus.FLAGGED;
-  const syncNotified = useRef(false);
   const [retrying, setRetrying] = useState(false);
-  useEffect(() => {
-    if (row?.status === 'synced' && !syncNotified.current) {
-      syncNotified.current = true;
-      onDeliverySynced();
+  const [receiptSaveState, setReceiptSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [receiptError, setReceiptError] = useState<string | null>(null);
+  const [imageNotice, setImageNotice] = useState<string | null>(null);
+  const [closing, setClosing] = useState(false);
+  const mountedRef = useRef(true);
+  const closingRef = useRef(false);
+  const receiptPromiseRef = useRef<Promise<StoredStationReceipt> | null>(null);
+  const savedReceiptRef = useRef<StoredStationReceipt | null>(null);
+  useEffect(() => () => {
+    mountedRef.current = false;
+  }, []);
+
+  async function persistReceipt(): Promise<StoredStationReceipt> {
+    if (savedReceiptRef.current) return savedReceiptRef.current;
+    if (receiptPromiseRef.current) return receiptPromiseRef.current;
+    if (!row || row.status !== 'synced' || !response) throw new Error('Chưa có kết quả đối soát để lưu');
+    if (!collectorId) throw new Error('Không xác định được tài khoản để lưu biên nhận');
+    const receipt = buildStationReceipt({ station, clientUuid, collectorId, expectedLiters, candidates, row, response });
+    if (mountedRef.current) {
+      setReceiptSaveState('saving');
+      setReceiptError(null);
     }
-  }, [onDeliverySynced, row?.status]);
+    const promise = saveStationReceipt(collectorId, receipt)
+      .then(() => {
+        savedReceiptRef.current = receipt;
+        if (mountedRef.current) {
+          setReceiptSaveState('saved');
+          onReceiptSaved(receipt);
+        }
+        return receipt;
+      })
+      .catch((error: unknown) => {
+        receiptPromiseRef.current = null;
+        if (mountedRef.current) {
+          setReceiptSaveState('error');
+          setReceiptError(error instanceof Error ? error.message : 'Không lưu được biên nhận trên máy.');
+        }
+        throw error;
+      });
+    receiptPromiseRef.current = promise;
+    return promise;
+  }
+
+  useEffect(() => {
+    if (row?.status !== 'synced' || !response) return;
+    void persistReceipt().catch(() => undefined);
+  }, [response?.id, row?.status, collectorId]);
+
   async function retryDelivery(): Promise<void> {
     if (retrying) return;
     setRetrying(true);
@@ -320,7 +399,35 @@ function StationDeliveryReceipt({ station, clientUuid, expectedLiters, rows, onD
       setRetrying(false);
     }
   }
-  return <div className="page-content collector-content station-page receipt-page"><header className="collector-screen-heading"><p className="eyebrow">BIÊN NHẬN NỘP TRẠM</p><h1>{flagged ? 'Đã ghi nhận có chênh lệch' : 'Đã lưu phiếu nộp trạm'}</h1><p>{station.name}</p></header><section className="receipt-card"><div className={`receipt-status receipt-status-${response?.status ?? row?.status ?? 'pending'}`}>{flagged ? '⚠ FLAGGED — cần kiểm tra' : row?.status === 'synced' ? '✓ OK — server đã đối soát' : 'Đang chờ đồng bộ server'}</div><dl><div><dt>Mã phiếu</dt><dd>{response?.id ?? clientUuid}</dd></div><div><dt>Trạm</dt><dd>{station.name}</dd></div><div><dt>Tổng server đối soát</dt><dd>{formatLiters(response?.expected_liters ?? expectedLiters)}</dd></div><div><dt>Thực tế đổ</dt><dd>{formatLiters(actual)}</dd></div><div><dt>Chênh lệch</dt><dd>{response ? `${response.variance_l >= 0 ? '+' : ''}${response.variance_l.toFixed(1)} L (${(response.variance_pct * 100).toFixed(1)}%)` : 'Chờ server tính'}</dd></div><div><dt>Giờ ghi nhận</dt><dd>{formatTime(response?.created_at ?? row?.created_at ?? null)}</dd></div></dl></section>{row?.status === 'failed' ? <><div className="error-panel">{deliveryErrorMessage(row.last_error ?? '')}</div><button className="secondary-button" onClick={() => { void retryDelivery(); }} disabled={retrying}>{retrying ? 'Đang thử lại…' : 'Thử lại nộp trạm'}</button></> : null}<div className="receipt-actions"><button className="secondary-button" onClick={() => window.print()}>Lưu ảnh biên nhận</button><button className="primary-button" onClick={onCloseOut} disabled={row?.status !== 'synced'}>{row?.status === 'synced' ? 'Kết ca' : 'Đang chờ giao trạm thành công…'}</button></div><button className="back-button" onClick={onBack}>← Về tóm tắt ca</button></div>;
+  async function closeOut(): Promise<void> {
+    if (closing || closingRef.current) return;
+    closingRef.current = true;
+    setClosing(true);
+    setReceiptError(null);
+    try {
+      await persistReceipt();
+      const closed = await onCloseOut();
+      if (!closed) throw new Error('Không thể kết ca. Vui lòng thử lại.');
+    } catch (error: unknown) {
+      if (mountedRef.current) setReceiptError(error instanceof Error ? error.message : 'Không thể kết ca. Vui lòng thử lại.');
+    } finally {
+      closingRef.current = false;
+      if (mountedRef.current) setClosing(false);
+    }
+  }
+
+  function saveReceiptImage(): void {
+    try {
+      if (typeof window === 'undefined' || typeof window.print !== 'function') throw new Error('unsupported');
+      window.print();
+      setImageNotice('Đã mở tùy chọn lưu/in biên nhận. Dữ liệu biên nhận đã được giữ trên máy.');
+    } catch {
+      setImageNotice('Thiết bị chưa hỗ trợ lưu ảnh; dữ liệu biên nhận vẫn được giữ trên máy.');
+    }
+  }
+
+  const canCloseOut = row?.status === 'synced' && Boolean(response);
+  return <div className="page-content collector-content station-page receipt-page"><header className="collector-screen-heading"><p className="eyebrow">BIÊN NHẬN NỘP TRẠM</p><h1>{flagged ? 'Đã ghi nhận có chênh lệch' : 'Đã lưu phiếu nộp trạm'}</h1><p>{station.name}</p></header><section className="receipt-card"><div className={`receipt-status receipt-status-${response?.status ?? row?.status ?? 'pending'}`}>{flagged ? '⚠ FLAGGED — cần kiểm tra' : row?.status === 'synced' ? '✓ OK — server đã đối soát' : 'Đang chờ đồng bộ server'}</div><dl><div><dt>Mã phiếu</dt><dd>{response?.id ?? clientUuid}</dd></div><div><dt>Trạm</dt><dd>{station.name}</dd></div><div><dt>Tổng server đối soát</dt><dd>{formatLiters(response?.expected_liters ?? expectedLiters)}</dd></div><div><dt>Thực tế đổ</dt><dd>{formatLiters(actual)}</dd></div><div><dt>Chênh lệch</dt><dd>{response ? `${response.variance_l >= 0 ? '+' : ''}${response.variance_l.toFixed(1)} L (${(response.variance_pct * 100).toFixed(1)}%)` : 'Chờ server tính'}</dd></div><div><dt>Giờ ghi nhận</dt><dd>{formatTime(response?.created_at ?? row?.created_at ?? null)}</dd></div></dl></section>{receiptSaveState === 'saving' ? <p className="field-help" role="status">Đang lưu biên nhận…</p> : null}{receiptSaveState === 'saved' ? <p className="field-help" role="status">Đã lưu biên nhận trên máy.</p> : null}{row?.status === 'failed' ? <><div className="error-panel">{deliveryErrorMessage(row.last_error ?? '')}</div><button className="secondary-button" onClick={() => { void retryDelivery(); }} disabled={retrying}>{retrying ? 'Đang thử lại…' : 'Thử lại nộp trạm'}</button></> : null}{receiptError ? <div className="error-panel" role="alert">{receiptError}</div> : null}{imageNotice ? <p className="field-help" role="status">{imageNotice}</p> : null}<div className="receipt-actions"><button className="secondary-button" onClick={saveReceiptImage}>Lưu ảnh biên nhận</button><button className="primary-button" onClick={() => { void closeOut(); }} disabled={!canCloseOut || receiptSaveState === 'saving' || closing}>{closing ? 'Đang kết ca…' : receiptSaveState === 'saving' ? 'Đang lưu biên nhận…' : canCloseOut ? 'Kết ca' : 'Đang chờ giao trạm thành công…'}</button></div><button className="back-button" onClick={onBack} disabled={closing}>← Về tóm tắt ca</button></div>;
 }
 
 function ShiftCloseout({ candidates, onFinish }: { candidates: DeliveryCandidate[]; onFinish: () => void }) {
