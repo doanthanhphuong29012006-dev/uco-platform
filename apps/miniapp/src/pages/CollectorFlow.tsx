@@ -725,10 +725,10 @@ export function CollectorFlow() {
   }, []);
 
   const route = useQuery<RouteLoadResult>({
-    queryKey: ['collector-route', location],
+    queryKey: ['collector-route', collectorStorageId, location],
     queryFn: async () => {
       try {
-        return await loadRouteWithCache(location ?? undefined);
+        return await loadRouteWithCache(location ?? undefined, collectorStorageId);
       } catch (error) {
         if (restoredShift?.activeRoute) {
           return { route: restoredShift.activeRoute, fromCache: true, cachedAt: restoredShift.savedAt };
@@ -763,7 +763,7 @@ export function CollectorFlow() {
             if (result.failed) throw result.error ?? new Error('Không lấy được GPS');
             return result.point;
           },
-          (point) => loadRouteWithCache(point),
+          (point) => loadRouteWithCache(point, collectorStorageId),
           fallback,
         );
         if (refreshed.point) {
@@ -771,7 +771,7 @@ export function CollectorFlow() {
         }
         setLocationDenied(refreshed.gpsFallback ?? false);
         if (refreshed.data) {
-          queryClient.setQueryData(['collector-route', refreshed.point], refreshed.data);
+          queryClient.setQueryData(['collector-route', collectorStorageId, refreshed.point], refreshed.data);
         }
         return refreshed;
       },
@@ -846,8 +846,8 @@ export function CollectorFlow() {
       const startedRoute = route.data.route.persisted
         ? route.data.route
         : await api.startRoute(routeClientUuid, location ?? undefined);
-      await prefetchRouteData(startedRoute, location);
-      queryClient.setQueryData(['collector-route', location], { route: startedRoute, fromCache: false, cachedAt: null });
+      await prefetchRouteData(startedRoute, location, collectorStorageId);
+      queryClient.setQueryData(['collector-route', collectorStorageId, location], { route: startedRoute, fromCache: false, cachedAt: null });
       if (collectorStorageId) {
         pendingStationDeliveryStorage.save(collectorStorageId, {
           completed,

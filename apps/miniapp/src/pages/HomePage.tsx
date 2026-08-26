@@ -5,17 +5,20 @@ import { ApiError, api } from '../lib/api';
 import { currentVietnamWeek, fillPercent, formatCurrency, formatDate, formatLiters } from '../lib/formatters';
 import { OrderSheet } from '../components/OrderSheet';
 import { StatusView } from '../components/StatusView';
+import { useAuthStore } from '../stores/auth-store';
 
 const PRICE_PER_LITER = Number(import.meta.env.VITE_ESTIMATED_PRICE_PER_LITER ?? 8000);
 
 export function HomePage() {
   const queryClient = useQueryClient();
+  const user = useAuthStore((state) => state.user);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const dashboard = useQuery({ queryKey: ['merchant-dashboard'], queryFn: api.dashboard });
+  const identityKey = user?.id ?? 'unknown';
+  const dashboard = useQuery({ queryKey: ['merchant-dashboard', identityKey], queryFn: api.dashboard });
   const week = currentVietnamWeek();
-  const weeklyPayments = useQuery({ queryKey: ['merchant-payments', week.period], queryFn: () => api.payments(week.period) });
-  const weeklyTransactions = useQuery({ queryKey: ['merchant-transactions', week.period], queryFn: () => api.transactions(1, 100, week.from, week.to) });
+  const weeklyPayments = useQuery({ queryKey: ['merchant-payments', identityKey, week.period], queryFn: () => api.payments(week.period) });
+  const weeklyTransactions = useQuery({ queryKey: ['merchant-transactions', identityKey, week.period], queryFn: () => api.transactions(1, 100, week.from, week.to) });
   const createOrder = useMutation({
     mutationFn: (liters: number | undefined) => api.createReadyOrder(liters),
     onSuccess: async (order) => {
@@ -65,7 +68,7 @@ export function HomePage() {
   }
 
   return <div className="page-content">
-    <header className="page-header"><div><p className="eyebrow">HÔM NAY</p><h1>Chào quán mình 👋</h1></div><div className="leaf-badge">✦</div></header>
+    <header className="page-header"><div><p className="eyebrow">HÔM NAY</p><h1>Chào quán mình 👋</h1><small>Tài khoản: {user?.name ?? 'Chưa xác định'} · Mã quán: {user?.zalo_id ?? 'Chưa xác định'}</small></div><div className="leaf-badge">✦</div></header>
     <section className="hero-card"><div><p className="card-eyebrow">TIỀN TUẦN NÀY · {week.period}</p><strong>{formatCurrency(weeklyMoney)}</strong><p className="muted">{hasClosedPayments ? 'Số tiền đã chốt theo giao dịch' : 'Ước tính · kỳ chưa được chốt'} · {estimatedWeeklyKg.toFixed(1)} kg</p></div><div className="hero-orb">₫</div></section>
     {notice ? <div className="notice" role="status">{notice}</div> : null}
     <section className="section-block"><div className="section-heading"><h2>Can của quán</h2><span>{data.containers.length} can</span></div>{!hasContainers ? <div className="empty-container-state"><strong>Quán chưa được cấp can</strong><p>Eco-Oil sẽ liên hệ giao can trong 1-2 ngày làm việc.</p><small>Hotline: 1900 1234</small></div> : <div className="container-list">{data.containers.map((container) => { const percentage = fillPercent(container.estimated_liters, container.capacity_l); return <article className="container-card" key={container.code}><div className="container-icon">▣</div><div className="container-main"><div className="container-title-row"><strong>{container.code}</strong><span className={`state-pill state-${container.state.toLowerCase()}`}>{container.state === 'AT_MERCHANT' ? 'Ở quán' : 'Đang vận chuyển'}</span></div><p>{formatLiters(container.capacity_l)} dung tích · Ước tính {percentage}% đầy</p><div className="progress-track"><span style={{ width: `${percentage}%` }} /></div></div></article>; })}</div>}</section>

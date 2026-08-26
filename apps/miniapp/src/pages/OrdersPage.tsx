@@ -4,11 +4,13 @@ import { OrderStatus } from '@eco-oil/shared-types';
 import { api } from '../lib/api';
 import { formatDate, formatLiters } from '../lib/formatters';
 import { StatusView } from '../components/StatusView';
+import { useAuthStore } from '../stores/auth-store';
 
 export function OrdersPage() {
   const queryClient = useQueryClient();
+  const userId = useAuthStore((state) => state.user?.id ?? 'unknown');
   const [cancelId, setCancelId] = useState<string | null>(null);
-  const orders = useQuery({ queryKey: ['merchant-orders'], queryFn: api.orders });
+  const orders = useQuery({ queryKey: ['merchant-orders', userId], queryFn: api.orders });
   const cancelOrder = useMutation({
     mutationFn: (id: string) => api.cancelOrder(id),
     onSuccess: async () => {

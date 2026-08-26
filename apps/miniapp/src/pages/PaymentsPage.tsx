@@ -3,11 +3,13 @@ import type { PaymentRecord } from '@eco-oil/shared-types';
 import { api, ApiError } from '../lib/api';
 import { formatCurrency, formatDate, formatLiters } from '../lib/formatters';
 import { StatusView } from '../components/StatusView';
+import { useAuthStore } from '../stores/auth-store';
 
 const statusLabel = { PENDING: 'Chờ thanh toán', PAID: 'Đã thanh toán', CANCELLED: 'Đã huỷ' } as const;
 
 export function PaymentsPage() {
-  const payments = useQuery({ queryKey: ['merchant-payments'], queryFn: () => api.payments() });
+  const userId = useAuthStore((state) => state.user?.id ?? 'unknown');
+  const payments = useQuery({ queryKey: ['merchant-payments', userId], queryFn: () => api.payments() });
   if (payments.isPending) return <StatusView title="Đang tải thanh toán…" />;
   if (payments.isError) return <StatusView title="Chưa tải được thanh toán" message={payments.error instanceof ApiError ? payments.error.message : 'Vui lòng kiểm tra kết nối và thử lại.'} action={{ label: 'Thử lại', onClick: () => { void payments.refetch(); } }} />;
   if (!payments.data.data.length) return <StatusView title="Chưa có kỳ thanh toán" message="Sau khi Eco-Oil chốt kỳ, số tiền và trạng thái thanh toán sẽ xuất hiện tại đây." />;

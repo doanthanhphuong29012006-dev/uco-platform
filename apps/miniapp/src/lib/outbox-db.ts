@@ -6,6 +6,7 @@ export type OutboxStatus = 'pending' | 'syncing' | 'synced' | 'failed';
 
 export interface OutboxRecord {
   client_uuid: string;
+  owner_id?: string;
   type: OutboxType;
   payload: unknown;
   status: OutboxStatus;
@@ -21,7 +22,8 @@ export interface OutboxRecord {
 }
 
 export interface CachedRouteRecord {
-  key: 'current';
+  key: string;
+  owner_id?: string;
   payload: CurrentRouteResponse;
   location: { lat: number; lng: number } | null;
   updated_at: string;
@@ -69,9 +71,20 @@ export class EcoOilDatabase extends Dexie {
 }
 
 export let ecoOilDb = new EcoOilDatabase();
+let activeOutboxOwnerId: string | null = null;
 const OUTBOX_LIMIT_BYTES = 50 * 1024 * 1024;
 const subscribers = new Set<() => void>();
 export const OUTBOX_OPERATION_TIMEOUT_MS = 4_500;
+
+export function setOutboxOwner(ownerId: string | null): void {
+  if (activeOutboxOwnerId === ownerId) return;
+  activeOutboxOwnerId = ownerId;
+  emitChanged();
+}
+
+function belongsToActiveOwner(record: OutboxRecord): boolean {
+  return activeOutboxOwnerId === null || record.owner_id === activeOutboxOwnerId;
+}
 
 function emitChanged(): void {
   for (const listener of subscribers) {
@@ -107,23 +120,26 @@ export const dexieOutboxStore: OutboxStore = {
   async getPending(limit, now) {
     const records = await ecoOilDb.outbox.where('status').equals('pending').toArray();
     return records
+      .filter(belongsToActiveOwner)
       .filter((record) => !record.next_attempt_at || new Date(record.next_attempt_at) <= now)
       .sort((left, right) => left.created_at.localeCompare(right.created_at))
       .slice(0, limit);
   },
   get(clientUuid) {
-    return ecoOilDb.outbox.get(clientUuid);
+    return ecoOilDb.outbox.get(clientUuid).then((record) => record && belongsToActiveOwner(record) ? record : undefined);
   },
   async update(record) {
     await ecoOilDb.outbox.put(record);
     emitChanged();
   },
   async list(limit = 100) {
-    return (await ecoOilDb.outbox.orderBy('created_at').reverse().limit(limit).toArray());
+    return (await ecoOilDb.outbox.orderBy('created_at').reverse().toArray())
+      .filter(belongsToActiveOwner)
+      .slice(0, limit);
   },
   async deleteSyncedBefore(cutoff) {
     const records = await ecoOilDb.outbox.where('status').equals('synced').toArray();
-    const expired = records.filter((record) => record.synced_at && new Date(record.synced_at) < cutoff);
+    const expired = records.filter((record) => belongsToActiveOwner(record) && record.synced_at && new Date(record.synced_at) < cutoff);
     await ecoOilDb.outbox.bulkDelete(expired.map((record) => record.client_uuid));
     if (expired.length > 0) {
       emitChanged();
@@ -131,7 +147,7 @@ export const dexieOutboxStore: OutboxStore = {
     return expired.length;
   },
   async stats() {
-    const records = await ecoOilDb.outbox.toArray();
+    const records = (await ecoOilDb.outbox.toArray()).filter(belongsToActiveOwner);
     const stats = records.reduce<OutboxStats>(
       (current, record) => {
         current[record.status] += 1;
@@ -145,7 +161,7 @@ export const dexieOutboxStore: OutboxStore = {
   },
   async recoverStaleSyncing(now) {
     const cutoff = now.getTime() - 60_000;
-    const records = await ecoOilDb.outbox.where('status').equals('syncing').toArray();
+    const records = (await ecoOilDb.outbox.where('status').equals('syncing').toArray()).filter(belongsToActiveOwner);
     const stale = records.filter((record) => {
       const startedAt = record.sync_started_at ?? record.updated_at ?? record.created_at;
       return new Date(startedAt).getTime() <= cutoff;
@@ -233,6 +249,7 @@ export async function enqueueCollection(payload: CollectionCreateRequest): Promi
   const now = new Date().toISOString();
   const record: OutboxRecord = {
     client_uuid: payload.client_uuid,
+    ...(activeOutboxOwnerId ? { owner_id: activeOutboxOwnerId } : {}),
     type: 'collection',
     payload,
     status: 'pending',
@@ -251,6 +268,7 @@ export async function enqueueStationDelivery(payload: StationDeliveryCreateReque
   const now = new Date().toISOString();
   const record: OutboxRecord = {
     client_uuid: payload.client_uuid,
+    ...(activeOutboxOwnerId ? { owner_id: activeOutboxOwnerId } : {}),
     type: 'station_delivery',
     payload,
     status: 'pending',
@@ -273,12 +291,17 @@ export async function retryOutbox(clientUuid: string): Promise<void> {
   await dexieOutboxStore.update({ ...record, status: 'pending', attempts: 0, last_error: null, next_attempt_at: null, sync_started_at: null, updated_at: new Date().toISOString() });
 }
 
-export async function cacheRoute(payload: CurrentRouteResponse, location: { lat: number; lng: number } | null): Promise<void> {
-  await ecoOilDb.routeCache.put({ key: 'current', payload, location, updated_at: new Date().toISOString() });
+function routeCacheKey(ownerId?: string | null): string {
+  return ownerId ? `current:${ownerId}` : 'current';
 }
 
-export async function getCachedRoute(): Promise<CachedRouteRecord | undefined> {
-  return ecoOilDb.routeCache.get('current');
+export async function cacheRoute(payload: CurrentRouteResponse, location: { lat: number; lng: number } | null, ownerId?: string | null): Promise<void> {
+  const key = routeCacheKey(ownerId ?? activeOutboxOwnerId);
+  await ecoOilDb.routeCache.put({ key, owner_id: ownerId ?? activeOutboxOwnerId ?? undefined, payload, location, updated_at: new Date().toISOString() });
+}
+
+export async function getCachedRoute(ownerId?: string | null): Promise<CachedRouteRecord | undefined> {
+  return ecoOilDb.routeCache.get(routeCacheKey(ownerId ?? activeOutboxOwnerId));
 }
 
 export async function cacheContainer(payload: ContainerLookupResponse): Promise<void> {

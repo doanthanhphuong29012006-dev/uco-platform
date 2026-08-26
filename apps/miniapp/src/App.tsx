@@ -44,7 +44,7 @@ export function App() {
       // Deliberately keep IndexedDB outbox rows; logout only clears auth state and tokens.
       await signOut();
     }
-    return <div className="app-shell"><BrandHeader title="Tuyến hôm nay" action={<button className="header-signout" onClick={() => void handleCollectorSignOut()}>Thoát</button>} /><main className="main-area"><CollectorFlow /></main></div>;
+    return <div className="app-shell"><BrandHeader title="Tuyến hôm nay" action={<button className="header-signout" onClick={() => void handleCollectorSignOut()}>Thoát</button>} /><main className="main-area"><CollectorFlow key={user.id} /></main></div>;
   }
 
   if (user.role !== Role.MERCHANT) {
@@ -56,10 +56,10 @@ export function App() {
   return <div className="app-shell">
     <BrandHeader title={tab === 'home' ? 'Trang chủ' : tab === 'orders' ? 'Đơn của tôi' : tab === 'payments' ? 'Thanh toán' : 'Lịch sử'} />
     <main className="main-area">
-      {tab === 'home' ? <HomePage /> : null}
-      {tab === 'history' ? <HistoryPage /> : null}
-      {tab === 'orders' ? <OrdersPage /> : null}
-      {tab === 'payments' ? <PaymentsPage /> : null}
+      {tab === 'home' ? <HomePage key={user.id} /> : null}
+      {tab === 'history' ? <HistoryPage key={user.id} /> : null}
+      {tab === 'orders' ? <OrdersPage key={user.id} /> : null}
+      {tab === 'payments' ? <PaymentsPage key={user.id} /> : null}
     </main>
     <nav className="bottom-nav" aria-label="Điều hướng chính">
       <button className={tab === 'home' ? 'nav-item active' : 'nav-item'} onClick={() => setTab('home')}><span>⌂</span><small>Trang chủ</small></button>

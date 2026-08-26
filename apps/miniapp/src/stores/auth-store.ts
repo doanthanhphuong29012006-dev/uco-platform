@@ -2,6 +2,8 @@ import type { AuthUser } from '@eco-oil/shared-types';
 import { create } from 'zustand';
 import { ApiError, API_BASE_URL, api, setUnauthorizedHandler } from '../lib/api';
 import { tokenStorage } from '../lib/storage';
+import { setOutboxOwner } from '../lib/outbox-db';
+import { isValidAuthUser } from '../components/login-screen-logic';
 
 interface AuthState {
   user: AuthUser | null;
@@ -12,6 +14,10 @@ interface AuthState {
   loginSeed: (zaloId: string, phone: string) => Promise<void>;
   loginWithZalo: (accessToken: string) => Promise<void>;
   signOut: () => Promise<void>;
+}
+
+function applyUserScope(user: AuthUser | null): void {
+  setOutboxOwner(user?.role === 'COLLECTOR' ? user.collectorId ?? user.id : null);
 }
 
 function loginErrorMessage(error: unknown, endpoint: string): string {
@@ -53,9 +59,17 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
     try {
       const user = await api.me();
+      if (!isValidAuthUser(user)) {
+        tokenStorage.clear();
+        applyUserScope(null);
+        set({ user: null, hydrated: true, error: 'Phiên đăng nhập không hợp lệ. Vui lòng chọn lại tài khoản.' });
+        return;
+      }
+      applyUserScope(user);
       set({ user, hydrated: true });
     } catch {
       tokenStorage.clear();
+      applyUserScope(null);
       set({ user: null, hydrated: true });
     }
   },
@@ -63,7 +77,11 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ busy: true, error: null });
     try {
       const session = await api.loginSeed(zaloId, phone);
+      if (!isValidAuthUser(session.user)) {
+        throw new Error('Phản hồi đăng nhập không có định danh quán/người dùng hợp lệ.');
+      }
       tokenStorage.setTokens(session.access_token, session.refresh_token);
+      applyUserScope(session.user);
       set({ user: session.user, busy: false });
     } catch (error) {
       set({ busy: false, error: loginErrorMessage(error, '/auth/zalo') });
@@ -73,7 +91,11 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ busy: true, error: null });
     try {
       const session = await api.loginWithZaloAccessToken(accessToken);
+      if (!isValidAuthUser(session.user)) {
+        throw new Error('Phản hồi đăng nhập không có định danh quán/người dùng hợp lệ.');
+      }
       tokenStorage.setTokens(session.access_token, session.refresh_token);
+      applyUserScope(session.user);
       set({ user: session.user, busy: false });
     } catch (error) {
       set({ busy: false, error: loginErrorMessage(error, '/auth/zalo') });
@@ -89,6 +111,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       }
     }
     tokenStorage.clear();
+    applyUserScope(null);
     set({ user: null, busy: false, error: null, hydrated: true });
   },
 }));

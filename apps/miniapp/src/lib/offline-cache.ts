@@ -13,8 +13,8 @@ export interface RouteLoadResult {
   cachedAt: string | null;
 }
 
-export async function prefetchRouteData(route: CurrentRouteResponse, location: GeoPoint | null): Promise<void> {
-  await cacheRoute(route, location);
+export async function prefetchRouteData(route: CurrentRouteResponse, location: GeoPoint | null, ownerId?: string | null): Promise<void> {
+  await cacheRoute(route, location, ownerId);
   await Promise.all(route.stops.map(async (stop) => {
     try {
       await cacheContainer(await api.containerByQr(stop.container_code));
@@ -24,16 +24,16 @@ export async function prefetchRouteData(route: CurrentRouteResponse, location: G
   }));
 }
 
-export async function loadRouteWithCache(location?: GeoPoint): Promise<RouteLoadResult> {
+export async function loadRouteWithCache(location?: GeoPoint, ownerId?: string | null): Promise<RouteLoadResult> {
   try {
     const route = await api.currentRoute(location);
-    void prefetchRouteData(route, location ?? null);
+    void prefetchRouteData(route, location ?? null, ownerId);
     return { route, fromCache: false, cachedAt: null };
   } catch (error) {
     if (error instanceof ApiError) {
       throw error;
     }
-    const cached = await getCachedRoute();
+    const cached = await getCachedRoute(ownerId);
     if (!cached) {
       throw error;
     }

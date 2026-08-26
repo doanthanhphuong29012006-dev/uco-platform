@@ -4,11 +4,13 @@ import { DEFAULT_DENSITY_KG_PER_LITER } from '@eco-oil/shared-types';
 import { api } from '../lib/api';
 import { formatDate, formatLiters } from '../lib/formatters';
 import { StatusView } from '../components/StatusView';
+import { useAuthStore } from '../stores/auth-store';
 
 export function HistoryPage() {
   const sentinelRef = useRef<HTMLDivElement>(null);
+  const userId = useAuthStore((state) => state.user?.id ?? 'unknown');
   const history = useInfiniteQuery({
-    queryKey: ['merchant-transactions'],
+    queryKey: ['merchant-transactions', userId],
     queryFn: ({ pageParam }) => api.transactions(pageParam),
     initialPageParam: 1,
     getNextPageParam: (lastPage) => lastPage.meta.page * lastPage.meta.limit < lastPage.meta.total ? lastPage.meta.page + 1 : undefined,
