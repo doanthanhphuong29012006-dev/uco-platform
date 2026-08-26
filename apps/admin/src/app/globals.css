@@ -4,6 +4,10 @@
 
 :root { color-scheme: light; }
 * { box-sizing: border-box; }
-body { margin: 0; background: #f7f4ed; }
-button, input, select { font: inherit; }
+body {
+  margin: 0;
+  background: #f7f4ed;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+button, input, select, textarea { font: inherit; }
 table { border-collapse: collapse; }

@@ -3,7 +3,7 @@ import { AlertSeverity, AnomalyFeedbackVerdict, OilGrade, Quality, Role, type Au
 import { createElement } from 'react';
 import { afterEach, expect, test, vi } from 'vitest';
 import { KpiCards } from './components/kpi-cards';
-import { AiAnomalyListItem, AlertListItem } from './components/alerts-view';
+import { AiAnomalyListItem, AlertListItem, formatAnomalyEvidence } from './components/alerts-view';
 import { TransactionAnomalySummary } from './components/reconciliation-view';
 import { countStationsByFillForecast, sortStationsByFillForecast, StationForecastStatus, StationsTable } from './components/stations-view';
 import { calculateVariancePct, isAdminUser } from './lib/dashboard-utils';
@@ -72,7 +72,7 @@ const aiAnomalyFixture: AdminAiAnomalyItem = {
   risk_score: 42,
   risk_level: 'REVIEW',
   explanation_summary: 'Phát hiện tín hiệu cần xem xét.',
-  reason_codes: [{ code: 'MASS_OR_VOLUME_OUTLIER', label: 'Khối lượng bất thường', description: 'Lệch lịch sử.', contribution: 20, evidence: { value: 60 }, severity: AlertSeverity.HIGH }],
+  reason_codes: [{ code: 'DENSITY_OUTLIER', label: 'Tỷ lệ kg/lít bất thường', description: 'Lệch lịch sử.', contribution: 35, evidence: { actual_density: 2.5, expected_density: 0.91, relative_deviation_percent: 174.73, mass_source: 'SCALE', source: 'DOMAIN_DENSITY_BASELINE' }, severity: AlertSeverity.HIGH }],
   history_size: 6,
   feedback: null,
 };
@@ -81,12 +81,32 @@ test('hiển thị giải thích anomaly và gửi feedback từ giao diện', (
   const onSave = vi.fn();
   render(createElement(AiAnomalyListItem, { item: aiAnomalyFixture, onSave, saving: false }));
   fireEvent.click(screen.getByRole('button', { name: 'Xem giải thích' }));
-  expect(screen.getByText('Khối lượng bất thường')).toBeInTheDocument();
-  expect(screen.getByText(/Bằng chứng:/)).toBeInTheDocument();
+  expect(screen.getByText('Tỷ lệ kg/lít bất thường')).toBeInTheDocument();
+  expect(screen.getByText('Mật độ thực tế:')).toBeInTheDocument();
+  expect(screen.getByText('2,5 kg/lít')).toBeInTheDocument();
+  expect(screen.getByText('Mức sai lệch:')).toBeInTheDocument();
+  expect(screen.getByText('174,73%')).toBeInTheDocument();
+  expect(screen.queryByText(/Bằng chứng:/)).not.toBeInTheDocument();
   fireEvent.change(screen.getByRole('combobox'), { target: { value: 'CONFIRMED_ANOMALY' } });
   fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Đã đối chiếu' } });
+  expect(screen.getByRole('textbox')).toHaveAttribute('spellcheck', 'false');
   fireEvent.click(screen.getByRole('button', { name: 'Lưu đánh giá' }));
   expect(onSave).toHaveBeenCalledWith('transaction-1', AnomalyFeedbackVerdict.CONFIRMED_ANOMALY, 'Đã đối chiếu');
+});
+
+test('format evidence dùng nhãn tiếng Việt và bỏ qua giá trị không hợp lệ', () => {
+  expect(formatAnomalyEvidence({ actual_density: 2.5, expected_density: 0.91, relative_deviation_percent: 174.73, value: Number.NaN })).toEqual([
+    { label: 'Mật độ thực tế', value: '2,5 kg/lít' },
+    { label: 'Mật độ chuẩn', value: '0,91 kg/lít' },
+    { label: 'Mức sai lệch', value: '174,73%' },
+  ]);
+});
+
+test('hiển thị lỗi lưu và chỉ khóa item đang lưu', () => {
+  render(createElement(AiAnomalyListItem, { item: aiAnomalyFixture, onSave: vi.fn(), saving: true, saveError: 'Không thể lưu (FEEDBACK_FAILED)' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Xem giải thích' }));
+  expect(screen.getByRole('alert')).toHaveTextContent('FEEDBACK_FAILED');
+  expect(screen.getByRole('button', { name: 'Đang lưu…' })).toBeDisabled();
 });
 
 test('hiển thị hiệu quả phản hồi anomaly và trạng thái mẫu ít', () => {
