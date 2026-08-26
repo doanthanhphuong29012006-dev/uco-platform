@@ -10,19 +10,21 @@ interface GradePhotoPickerProps {
   photos: PhotoAsset[];
   busy: boolean;
   disabled: boolean;
+  message?: string | null;
   onTakePhoto: () => void;
   onChooseAlbum?: () => void;
   onChooseFile: (file: File) => void;
   onRemovePhoto: (index: number) => void;
 }
 
-export function GradePhotoPicker({ photos, busy, disabled, onTakePhoto, onChooseAlbum, onChooseFile, onRemovePhoto }: GradePhotoPickerProps) {
+export function GradePhotoPicker({ photos, busy, disabled, message, onTakePhoto, onChooseAlbum, onChooseFile, onRemovePhoto }: GradePhotoPickerProps) {
   return (
     <section className="photo-card grade-photo-card">
       <div>
         <strong>Ảnh phân hạng / kiểm tra</strong>
         <p>{photos.length > 0 ? `${photos.length} ảnh đã chọn` : 'Hạng B, hạng C hoặc nghi ngờ pha lẫn cần ít nhất 1 ảnh thật.'}</p>
       </div>
+      {message ? <p role="status">{message}</p> : null}
       <div className="photo-actions">
         <button type="button" className="secondary-button" onClick={onTakePhoto} disabled={busy || disabled}>
           {busy ? 'Đang xử lý…' : 'Chụp ảnh'}

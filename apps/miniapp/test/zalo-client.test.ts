@@ -196,6 +196,45 @@ test('real client uses distinct native camera and album sources before compressi
   assert.deepEqual(compressedPaths, ['zalo://camera.jpg', 'zalo://album.jpg']);
 });
 
+test('cancelled camera/library results release the picker outcome without adding an empty photo', async () => {
+  const { pickZaloPhoto } = await import('../src/lib/media-picker');
+  const photo = { url: 'data:image/jpeg;base64,photo', width: 10, height: 10 };
+
+  assert.deepEqual(await pickZaloPhoto('camera', async () => photo), { kind: 'selected', photo });
+  assert.deepEqual(await pickZaloPhoto('album', async () => photo), { kind: 'selected', photo });
+  assert.deepEqual(await pickZaloPhoto('camera', async () => ({ url: '', width: 0, height: 0 })), { kind: 'cancelled' });
+  assert.deepEqual(await pickZaloPhoto('album', async () => { throw { code: -2003 }; }), { kind: 'cancelled' });
+  assert.deepEqual(await pickZaloPhoto('album', async () => { throw { code: -201 }; }), { kind: 'permission-denied' });
+});
+
+test('after an empty camera result, the native picker can be opened again', async () => {
+  const paths = [[], ['zalo://camera-again.jpg']];
+  const { RealZaloClient, MediaPickerCancelledError } = await import('../src/lib/zalo-client');
+  const client = new RealZaloClient(
+    undefined,
+    undefined,
+    undefined,
+    async () => ({
+      scanQRCode: async () => ({ content: '' }),
+      chooseImage: async () => ({ filePaths: paths.shift() ?? [] }),
+    }),
+    async (filePath) => ({ url: filePath, width: 10, height: 10 }),
+  );
+
+  await assert.rejects(() => client.chooseImage('camera'), MediaPickerCancelledError);
+  assert.deepEqual(await client.chooseImage('camera'), { url: 'zalo://camera-again.jpg', width: 10, height: 10 });
+});
+
+test('native cancel codes are distinct from permission denial', async () => {
+  const { isMediaPickerCancelled, isZaloPermissionDenied } = await import('../src/lib/zalo-client');
+
+  assert.equal(isMediaPickerCancelled({ code: -2003, message: 'User cancel' }), true);
+  assert.equal(isMediaPickerCancelled({ code: -606, message: 'User cancel' }), true);
+  assert.equal(isMediaPickerCancelled({ code: -101 }), true);
+  assert.equal(isMediaPickerCancelled({ code: -201 }), false);
+  assert.equal(isZaloPermissionDenied({ code: -201 }), true);
+});
+
 test('permission helper recognizes only Zalo denial code -201', async () => {
   const { isZaloPermissionDenied } = await import('../src/lib/zalo-client');
 

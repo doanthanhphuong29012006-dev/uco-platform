@@ -16,6 +16,7 @@ import { pendingStationDeliveryStorage } from '../lib/storage';
 import { isValidGeoPoint, isZaloPermissionDenied, zaloClient } from '../lib/zalo-client';
 import type { PhotoAsset } from '../lib/zalo-client';
 import { compressImageBlob } from '../lib/zalo-client';
+import { pickZaloPhoto } from '../lib/media-picker';
 import { StatusView } from '../components/StatusView';
 import { OilGradeSelector } from '../components/OilGradeSelector';
 import { GradePhotoPicker, isGradePhotoMissing } from '../components/GradePhotoPicker';
@@ -990,11 +991,15 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
   const [geo, setGeo] = useState<GeoPoint | null>(null);
   const [saving, setSaving] = useState(false);
   const [takingPhoto, setTakingPhoto] = useState(false);
+  const [photoNotice, setPhotoNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [locationFallback, setLocationFallback] = useState(false);
   const [clientUuid] = useState(() => crypto.randomUUID());
   const [highDeviationAcknowledgement, setHighDeviationAcknowledgement] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+  const mediaPickerInFlightRef = useRef(false);
+  useEffect(() => () => { mountedRef.current = false; }, []);
   const capacity = Number(container.capacity_liters ?? 0);
   const enteredLiters = liters.trim() === '' ? null : Number(liters);
   const actualKg = kilograms.trim() === '' ? null : Number(kilograms);
@@ -1045,42 +1050,57 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
   }
 
   async function takePhoto(): Promise<void> {
+    if (mediaPickerInFlightRef.current) return;
+    mediaPickerInFlightRef.current = true;
     setTakingPhoto(true);
     setError(null);
+    setPhotoNotice(null);
     try {
-      addPhoto(await zaloClient.chooseImage('camera'));
-    } catch (photoError) {
-      setError(isZaloPermissionDenied(photoError)
-        ? 'Zalo chưa có quyền Camera. Hãy bật quyền Camera hoặc dùng ảnh từ thư viện/file dự phòng.'
-        : 'Không mở được camera. Hãy dùng ảnh từ thư viện hoặc file dự phòng.');
+      const result = await pickZaloPhoto('camera');
+      if (!mountedRef.current) return;
+      if (result.kind === 'selected') addPhoto(result.photo);
+      else if (result.kind === 'cancelled') setPhotoNotice('Bạn chưa chọn ảnh. Bạn có thể thử lại hoặc chọn ảnh từ thư viện/file dự phòng.');
+      else if (result.kind === 'permission-denied') setError('Zalo chưa có quyền Camera. Hãy bật quyền Camera hoặc dùng ảnh từ thư viện/file dự phòng.');
+      else setError('Không mở được camera. Hãy dùng ảnh từ thư viện hoặc file dự phòng.');
     } finally {
-      setTakingPhoto(false);
+      mediaPickerInFlightRef.current = false;
+      if (mountedRef.current) setTakingPhoto(false);
     }
   }
 
   async function chooseAlbumPhoto(): Promise<void> {
+    if (mediaPickerInFlightRef.current) return;
+    mediaPickerInFlightRef.current = true;
     setTakingPhoto(true);
     setError(null);
+    setPhotoNotice(null);
     try {
-      addPhoto(await zaloClient.chooseImage('album'));
-    } catch (photoError) {
-      setError(isZaloPermissionDenied(photoError)
-        ? 'Zalo chưa được phép chọn ảnh. Hãy kiểm tra quyền hoặc dùng file dự phòng.'
-        : 'Không chọn được ảnh từ thư viện Zalo. Hãy dùng file dự phòng.');
+      const result = await pickZaloPhoto('album');
+      if (!mountedRef.current) return;
+      if (result.kind === 'selected') addPhoto(result.photo);
+      else if (result.kind === 'cancelled') setPhotoNotice('Bạn chưa chọn ảnh. Bạn có thể thử lại hoặc chọn ảnh từ camera/file dự phòng.');
+      else if (result.kind === 'permission-denied') setError('Zalo chưa được phép chọn ảnh. Hãy kiểm tra quyền hoặc dùng file dự phòng.');
+      else setError('Không chọn được ảnh từ thư viện Zalo. Hãy dùng file dự phòng.');
     } finally {
-      setTakingPhoto(false);
+      mediaPickerInFlightRef.current = false;
+      if (mountedRef.current) setTakingPhoto(false);
     }
   }
 
   async function choosePhotoFile(file: File): Promise<void> {
+    if (mediaPickerInFlightRef.current) return;
+    mediaPickerInFlightRef.current = true;
     setTakingPhoto(true);
     setError(null);
+    setPhotoNotice(null);
     try {
-      addPhoto(await compressImageBlob(file));
+      const photo = await compressImageBlob(file);
+      if (mountedRef.current) addPhoto(photo);
     } catch {
-      setError('Không đọc được ảnh. Hãy chọn một ảnh khác.');
+      if (mountedRef.current) setError('Không đọc được ảnh. Hãy chọn một ảnh khác.');
     } finally {
-      setTakingPhoto(false);
+      mediaPickerInFlightRef.current = false;
+      if (mountedRef.current) setTakingPhoto(false);
     }
   }
 
@@ -1183,7 +1203,7 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
         {pickupVolumeDeviation?.level === 'HIGH' ? <div className="pickup-volume-deviation pickup-volume-deviation-high"><strong>Chênh lệch rất cao so với AI dự báo.</strong><span>AI dự báo {formatPickupVolumeLiters(pickupVolumeDeviation.predicted_liters)}</span><span>Thực tế nhập {formatPickupVolumeLiters(pickupVolumeDeviation.actual_liters)}</span><span>Chênh lệch {formatSignedDeviationLiters(pickupVolumeDeviation.deviation_liters)} ({formatDeviationPercent(pickupVolumeDeviation.deviation_pct)})</span><label className="pickup-volume-ack"><input type="checkbox" checked={highDeviationAcknowledgement === highDeviationKey} onChange={(event) => setHighDeviationAcknowledgement(event.target.checked ? highDeviationKey : null)} disabled={saving} /><span>Tôi đã kiểm tra lại số lít và xác nhận tiếp tục.</span></label></div> : null}
       </section>
       <section className="quality-card"><p className="section-label">Chất lượng dầu</p><div className="quality-options"><button className={quality === Quality.PASS ? 'quality-option selected' : 'quality-option'} onClick={() => setQuality(Quality.PASS)} disabled={saving}>✓ Đạt</button><button className={quality === Quality.FLAG ? 'quality-option selected flag-selected' : 'quality-option'} onClick={() => setQuality(Quality.FLAG)} disabled={saving}>⚠ Cần kiểm tra</button></div></section>
-      {quality === Quality.FLAG || gradeRequiresPhoto ? <GradePhotoPicker photos={photos} busy={takingPhoto} disabled={saving} onTakePhoto={() => { void takePhoto(); }} onChooseAlbum={() => { void chooseAlbumPhoto(); }} onChooseFile={(file) => { void choosePhotoFile(file); }} onRemovePhoto={removePhoto} /> : null}
+      {quality === Quality.FLAG || gradeRequiresPhoto ? <GradePhotoPicker photos={photos} busy={takingPhoto} disabled={saving} message={photoNotice} onTakePhoto={() => { void takePhoto(); }} onChooseAlbum={() => { void chooseAlbumPhoto(); }} onChooseFile={(file) => { void choosePhotoFile(file); }} onRemovePhoto={removePhoto} /> : null}
       {error ? <div className="error-panel">{error}</div> : null}
       {submitBlockReason ? <p className="error-text submit-block-reason">{submitBlockReason}</p> : null}
       <button className="submit-collection-button" onClick={() => { void submit(); }} disabled={saving || Boolean(submitBlockReason)}>{saving ? 'Đang lưu trên máy…' : 'Xác nhận thu gom'}</button>

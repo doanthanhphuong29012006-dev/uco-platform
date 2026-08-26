@@ -114,6 +114,40 @@ export interface ZaloMediaSdk {
   }): Promise<{ filePaths: string[] }>;
 }
 
+export class MediaPickerCancelledError extends Error {
+  constructor() {
+    super('Bạn chưa chọn ảnh');
+    this.name = 'MediaPickerCancelledError';
+  }
+}
+
+export function isMediaPickerCancelled(error: unknown): boolean {
+  if (error instanceof MediaPickerCancelledError) return true;
+  if (!error || typeof error !== 'object') return false;
+  const code = Number((error as { code?: unknown }).code);
+  if ([-2003, -606, -101].includes(code)) return true;
+  const message = String((error as { message?: unknown }).message ?? '').toLowerCase();
+  return /user\s+(cancel|canceled|cancelled)|\b(cancel|canceled|cancelled)\b/.test(message);
+}
+
+const MEDIA_PICKER_WATCHDOG_MS = 90_000;
+
+function settleMediaPicker<T>(operation: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new MediaPickerCancelledError()), MEDIA_PICKER_WATCHDOG_MS);
+    operation.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 export function isZaloPermissionDenied(error: unknown): boolean {
   if (!error || typeof error !== 'object' || !('code' in error)) {
     return false;
@@ -213,14 +247,14 @@ export class RealZaloClient implements IZaloClient {
 
   async chooseImage(source: ImageSource = 'camera'): Promise<PhotoAsset> {
     const { chooseImage } = await this.loadMediaSdk();
-    const result = await chooseImage({
+    const result = await settleMediaPicker(Promise.resolve().then(() => chooseImage({
       count: 1,
       sourceType: [source],
       ...(source === 'camera' ? { cameraType: 'back' as const } : {}),
-    });
-    const filePath = result.filePaths[0];
+    })));
+    const filePath = result.filePaths?.[0];
     if (!filePath) {
-      throw new Error('Chưa chọn ảnh');
+      throw new MediaPickerCancelledError();
     }
     return this.resolveImage(filePath);
   }
