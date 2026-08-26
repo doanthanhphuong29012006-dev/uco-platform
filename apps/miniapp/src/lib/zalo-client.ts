@@ -285,8 +285,12 @@ export function parseContainerCodeFromQr(content: string): string {
 export function isValidGeoPoint(destination: { lat?: unknown; lng?: unknown }): boolean {
   return typeof destination.lat === 'number'
     && Number.isFinite(destination.lat)
+    && destination.lat >= -90
+    && destination.lat <= 90
     && typeof destination.lng === 'number'
-    && Number.isFinite(destination.lng);
+    && Number.isFinite(destination.lng)
+    && destination.lng >= -180
+    && destination.lng <= 180;
 }
 
 export function buildGoogleMapsDirectionsUrl(destination: GeoPoint): string {

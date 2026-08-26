@@ -117,6 +117,29 @@ test('GPS failure without a ward fallback remains a location error', async () =>
   assert.match(resolved.error ?? '', /không có tọa độ trung tâm phường/i);
 });
 
+test('station lookup falls back instead of hanging forever on Zalo location', async () => {
+  const fallback = { lat: 21.0333, lng: 105.85 };
+  const resolved = await resolveStationSearchLocation(
+    () => new Promise(() => undefined),
+    fallback,
+    10,
+  );
+
+  assert.deepEqual(resolved, { location: fallback, usedFallback: true, error: null });
+});
+
+test('station lookup rejects invalid live and fallback coordinates', async () => {
+  const resolved = await resolveStationSearchLocation(
+    async () => ({ lat: Number.NaN, lng: 105.85 }),
+    { lat: 95, lng: 200 },
+    10,
+  );
+
+  assert.equal(resolved.location, null);
+  assert.equal(resolved.usedFallback, false);
+  assert.match(resolved.error ?? '', /không có tọa độ trung tâm phường/i);
+});
+
 test('pending station delivery survives reload and page navigation', async () => {
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: new TestStorage() });
   const { pendingStationDeliveryStorage } = await import('../src/lib/storage');

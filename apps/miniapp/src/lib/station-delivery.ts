@@ -1,5 +1,6 @@
 import type { GeoPoint, StationRecommendation } from '@eco-oil/shared-types';
 import type { SyncSummary } from './outbox-sync';
+import { isValidGeoPoint } from './zalo-client';
 
 export interface StationDeliverySubmitState {
   invalid: boolean;
@@ -45,22 +46,33 @@ export interface StationSearchLocationResult {
   error: string | null;
 }
 
+export const STATION_LOCATION_TIMEOUT_MS = 2_500;
+
 export async function resolveStationSearchLocation(
   getLocation: () => Promise<GeoPoint | null>,
   fallback: GeoPoint | null,
+  timeoutMs = STATION_LOCATION_TIMEOUT_MS,
 ): Promise<StationSearchLocationResult> {
-  try {
-    const location = await getLocation();
-    if (location) {
-      const usedFallback = Boolean(fallback && location.lat === fallback.lat && location.lng === fallback.lng);
-      return { location: { ...location }, usedFallback, error: null };
-    }
-  } catch {
-    // A valid ward center remains usable when GPS or the Zalo permission flow fails.
+  const location = await new Promise<GeoPoint | null>((resolve) => {
+    let settled = false;
+    const finish = (value: GeoPoint | null): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value && isValidGeoPoint(value) ? value : null);
+    };
+    const timer = globalThis.setTimeout(() => finish(null), timeoutMs);
+    void getLocation().then(finish, () => finish(null));
+  });
+
+  if (location) {
+    const usedFallback = Boolean(fallback && location.lat === fallback.lat && location.lng === fallback.lng);
+    return { location: { ...location }, usedFallback, error: null };
   }
 
-  return fallback
-    ? { location: { ...fallback }, usedFallback: true, error: null }
+  const safeFallback = fallback && isValidGeoPoint(fallback) ? fallback : null;
+  return safeFallback
+    ? { location: { ...safeFallback }, usedFallback: true, error: null }
     : { location: null, usedFallback: false, error: 'Không lấy được vị trí và ca hiện tại không có tọa độ trung tâm phường.' };
 }
 
