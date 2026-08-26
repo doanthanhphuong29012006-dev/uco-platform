@@ -13,7 +13,7 @@ import { startOutboxSyncWorker, syncOutbox } from '../lib/outbox-sync';
 import { outboxErrorMessage } from '../lib/outbox-errors';
 import { submitContainerCode } from '../lib/container-code';
 import { pendingStationDeliveryStorage } from '../lib/storage';
-import { isValidGeoPoint, zaloClient } from '../lib/zalo-client';
+import { isValidGeoPoint, isZaloPermissionDenied, zaloClient } from '../lib/zalo-client';
 import type { PhotoAsset } from '../lib/zalo-client';
 import { compressImageBlob } from '../lib/zalo-client';
 import { StatusView } from '../components/StatusView';
@@ -943,8 +943,10 @@ function CollectorQrScreen({ stop, onBack, onContinue }: { stop: RouteStop; onBa
           return;
         }
         await lookup(scannedCode);
-      } catch {
-        setError('Không quét được mã. Bạn có thể nhập tay mã can.');
+      } catch (scanError) {
+        setError(isZaloPermissionDenied(scanError)
+          ? 'Zalo chưa có quyền dùng camera để quét QR. Hãy bật quyền Camera trong Zalo hoặc nhập tay mã can.'
+          : 'Không quét được mã. Bạn có thể nhập tay mã can.');
       } finally {
         setBusy(false);
       }
@@ -1046,9 +1048,25 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
     setTakingPhoto(true);
     setError(null);
     try {
-      addPhoto(await zaloClient.chooseImage());
-    } catch {
-      setError('Không mở được camera. Hãy kiểm tra quyền camera, hoặc bấm “Chọn ảnh có sẵn”.');
+      addPhoto(await zaloClient.chooseImage('camera'));
+    } catch (photoError) {
+      setError(isZaloPermissionDenied(photoError)
+        ? 'Zalo chưa có quyền Camera. Hãy bật quyền Camera hoặc dùng ảnh từ thư viện/file dự phòng.'
+        : 'Không mở được camera. Hãy dùng ảnh từ thư viện hoặc file dự phòng.');
+    } finally {
+      setTakingPhoto(false);
+    }
+  }
+
+  async function chooseAlbumPhoto(): Promise<void> {
+    setTakingPhoto(true);
+    setError(null);
+    try {
+      addPhoto(await zaloClient.chooseImage('album'));
+    } catch (photoError) {
+      setError(isZaloPermissionDenied(photoError)
+        ? 'Zalo chưa được phép chọn ảnh. Hãy kiểm tra quyền hoặc dùng file dự phòng.'
+        : 'Không chọn được ảnh từ thư viện Zalo. Hãy dùng file dự phòng.');
     } finally {
       setTakingPhoto(false);
     }
@@ -1165,7 +1183,7 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
         {pickupVolumeDeviation?.level === 'HIGH' ? <div className="pickup-volume-deviation pickup-volume-deviation-high"><strong>Chênh lệch rất cao so với AI dự báo.</strong><span>AI dự báo {formatPickupVolumeLiters(pickupVolumeDeviation.predicted_liters)}</span><span>Thực tế nhập {formatPickupVolumeLiters(pickupVolumeDeviation.actual_liters)}</span><span>Chênh lệch {formatSignedDeviationLiters(pickupVolumeDeviation.deviation_liters)} ({formatDeviationPercent(pickupVolumeDeviation.deviation_pct)})</span><label className="pickup-volume-ack"><input type="checkbox" checked={highDeviationAcknowledgement === highDeviationKey} onChange={(event) => setHighDeviationAcknowledgement(event.target.checked ? highDeviationKey : null)} disabled={saving} /><span>Tôi đã kiểm tra lại số lít và xác nhận tiếp tục.</span></label></div> : null}
       </section>
       <section className="quality-card"><p className="section-label">Chất lượng dầu</p><div className="quality-options"><button className={quality === Quality.PASS ? 'quality-option selected' : 'quality-option'} onClick={() => setQuality(Quality.PASS)} disabled={saving}>✓ Đạt</button><button className={quality === Quality.FLAG ? 'quality-option selected flag-selected' : 'quality-option'} onClick={() => setQuality(Quality.FLAG)} disabled={saving}>⚠ Cần kiểm tra</button></div></section>
-      {quality === Quality.FLAG || gradeRequiresPhoto ? <GradePhotoPicker photos={photos} busy={takingPhoto} disabled={saving} onTakePhoto={() => { void takePhoto(); }} onChooseFile={(file) => { void choosePhotoFile(file); }} onRemovePhoto={removePhoto} /> : null}
+      {quality === Quality.FLAG || gradeRequiresPhoto ? <GradePhotoPicker photos={photos} busy={takingPhoto} disabled={saving} onTakePhoto={() => { void takePhoto(); }} onChooseAlbum={() => { void chooseAlbumPhoto(); }} onChooseFile={(file) => { void choosePhotoFile(file); }} onRemovePhoto={removePhoto} /> : null}
       {error ? <div className="error-panel">{error}</div> : null}
       {submitBlockReason ? <p className="error-text submit-block-reason">{submitBlockReason}</p> : null}
       <button className="submit-collection-button" onClick={() => { void submit(); }} disabled={saving || Boolean(submitBlockReason)}>{saving ? 'Đang lưu trên máy…' : 'Xác nhận thu gom'}</button>

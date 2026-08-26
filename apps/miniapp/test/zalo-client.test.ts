@@ -46,7 +46,7 @@ test('browser outside Zalo uses the mock client for the full SDK surface', async
   assert.equal(await client.getAccessToken(), 'mock-access-token:zalo_collector_01');
   assert.equal(await client.getLocation(), null);
   assert.equal(await client.scanQRCode(), '');
-  await assert.rejects(() => client.chooseImage(), /Camera is unavailable in mock mode/);
+  await assert.rejects(() => client.chooseImage(), /media picker is unavailable in mock mode/);
   await client.openPhone('0900000001');
   await client.openDirections({ lat: 21.0333, lng: 105.85 });
   assert.equal(navigated, false);
@@ -137,4 +137,70 @@ test('real client rejects an empty SDK location token without browser geolocatio
   );
 
   await assert.rejects(() => client.getLocation({ lat: 21.0333, lng: 105.85 }), /token vị trí Zalo/);
+});
+
+test('real client normalizes raw, JSON and URL container QR payloads', async () => {
+  const payloads = [
+    '  ECO-UCO-Q3P7-001  ',
+    '{"container_code":"ECO-UCO-Q3P7-002"}',
+    'https://eco-oil.example/containers/ECO-UCO-Q3P7-003',
+  ];
+  const { RealZaloClient } = await import('../src/lib/zalo-client');
+  const client = new RealZaloClient(
+    undefined,
+    undefined,
+    undefined,
+    async () => ({
+      scanQRCode: async () => ({ content: payloads.shift() ?? '' }),
+      chooseImage: async () => ({ filePaths: [] }),
+    }),
+  );
+
+  assert.equal(await client.scanQRCode(), 'ECO-UCO-Q3P7-001');
+  assert.equal(await client.scanQRCode(), 'ECO-UCO-Q3P7-002');
+  assert.equal(await client.scanQRCode(), 'ECO-UCO-Q3P7-003');
+});
+
+test('real client uses distinct native camera and album sources before compressing', async () => {
+  const calls: Array<{
+    count: number;
+    sourceType: Array<'camera' | 'album'>;
+    cameraType?: 'back' | 'front';
+  }> = [];
+  const compressedPaths: string[] = [];
+  const { RealZaloClient } = await import('../src/lib/zalo-client');
+  const client = new RealZaloClient(
+    undefined,
+    undefined,
+    undefined,
+    async () => ({
+      scanQRCode: async () => ({ content: '' }),
+      chooseImage: async (args) => {
+        calls.push(args);
+        return { filePaths: [`zalo://${args.sourceType[0]}.jpg`] };
+      },
+    }),
+    async (filePath) => {
+      compressedPaths.push(filePath);
+      return { url: `data:${filePath}`, width: 1280, height: 720 };
+    },
+  );
+
+  await client.chooseImage('camera');
+  await client.chooseImage('album');
+
+  assert.deepEqual(calls, [
+    { count: 1, sourceType: ['camera'], cameraType: 'back' },
+    { count: 1, sourceType: ['album'] },
+  ]);
+  assert.deepEqual(compressedPaths, ['zalo://camera.jpg', 'zalo://album.jpg']);
+});
+
+test('permission helper recognizes only Zalo denial code -201', async () => {
+  const { isZaloPermissionDenied } = await import('../src/lib/zalo-client');
+
+  assert.equal(isZaloPermissionDenied({ code: -201 }), true);
+  assert.equal(isZaloPermissionDenied({ code: '-201' }), true);
+  assert.equal(isZaloPermissionDenied({ code: -1401 }), false);
+  assert.equal(isZaloPermissionDenied(new Error('camera failed')), false);
 });

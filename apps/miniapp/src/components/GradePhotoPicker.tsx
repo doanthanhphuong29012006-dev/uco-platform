@@ -11,11 +11,12 @@ interface GradePhotoPickerProps {
   busy: boolean;
   disabled: boolean;
   onTakePhoto: () => void;
+  onChooseAlbum?: () => void;
   onChooseFile: (file: File) => void;
   onRemovePhoto: (index: number) => void;
 }
 
-export function GradePhotoPicker({ photos, busy, disabled, onTakePhoto, onChooseFile, onRemovePhoto }: GradePhotoPickerProps) {
+export function GradePhotoPicker({ photos, busy, disabled, onTakePhoto, onChooseAlbum, onChooseFile, onRemovePhoto }: GradePhotoPickerProps) {
   return (
     <section className="photo-card grade-photo-card">
       <div>
@@ -26,8 +27,13 @@ export function GradePhotoPicker({ photos, busy, disabled, onTakePhoto, onChoose
         <button type="button" className="secondary-button" onClick={onTakePhoto} disabled={busy || disabled}>
           {busy ? 'Đang xử lý…' : 'Chụp ảnh'}
         </button>
+        {onChooseAlbum ? (
+          <button type="button" className="secondary-button" onClick={onChooseAlbum} disabled={busy || disabled}>
+            Chọn từ thư viện Zalo
+          </button>
+        ) : null}
         <label className="secondary-button file-picker-button">
-          Chọn ảnh có sẵn
+          Tải file dự phòng
           <input
             className="sr-only"
             type="file"

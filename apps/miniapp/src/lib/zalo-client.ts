@@ -6,6 +6,8 @@ export interface PhotoAsset {
   height: number;
 }
 
+export type ImageSource = 'camera' | 'album';
+
 export interface SeedAccount {
   zaloId: string;
   phone: string;
@@ -19,7 +21,7 @@ export interface IZaloClient {
   getAccessToken(): Promise<string>;
   getLocation(fallback?: GeoPoint | null): Promise<GeoPoint | null>;
   scanQRCode(): Promise<string>;
-  chooseImage(): Promise<PhotoAsset>;
+  chooseImage(source?: ImageSource): Promise<PhotoAsset>;
   openPhone(phoneNumber: string): Promise<void>;
   openDirections(destination: GeoPoint): Promise<void>;
   getStorage(key: string): string | null;
@@ -103,6 +105,51 @@ export interface ZaloLocationSdk {
   getLocation(): Promise<{ token?: string }>;
 }
 
+export interface ZaloMediaSdk {
+  scanQRCode(): Promise<{ content: string }>;
+  chooseImage(args: {
+    count: number;
+    sourceType: ImageSource[];
+    cameraType?: 'back' | 'front';
+  }): Promise<{ filePaths: string[] }>;
+}
+
+export function isZaloPermissionDenied(error: unknown): boolean {
+  if (!error || typeof error !== 'object' || !('code' in error)) {
+    return false;
+  }
+  return Number((error as { code?: unknown }).code) === -201;
+}
+
+export function parseContainerCodeFromQr(content: string): string {
+  const trimmed = content.trim();
+  if (!trimmed) return '';
+
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    for (const key of ['container_code', 'containerCode', 'qr_code', 'code']) {
+      const value = parsed[key];
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+  } catch {
+    // A regular QR string is expected to fail JSON parsing.
+  }
+
+  try {
+    const url = new URL(trimmed);
+    for (const key of ['container_code', 'containerCode', 'qr_code', 'code']) {
+      const value = url.searchParams.get(key)?.trim();
+      if (value) return value;
+    }
+    const lastSegment = decodeURIComponent(url.pathname.split('/').filter(Boolean).at(-1) ?? '').trim();
+    if (/^ECO[-_]/i.test(lastSegment)) return lastSegment;
+  } catch {
+    // A raw container code is expected to fail URL parsing.
+  }
+
+  return trimmed;
+}
+
 export function isValidGeoPoint(destination: { lat?: unknown; lng?: unknown }): boolean {
   return typeof destination.lat === 'number'
     && Number.isFinite(destination.lat)
@@ -130,6 +177,8 @@ export class RealZaloClient implements IZaloClient {
       const { api } = await import('./api');
       return api.resolveZaloLocation(accessToken, locationToken);
     },
+    private readonly loadMediaSdk: () => Promise<ZaloMediaSdk> = () => import('zmp-sdk'),
+    private readonly resolveImage: (filePath: string) => Promise<PhotoAsset> = compressImage,
   ) {}
 
   async login(): Promise<SeedAccount> {
@@ -157,19 +206,23 @@ export class RealZaloClient implements IZaloClient {
   }
 
   async scanQRCode(): Promise<string> {
-    const { scanQRCode } = await import('zmp-sdk');
+    const { scanQRCode } = await this.loadMediaSdk();
     const result = await scanQRCode();
-    return result.content.trim();
+    return parseContainerCodeFromQr(result.content);
   }
 
-  async chooseImage(): Promise<PhotoAsset> {
-    const { chooseImage } = await import('zmp-sdk');
-    const result = await chooseImage({ count: 1, sourceType: ['camera'], cameraType: 'back' });
+  async chooseImage(source: ImageSource = 'camera'): Promise<PhotoAsset> {
+    const { chooseImage } = await this.loadMediaSdk();
+    const result = await chooseImage({
+      count: 1,
+      sourceType: [source],
+      ...(source === 'camera' ? { cameraType: 'back' as const } : {}),
+    });
     const filePath = result.filePaths[0];
     if (!filePath) {
       throw new Error('Chưa chọn ảnh');
     }
-    return compressImage(filePath);
+    return this.resolveImage(filePath);
   }
 
   async openPhone(phoneNumber: string): Promise<void> {
@@ -244,7 +297,7 @@ class MockZaloClient implements IZaloClient {
   }
 
   async chooseImage(): Promise<PhotoAsset> {
-    throw new Error('Camera is unavailable in mock mode. Choose an image file.');
+    throw new Error('Zalo media picker is unavailable in mock mode. Choose an image file.');
   }
 
   async openPhone(phoneNumber: string): Promise<void> {
