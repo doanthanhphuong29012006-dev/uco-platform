@@ -43,6 +43,18 @@ enum OrderSource {
   PREDICTED
 }
 
+enum CollectionRouteStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum CollectionRouteStopStatus {
+  PENDING
+  COLLECTED
+  SKIPPED
+}
+
 enum Quality {
   PASS
   FLAG
@@ -206,6 +218,7 @@ model Collector {
   transactions CollectionTransaction[]
   deliveries   StationDelivery[]
   collectorWards CollectorWard[]
+  collectionRoutes CollectionRoute[]
 
   @@map("collectors")
 }
@@ -289,10 +302,58 @@ model CollectionOrder {
   container    Container?              @relation(fields: [containerId], references: [id])
   collector    Collector?              @relation(fields: [collectorId], references: [id])
   transactions CollectionTransaction[]
+  routeStops   CollectionRouteStop[]
 
   @@index([status, priority, requestedAt])
   @@index([merchantId, requestedAt])
   @@map("collection_orders")
+}
+
+model CollectionRoute {
+  id                      String                @id @default(uuid()) @db.Uuid
+  clientUuid              String                @unique @map("client_uuid") @db.Uuid
+  collectorId             String                @map("collector_id") @db.Uuid
+  status                  CollectionRouteStatus @default(ACTIVE)
+  originLat               Float?                @map("origin_lat")
+  originLng               Float?                @map("origin_lng")
+  vehicleCapacityLiters   Decimal               @map("vehicle_capacity_l") @db.Decimal(10, 2)
+  totalExpectedLiters     Decimal               @map("total_expected_liters") @db.Decimal(10, 2)
+  remainingCapacityLiters Decimal               @map("remaining_capacity_l") @db.Decimal(10, 2)
+  optimizationSnapshot    Json                  @map("optimization_snapshot")
+  capacityRiskSnapshot    Json                  @map("capacity_risk_snapshot")
+  startedAt               DateTime              @default(now()) @map("started_at") @db.Timestamptz(3)
+  completedAt             DateTime?             @map("completed_at") @db.Timestamptz(3)
+  cancelledAt             DateTime?             @map("cancelled_at") @db.Timestamptz(3)
+  createdAt               DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt               DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+  collector               Collector             @relation(fields: [collectorId], references: [id])
+  stops                   CollectionRouteStop[]
+
+  @@index([collectorId, status])
+  @@map("collection_routes")
+}
+
+model CollectionRouteStop {
+  id               String                    @id @default(uuid()) @db.Uuid
+  routeId          String                    @map("route_id") @db.Uuid
+  orderId          String                    @map("order_id") @db.Uuid
+  sequence         Int
+  expectedLiters   Decimal?                  @map("expected_liters") @db.Decimal(10, 2)
+  merchantSnapshot Json                      @map("merchant_snapshot")
+  aiSnapshot       Json                      @map("ai_snapshot")
+  status           CollectionRouteStopStatus @default(PENDING)
+  collectedAt      DateTime?                 @map("collected_at") @db.Timestamptz(3)
+  skippedAt        DateTime?                 @map("skipped_at") @db.Timestamptz(3)
+  skipReason       String?                   @map("skip_reason")
+  createdAt        DateTime                  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  route            CollectionRoute           @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  order            CollectionOrder           @relation(fields: [orderId], references: [id])
+
+  @@unique([routeId, orderId])
+  @@unique([routeId, sequence])
+  @@index([orderId, status])
+  @@map("collection_route_stops")
 }
 
 model CollectionTransaction {
