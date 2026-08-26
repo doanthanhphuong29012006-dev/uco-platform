@@ -12,6 +12,7 @@ import type {
   AdminAiAnomalyListQueryInput,
   AdminAiAnomalyPerformanceQueryInput,
   AdminAiAnomalyFeedbackInput,
+  AdminAiPerformanceImageGradingQueryInput,
   AdminStationListQueryInput,
   AdminCollectorCreateInput,
   AdminCollectorPatchInput,
@@ -166,12 +167,16 @@ export class AdminService {
           'mass_source', recent."mass_source",
           'grade', recent."grade",
           'suspected_adulteration', recent."suspected_adulteration",
+          'image_grade_suggestion', recent."image_grade_suggestion",
+          'image_grade_confidence', recent."image_grade_confidence",
+          'grade_decision_source', recent."grade_decision_source",
+          'image_grade_analysis', recent."image_grade_analysis",
           'quality', recent."quality",
           'collected_at', recent."collected_at"
         ) ORDER BY recent."collected_at" DESC), '[]'::json) AS recent_transactions
         FROM (
           SELECT ct."id", m."business_name" AS "merchant_name", u."name" AS "collector_name",
-            ct."actual_liters"::float8 AS "actual_liters", ct."actual_kg"::float8 AS "actual_kg", ct."mass_source"::text AS "mass_source", ct."grade"::text AS "grade", ct."suspected_adulteration", ct."quality"::text AS "quality", ct."collected_at"
+            ct."actual_liters"::float8 AS "actual_liters", ct."actual_kg"::float8 AS "actual_kg", ct."mass_source"::text AS "mass_source", ct."grade"::text AS "grade", ct."suspected_adulteration", ct."image_grade_suggestion"::text AS "image_grade_suggestion", ct."image_grade_confidence"::text AS "image_grade_confidence", ct."grade_decision_source"::text AS "grade_decision_source", ct."image_grade_analysis", ct."quality"::text AS "quality", ct."collected_at"
           FROM "collection_transactions" ct
           JOIN "merchants" m ON m."id" = ct."merchant_id"
           LEFT JOIN "collectors" co ON co."id" = ct."collector_id"
@@ -240,6 +245,10 @@ export class AdminService {
              'density_factor', ct."density_factor"::float8,
              'grade', ct."grade"::text,
             'suspected_adulteration', ct."suspected_adulteration",
+            'image_grade_suggestion', ct."image_grade_suggestion"::text,
+            'image_grade_confidence', ct."image_grade_confidence"::text,
+            'grade_decision_source', ct."grade_decision_source"::text,
+            'image_grade_analysis', ct."image_grade_analysis",
             'collected_at', ct."collected_at"
           ) ORDER BY ct."collected_at"), '[]'::json) AS transactions
         FROM "collection_transactions" ct
@@ -279,6 +288,10 @@ export class AdminService {
            'density_factor', ct."density_factor"::float8,
            'grade', ct."grade"::text,
           'suspected_adulteration', ct."suspected_adulteration",
+          'image_grade_suggestion', ct."image_grade_suggestion"::text,
+          'image_grade_confidence', ct."image_grade_confidence"::text,
+          'grade_decision_source', ct."grade_decision_source"::text,
+          'image_grade_analysis', ct."image_grade_analysis",
           'collected_at', ct."collected_at"
         ) ORDER BY ct."collected_at"), '[]'::json) AS items
         FROM "collection_transactions" ct
@@ -362,6 +375,76 @@ export class AdminService {
       window_start: windowStart.toISOString(),
       window_end: asOf.toISOString(),
       ...result,
+    };
+  }
+
+  async imageGradingPerformance(query: AdminAiPerformanceImageGradingQueryInput) {
+    const asOf = new Date();
+    const windowStart = new Date(asOf.getTime() - query.window_days * DAY_MS);
+    const rows = await this.prisma.collectionTransaction.findMany({
+      where: {
+        deletedAt: null,
+        collectedAt: { gte: windowStart, lte: asOf },
+        imageGradeSuggestion: { not: null },
+      },
+      orderBy: [{ collectedAt: 'desc' }, { id: 'desc' }],
+      select: {
+        id: true,
+        merchantId: true,
+        grade: true,
+        imageGradeSuggestion: true,
+        imageGradeConfidence: true,
+        imageGradeAnalysis: true,
+        gradeDecisionSource: true,
+        collectedAt: true,
+        merchant: { select: { businessName: true } },
+      },
+    });
+    const analyzedCount = rows.length;
+    const acceptedCount = rows.filter((row) => row.gradeDecisionSource === 'AI_SUGGESTION_ACCEPTED').length;
+    const overrideCount = rows.filter((row) => row.gradeDecisionSource === 'MANUAL_OVERRIDE_AI').length;
+    const agreementCount = rows.filter((row) => row.imageGradeSuggestion !== null && row.imageGradeSuggestion === row.grade).length;
+    const lowConfidenceCount = rows.filter((row) => row.imageGradeConfidence === 'LOW').length;
+    const retakeRecommendedCount = rows.filter((row) => {
+      const analysis = row.imageGradeAnalysis;
+      return typeof analysis === 'object' && analysis !== null && !Array.isArray(analysis) && (analysis as Record<string, unknown>).quality_status === 'RETAKE_RECOMMENDED';
+    }).length;
+    const reasonCodes = (value: Prisma.JsonValue): string[] => {
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) return [];
+      const raw = (value as Record<string, unknown>).reason_codes;
+      return Array.isArray(raw) ? raw.filter((item): item is string => typeof item === 'string').slice(0, 20) : [];
+    };
+    const reliability = analyzedCount < 20 ? 'INSUFFICIENT' : analyzedCount < 50 ? 'LOW' : analyzedCount < 100 ? 'MEDIUM' : 'HIGH';
+    return {
+      window_days: query.window_days as 30 | 90 | 180,
+      window_start: windowStart.toISOString(),
+      window_end: asOf.toISOString(),
+      analyzed_count: analyzedCount,
+      accepted_count: acceptedCount,
+      override_count: overrideCount,
+      low_confidence_count: lowConfidenceCount,
+      retake_recommended_count: retakeRecommendedCount,
+      agreement_count: agreementCount,
+      agreement_rate_percent: analyzedCount === 0 ? null : Number(((agreementCount / analyzedCount) * 100).toFixed(2)),
+      reliability,
+      breakdown_by_confidence: (['LOW', 'MEDIUM', 'HIGH'] as const).map((confidence) => ({ confidence, count: rows.filter((row) => row.imageGradeConfidence === confidence).length })),
+      breakdown_by_decision_source: (['MANUAL', 'AI_SUGGESTION_ACCEPTED', 'MANUAL_OVERRIDE_AI'] as const).map((source) => ({ source, count: rows.filter((row) => row.gradeDecisionSource === source).length })),
+      recent_disagreements: rows
+        .filter((row) => row.imageGradeSuggestion !== null && row.imageGradeSuggestion !== row.grade)
+        .slice(0, 30)
+        .map((row) => ({
+          transaction_id: row.id,
+          merchant_id: row.merchantId,
+          merchant_name: row.merchant.businessName,
+          collected_at: row.collectedAt.toISOString(),
+          suggested_grade: row.imageGradeSuggestion,
+          selected_grade: row.grade,
+          confidence: row.imageGradeConfidence,
+          reason_codes: reasonCodes(row.imageGradeAnalysis ?? null),
+        })),
+      explanation: analyzedCount < 20
+        ? 'Dữ liệu đánh giá còn ít; tỷ lệ đồng thuận chỉ mô tả quyết định của người thu gom, không phải độ chính xác của AI.'
+        : 'Tỷ lệ đồng thuận mô tả mức độ người thu gom giữ hoặc thay đổi gợi ý ảnh; đây không phải kết luận độ chính xác của AI.',
     };
   }
 

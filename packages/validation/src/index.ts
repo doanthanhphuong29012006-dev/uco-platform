@@ -379,6 +379,11 @@ export const adminAiAnomalyPerformanceQuerySchema = z.object({
 });
 export type AdminAiAnomalyPerformanceQueryInput = z.infer<typeof adminAiAnomalyPerformanceQuerySchema>;
 
+export const adminAiPerformanceImageGradingQuerySchema = z.object({
+  window_days: anomalyWindowSchema.optional().default(90),
+});
+export type AdminAiPerformanceImageGradingQueryInput = z.infer<typeof adminAiPerformanceImageGradingQuerySchema>;
+
 export const adminAiAnomalyFeedbackSchema = z.object({
   verdict: z.nativeEnum(AnomalyFeedbackVerdict),
   note: z.string().trim().max(2000).optional(),

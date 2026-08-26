@@ -10,6 +10,7 @@ import type {
   AdminMerchantSummary,
   AdminOverviewResponse,
   AdminPickupForecastPerformanceResponse,
+  AdminImageGradingPerformanceResponse,
   AdminReconciliationResponse,
   AdminStationSummary,
   AdminContainerSummary,
@@ -76,6 +77,8 @@ export const api = {
   overview: (from?: string, to?: string) => client.request<AdminOverviewResponse>(`/admin/overview${query({ from, to })}`),
   pickupForecastPerformance: (windowDays: 30 | 90 | 180 = 90) =>
     client.request<AdminPickupForecastPerformanceResponse>(`/admin/ai-performance/pickup-forecast${query({ window_days: windowDays })}`),
+  imageGradingPerformance: (windowDays: 30 | 90 | 180 = 90) =>
+    client.request<AdminImageGradingPerformanceResponse>(`/admin/ai-performance/image-grading${query({ window_days: windowDays })}`),
   aiAnomalies: (params: { window_days?: 30 | 90 | 180; risk_level?: string; verdict?: AnomalyFeedbackVerdict; page?: number; limit?: number } = {}) =>
     client.request<AdminAiAnomaliesResponse>(`/admin/ai-anomalies${query({ window_days: 90, page: 1, limit: 100, ...params })}`),
   updateAiAnomalyFeedback: (transactionId: string, body: { verdict: AnomalyFeedbackVerdict; note?: string }) =>

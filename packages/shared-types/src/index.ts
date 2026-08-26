@@ -453,6 +453,10 @@ export interface AdminRecentTransaction {
   suspected_adulteration: boolean;
   quality: Quality;
   collected_at: string;
+  image_grade_suggestion?: OilGrade | null;
+  image_grade_confidence?: ImageGradeConfidence | null;
+  grade_decision_source?: GradeDecisionSource | null;
+  image_grade_analysis?: OilImageAnalysisPayload | null;
 }
 
 export interface AdminStationSummary {
@@ -527,6 +531,10 @@ export interface AdminAiAnomalyItem {
   quality: Quality;
   grade: OilGrade | null;
   collected_at: string;
+  image_grade_suggestion?: OilGrade | null;
+  image_grade_confidence?: ImageGradeConfidence | null;
+  grade_decision_source?: GradeDecisionSource | null;
+  image_grade_analysis?: OilImageAnalysisPayload | null;
   risk_score: number;
   risk_level: AnomalyRiskLevel;
   explanation_summary: string;
@@ -566,6 +574,10 @@ export interface AdminReconciliationTransaction {
   suspected_adulteration: boolean;
   collected_at: string;
   anomaly?: AdminTransactionAnomaly;
+  image_grade_suggestion?: OilGrade | null;
+  image_grade_confidence?: ImageGradeConfidence | null;
+  grade_decision_source?: GradeDecisionSource | null;
+  image_grade_analysis?: OilImageAnalysisPayload | null;
 }
 
 export interface AdminReconciliationCollector {
@@ -640,6 +652,33 @@ export interface AdminPickupForecastPerformanceResponse {
     summary: string;
     data_leakage_prevention: string;
   };
+}
+
+export interface AdminImageGradingPerformanceResponse {
+  window_days: 30 | 90 | 180;
+  window_start: string;
+  window_end: string;
+  analyzed_count: number;
+  accepted_count: number;
+  override_count: number;
+  low_confidence_count: number;
+  retake_recommended_count: number;
+  agreement_count: number;
+  agreement_rate_percent: number | null;
+  reliability: 'INSUFFICIENT' | 'LOW' | 'MEDIUM' | 'HIGH';
+  breakdown_by_confidence: Array<{ confidence: 'LOW' | 'MEDIUM' | 'HIGH'; count: number }>;
+  breakdown_by_decision_source: Array<{ source: 'MANUAL' | 'AI_SUGGESTION_ACCEPTED' | 'MANUAL_OVERRIDE_AI'; count: number }>;
+  recent_disagreements: Array<{
+    transaction_id: string;
+    merchant_id: string;
+    merchant_name: string;
+    collected_at: string;
+    suggested_grade: OilGrade | null;
+    selected_grade: OilGrade | null;
+    confidence: ImageGradeConfidence | null;
+    reason_codes: string[];
+  }>;
+  explanation: string;
 }
 
 export interface AdminCollectorSummary {

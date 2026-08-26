@@ -10,6 +10,7 @@ import {
   adminAiPerformancePickupForecastQuerySchema,
   adminAiAnomalyListQuerySchema,
   adminAiAnomalyPerformanceQuerySchema,
+  adminAiPerformanceImageGradingQuerySchema,
   adminAiAnomalyFeedbackSchema,
   adminStationListQuerySchema,
   adminCollectorCreateSchema,
@@ -50,6 +51,12 @@ export class AdminController {
   @Get('ai-performance/pickup-forecast')
   pickupForecastPerformance(@Query() query: Record<string, unknown>) {
     return this.service.pickupForecastPerformance(adminAiPerformancePickupForecastQuerySchema.parse(query));
+  }
+
+  @Roles(Role.ADMIN)
+  @Get('ai-performance/image-grading')
+  imageGradingPerformance(@Query() query: Record<string, unknown>) {
+    return this.service.imageGradingPerformance(adminAiPerformanceImageGradingQuerySchema.parse(query));
   }
 
   @Roles(Role.ADMIN)
