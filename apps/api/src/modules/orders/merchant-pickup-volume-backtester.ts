@@ -135,7 +135,10 @@ export function evaluatePickupVolumeBacktest(
     });
   }
 
-  const totalAbsoluteError = points.reduce((sum, point) => sum + point.absolute_error_liters, 0);
+  const totalAbsoluteError = points.reduce(
+    (sum, point) => sum + Math.abs(point.predicted_liters - point.actual_liters),
+    0,
+  );
   const totalActual = points.reduce((sum, point) => sum + point.actual_liters, 0);
   const bias = points.reduce((sum, point) => sum + (point.predicted_liters - point.actual_liters), 0);
   const wape = totalActual === 0 ? null : (totalAbsoluteError / totalActual) * 100;
@@ -146,8 +149,12 @@ export function evaluatePickupVolumeBacktest(
     wape_pct: wape === null ? null : round(wape),
     bias_liters: points.length === 0 ? null : round(bias / points.length),
     accuracy_pct: wape === null ? null : round(Math.max(0, 100 - wape)),
-    within_10_pct_count: points.filter((point) => isWithinRelativeError(point.absolute_error_liters, point.actual_liters, 0.1)).length,
-    within_20_pct_count: points.filter((point) => isWithinRelativeError(point.absolute_error_liters, point.actual_liters, 0.2)).length,
+    within_10_pct_count: points.filter(
+      (point) => isWithinRelativeError(Math.abs(point.predicted_liters - point.actual_liters), point.actual_liters, 0.1),
+    ).length,
+    within_20_pct_count: points.filter(
+      (point) => isWithinRelativeError(Math.abs(point.predicted_liters - point.actual_liters), point.actual_liters, 0.2),
+    ).length,
     reliability: reliabilityFor(points.length),
     points: [...points].sort((left, right) => right.collected_at.localeCompare(left.collected_at)).slice(0, 30),
     explanation: {
