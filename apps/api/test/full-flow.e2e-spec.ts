@@ -138,11 +138,19 @@ describe('Full merchant-to-station working shift (e2e)', () => {
     expect(stationChoice.body.length).toBeGreaterThan(0);
     const stationId = stationChoice.body[0].id as string;
 
-    await request(app.getHttpServer())
+    const deliveryClientUuid = randomUUID();
+    const delivery = await request(app.getHttpServer())
       .post('/api/v1/station-deliveries')
       .set('Authorization', `Bearer ${collectorToken}`)
-      .send({ client_uuid: randomUUID(), station_id: stationId, transaction_ids: transactionIds, actual_liters: totalLiters, delivered_at: collectedAt })
+      .send({ client_uuid: deliveryClientUuid, station_id: stationId, transaction_ids: transactionIds, actual_liters: totalLiters, delivered_at: collectedAt })
       .expect(201);
+    const replay = await request(app.getHttpServer())
+      .post('/api/v1/station-deliveries')
+      .set('Authorization', `Bearer ${collectorToken}`)
+      .send({ client_uuid: deliveryClientUuid, station_id: stationId, transaction_ids: transactionIds, actual_liters: totalLiters, delivered_at: collectedAt })
+      .expect(200)
+      .expect('X-Idempotent-Replay', 'true');
+    expect(replay.body.id).toBe(delivery.body.id);
 
     const adminToken = await login('zalo_admin_01', '0990000001');
     const today = new Date().toISOString().slice(0, 10);

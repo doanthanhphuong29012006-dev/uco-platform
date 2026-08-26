@@ -192,6 +192,31 @@ test('pending station delivery survives reload and page navigation', async () =>
   assert.equal(afterReload?.completed['order-01']?.stop.container_code, 'ECO-UCO-Q3P7-001');
 });
 
+test('pending station delivery receipt draft survives reload with the same idempotency key', async () => {
+  const { pendingStationDeliveryStorage } = await import('../src/lib/storage');
+  const collectorId = 'collector-pending-receipt';
+  const draft = {
+    clientUuid: '22222222-2222-4222-8222-222222222222',
+    station,
+    expectedLiters: 20,
+    expectedKg: 18.2,
+    routeId: 'route-02',
+  };
+
+  pendingStationDeliveryStorage.save(collectorId, {
+    completed: {},
+    totalStops: 2,
+    savedAt: new Date().toISOString(),
+    routeId: 'route-02',
+    pendingDelivery: draft,
+  });
+
+  const restored = pendingStationDeliveryStorage.load(collectorId);
+  assert.deepEqual(restored?.pendingDelivery, draft);
+  assert.equal(restored?.pendingDelivery?.clientUuid, draft.clientUuid);
+  assert.equal(restored?.pendingDelivery?.station.id, station.id);
+});
+
 test('successful station delivery clears only the persisted pending shift', async () => {
   const { pendingStationDeliveryStorage } = await import('../src/lib/storage');
   const collectorId = 'collector-success';

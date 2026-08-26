@@ -13,6 +13,7 @@ import { startOutboxSyncWorker, syncOutbox } from '../lib/outbox-sync';
 import { outboxErrorMessage } from '../lib/outbox-errors';
 import { submitContainerCode } from '../lib/container-code';
 import { pendingStationDeliveryStorage } from '../lib/storage';
+import type { PendingStationDeliveryDraft } from '../lib/storage';
 import { isValidGeoPoint, isZaloPermissionDenied, zaloClient } from '../lib/zalo-client';
 import type { PhotoAsset } from '../lib/zalo-client';
 import { compressImageBlob } from '../lib/zalo-client';
@@ -691,6 +692,7 @@ export function CollectorFlow() {
   const [location, setLocation] = useState<GeoPoint | null>(null);
   const [locationDenied, setLocationDenied] = useState(false);
   const [completed, setCompleted] = useState<Record<string, CompletedStop>>(restoredShift?.completed ?? {});
+  const [pendingDelivery, setPendingDelivery] = useState<PendingStationDeliveryDraft | null>(restoredShift?.pendingDelivery ?? null);
   const [initialStopCount, setInitialStopCount] = useState<number | null>(restoredShift?.totalStops ?? null);
   const [routeClientUuid] = useState(() => restoredShift?.routeClientUuid ?? crypto.randomUUID());
   const [shiftStarted, setShiftStarted] = useState(() => Boolean(restoredShift?.activeRoute?.persisted));
@@ -744,6 +746,7 @@ export function CollectorFlow() {
     const loadedRouteId = route.data?.route.route_id;
     if (!loadedRouteId || !restoredRouteId || loadedRouteId === restoredRouteId) return;
     setCompleted({});
+    setPendingDelivery(null);
     setInitialStopCount(route.data?.route.stops.length ?? 0);
     setShiftStarted(Boolean(route.data?.route.persisted));
     setScreen({ name: 'route' });
@@ -792,6 +795,7 @@ export function CollectorFlow() {
     });
     if (!delivered) return;
     if (collectorStorageId) pendingStationDeliveryStorage.clear(collectorStorageId);
+    setPendingDelivery(null);
     if (screen.name !== 'station-delivery') {
       setCompleted({});
       setInitialStopCount(route.data?.route.stops.length ?? 0);
@@ -824,8 +828,9 @@ export function CollectorFlow() {
       activeRoute,
       routeId: activeRoute.route_id ?? undefined,
       routeClientUuid: activeRoute.client_uuid ?? routeClientUuid,
+      pendingDelivery: pendingDelivery ?? undefined,
     });
-  }, [collectorStorageId, completed, initialStopCount, route.data?.route, routeClientUuid]);
+  }, [collectorStorageId, completed, initialStopCount, pendingDelivery, route.data?.route, routeClientUuid]);
 
   async function startShift(): Promise<void> {
     if (!route.data || prefetching) {
@@ -851,6 +856,7 @@ export function CollectorFlow() {
           activeRoute: startedRoute,
           routeId: startedRoute.route_id ?? undefined,
           routeClientUuid: startedRoute.client_uuid ?? routeClientUuid,
+          pendingDelivery: pendingDelivery ?? undefined,
         });
       }
       setShiftStarted(true);
@@ -891,6 +897,7 @@ export function CollectorFlow() {
         activeRoute: route.data?.route.persisted ? route.data.route : undefined,
         routeId: route.data?.route.route_id ?? restoredRouteId,
         routeClientUuid: route.data?.route.client_uuid ?? routeClientUuid,
+        pendingDelivery: pendingDelivery ?? undefined,
       });
     }
     setScreen({ name: 'route' });
@@ -899,6 +906,7 @@ export function CollectorFlow() {
 
   function clearPersistedShift(): void {
     if (collectorStorageId) pendingStationDeliveryStorage.clear(collectorStorageId);
+    setPendingDelivery(null);
   }
 
   async function finishShift(): Promise<void> {
@@ -940,7 +948,7 @@ export function CollectorFlow() {
   } else if (screen.name === 'summary') {
     content = <CollectorSummaryScreen route={route.data?.route} completed={routeProgress.completed} completedCount={routeProgress.completedOrderIds.length} totalStops={initialStopCount ?? route.data?.route.stops.length ?? 0} onBack={() => setScreen({ name: 'route' })} onOpenDelivery={() => setScreen({ name: 'station-delivery' })} />;
   } else if (screen.name === 'station-delivery') {
-    content = <StationDeliveryFlow completed={routeProgress.completed} onBack={() => setScreen({ name: 'summary' })} onDeliverySynced={clearPersistedShift} onFinish={finishShift} />;
+    content = <StationDeliveryFlow completed={routeProgress.completed} pendingDelivery={pendingDelivery} routeId={route.data?.route.route_id ?? restoredRouteId} onPendingDelivery={(draft) => setPendingDelivery(draft)} onBack={() => setScreen({ name: 'summary' })} onDeliverySynced={() => { setPendingDelivery(null); clearPersistedShift(); }} onFinish={finishShift} />;
   } else if (route.isPending && !route.data) {
     content = <StatusView title="Đang tải tuyến hôm nay…" />;
   } else if (route.isError && !route.data) {

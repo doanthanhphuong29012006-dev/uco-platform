@@ -43,6 +43,10 @@ export class StationDeliveriesService {
       if (!collector || collector.status === EntityStatus.INACTIVE) {
         throw new NotFoundException('Collector profile not found');
       }
+      const existingDelivery = await this.loadByClientUuid(tx, input.client_uuid, collector.id);
+      if (existingDelivery) {
+        return { row: existingDelivery, replayed: true };
+      }
 
       const stationRows = await tx.$queryRaw<Array<{ id: string; capacity_l: number; current_volume_l: number }>>`
         SELECT "id", "capacity_l"::float8 AS "capacity_l", "current_volume_l"::float8 AS "current_volume_l"
@@ -64,8 +68,9 @@ export class StationDeliveriesService {
         collector_id: string;
         station_delivery_id: string | null;
         container_id: string;
+        synced_at: Date | null;
       }>>`
-        SELECT "id", "actual_liters"::float8 AS "actual_liters", "actual_kg"::float8 AS "actual_kg", "mass_source"::text AS "mass_source", "collector_id", "station_delivery_id", "container_id"
+        SELECT "id", "actual_liters"::float8 AS "actual_liters", "actual_kg"::float8 AS "actual_kg", "mass_source"::text AS "mass_source", "collector_id", "station_delivery_id", "container_id", "synced_at"
         FROM "collection_transactions"
         WHERE "id" IN (${Prisma.join(transactionIds)}) AND "deleted_at" IS NULL
         FOR UPDATE
@@ -75,6 +80,14 @@ export class StationDeliveriesService {
       }
       if (transactions.some((transaction) => transaction.collector_id !== collector.id)) {
         throw new ForbiddenException('Collection transaction ownership required');
+      }
+      const unsynced = transactions.filter((transaction) => transaction.synced_at === null);
+      if (unsynced.length > 0) {
+        throw new ConflictException({
+          code: 'TRANSACTION_NOT_SYNCED',
+          message: 'Giao dịch chưa được đồng bộ lên máy chủ',
+          details: { transaction_ids: unsynced.map((transaction) => transaction.id) },
+        });
       }
 
       const expectedLiters = transactions.reduce((sum, transaction) => sum + Number(transaction.actual_liters), 0);
@@ -132,9 +145,13 @@ export class StationDeliveriesService {
       `;
 
       if (inserted.length === 0) {
-        const replay = await this.loadByClientUuid(tx, input.client_uuid);
+        const replay = await this.loadByClientUuid(tx, input.client_uuid, collector.id);
         if (!replay) {
-          throw new ConflictException('Idempotent station delivery could not be loaded');
+          throw new ConflictException({
+            code: 'IDEMPOTENCY_KEY_CONFLICT',
+            message: 'Mã idempotency đã được sử dụng cho phiếu khác',
+            details: null,
+          });
         }
         return { row: replay, replayed: true };
       }
@@ -188,7 +205,7 @@ export class StationDeliveriesService {
     return { data: this.serialize(result.row), replayed: result.replayed };
   }
 
-  private async loadByClientUuid(tx: Prisma.TransactionClient, clientUuid: string) {
+  private async loadByClientUuid(tx: Prisma.TransactionClient, clientUuid: string, collectorId: string) {
     const rows = await tx.$queryRaw<DeliveryRow[]>`
       SELECT sd."id", sd."client_uuid", sd."station_id", sd."collector_id",
         sd."expected_liters"::float8 AS "expected_liters", sd."actual_liters"::float8 AS "actual_liters",
@@ -198,7 +215,7 @@ export class StationDeliveriesService {
         COALESCE(array_agg(ct."id") FILTER (WHERE ct."id" IS NOT NULL), ARRAY[]::uuid[]) AS "transaction_ids"
       FROM "station_deliveries" sd
       LEFT JOIN "collection_transactions" ct ON ct."station_delivery_id" = sd."id"
-      WHERE sd."client_uuid" = ${clientUuid}
+      WHERE sd."client_uuid" = ${clientUuid} AND sd."collector_id" = ${collectorId}::uuid
       GROUP BY sd."id"
       LIMIT 1
     `;

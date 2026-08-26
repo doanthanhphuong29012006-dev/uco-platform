@@ -14,6 +14,7 @@ import { pickZaloPhoto } from '../lib/media-picker';
 import { StatusView } from '../components/StatusView';
 import type { CompletedStop } from './CollectorFlow';
 import { canSubmitStationDelivery, loadStationRecommendations, resolveStationSearchLocation, retryStationDeliverySync } from '../lib/station-delivery';
+import type { PendingStationDeliveryDraft } from '../lib/storage';
 
 type DeliveryScreen = 'select' | 'review' | 'receipt' | 'closeout';
 
@@ -24,6 +25,9 @@ interface DeliveryCandidate extends CompletedStop {
 
 interface StationDeliveryFlowProps {
   completed: Record<string, CompletedStop>;
+  pendingDelivery: PendingStationDeliveryDraft | null;
+  routeId?: string;
+  onPendingDelivery: (draft: PendingStationDeliveryDraft) => void;
   onBack: () => void;
   onDeliverySynced: () => void;
   onFinish: () => void;
@@ -32,8 +36,8 @@ interface StationDeliveryFlowProps {
 const VARIANCE_THRESHOLD = 0.02;
 const PRICE_PER_LITER = Number(import.meta.env.VITE_ESTIMATED_PRICE_PER_LITER ?? 8000);
 
-export function StationDeliveryFlow({ completed, onBack, onDeliverySynced, onFinish }: StationDeliveryFlowProps) {
-  const [screen, setScreen] = useState<DeliveryScreen>('select');
+export function StationDeliveryFlow({ completed, pendingDelivery, routeId, onPendingDelivery, onBack, onDeliverySynced, onFinish }: StationDeliveryFlowProps) {
+  const [screen, setScreen] = useState<DeliveryScreen>(pendingDelivery ? 'receipt' : 'select');
   const [location, setLocation] = useState<GeoPoint | null>(null);
   const [locationDenied, setLocationDenied] = useState(false);
   const [locating, setLocating] = useState(true);
@@ -42,8 +46,8 @@ export function StationDeliveryFlow({ completed, onBack, onDeliverySynced, onFin
   const [recommendationStatus, setRecommendationStatus] = useState<'idle' | 'success' | 'empty' | 'error'>('idle');
   const [recommendationError, setRecommendationError] = useState<string | null>(null);
   const [loadingRecommendations, setLoadingRecommendations] = useState(false);
-  const [selectedStation, setSelectedStation] = useState<StationRecommendation | null>(null);
-  const [deliveryClientUuid, setDeliveryClientUuid] = useState<string | null>(null);
+  const [selectedStation, setSelectedStation] = useState<StationRecommendation | null>(pendingDelivery?.station ?? null);
+  const [deliveryClientUuid, setDeliveryClientUuid] = useState<string | null>(pendingDelivery?.clientUuid ?? null);
   const [retryingWaiting, setRetryingWaiting] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
   const rows = useOutboxRows();
@@ -123,7 +127,7 @@ export function StationDeliveryFlow({ completed, onBack, onDeliverySynced, onFin
   }
 
   if (screen === 'review' && selectedStation) {
-    return <StationDeliveryReview station={selectedStation} candidates={candidates} expectedLiters={expectedLiters} expectedKg={expectedKg} onBack={() => setScreen('select')} onSubmitted={(clientUuid) => { setDeliveryClientUuid(clientUuid); setScreen('receipt'); }} />;
+    return <StationDeliveryReview station={selectedStation} candidates={candidates} expectedLiters={expectedLiters} expectedKg={expectedKg} onBack={() => setScreen('select')} onSubmitted={(clientUuid) => { onPendingDelivery({ clientUuid, station: selectedStation, expectedLiters, expectedKg, routeId }); setDeliveryClientUuid(clientUuid); setScreen('receipt'); }} />;
   }
 
   if (screen === 'receipt' && selectedStation && deliveryClientUuid) {
@@ -167,7 +171,7 @@ function StationCard({ station, liters, onChoose }: { station: StationRecommenda
   const afterDelivery = station.current_volume_l + liters;
   const fill = station.capacity_l > 0 ? Math.min(100, Math.round((afterDelivery / station.capacity_l) * 100)) : 100;
   const enough = station.remaining_capacity_l >= liters;
-  return <article className={`station-card ${enough ? '' : 'station-card-unavailable'}`}><div className="station-card-top"><div><h2>{station.name}</h2><p>{station.address ?? 'Chưa có địa chỉ'}</p></div><strong>{formatDistance(station.distance_m)}</strong></div><div className="station-capacity-label"><span>Còn lại sau khi nộp</span><b>{formatLiters(Math.max(station.remaining_capacity_l - liters, 0))}</b></div><div className="progress-track station-progress"><span style={{ width: `${fill}%` }} /></div>{!enough ? <p className="station-unavailable-label">Không đủ sức chứa</p> : null}<div className="station-card-actions"><button className="map-action" onClick={() => zaloClient.openDirections({ lat: station.lat, lng: station.lng })}>↗ Chỉ đường</button><button className="primary-button" onClick={onChoose} disabled={!enough}>Chọn trạm này</button></div></article>;
+  return <article className={`station-card ${enough ? '' : 'station-card-unavailable'}`}><div className="station-card-top"><div><h2>{station.name}</h2><p>{station.address ?? 'Chưa có địa chỉ'}</p><small className="station-receiving-status">Đang nhận dầu</small></div><strong>{formatDistance(station.distance_m)}</strong></div><div className="station-capacity-label"><span>Còn lại sau khi nộp</span><b>{formatLiters(Math.max(station.remaining_capacity_l - liters, 0))}</b></div><div className="progress-track station-progress"><span style={{ width: `${fill}%` }} /></div>{!enough ? <p className="station-unavailable-label">Không đủ sức chứa</p> : null}<div className="station-card-actions"><button className="map-action" onClick={() => zaloClient.openDirections({ lat: station.lat, lng: station.lng })}>↗ Chỉ đường</button><button className="primary-button" onClick={onChoose} disabled={!enough}>Chọn trạm này</button></div></article>;
 }
 
 function StationDeliveryReview({ station, candidates, expectedLiters, expectedKg, onBack, onSubmitted }: { station: StationRecommendation; candidates: DeliveryCandidate[]; expectedLiters: number; expectedKg: number; onBack: () => void; onSubmitted: (clientUuid: string) => void }) {
@@ -299,13 +303,24 @@ function StationDeliveryReceipt({ station, clientUuid, expectedLiters, rows, onD
   const actual = response?.actual_liters ?? Number((row?.payload as StationDeliveryCreateRequest | undefined)?.actual_liters ?? 0);
   const flagged = response?.status === DeliveryStatus.FLAGGED;
   const syncNotified = useRef(false);
+  const [retrying, setRetrying] = useState(false);
   useEffect(() => {
     if (row?.status === 'synced' && !syncNotified.current) {
       syncNotified.current = true;
       onDeliverySynced();
     }
   }, [onDeliverySynced, row?.status]);
-  return <div className="page-content collector-content station-page receipt-page"><header className="collector-screen-heading"><p className="eyebrow">BIÊN NHẬN NỘP TRẠM</p><h1>{flagged ? 'Đã ghi nhận có chênh lệch' : 'Đã lưu phiếu nộp trạm'}</h1><p>{station.name}</p></header><section className="receipt-card"><div className={`receipt-status receipt-status-${response?.status ?? row?.status ?? 'pending'}`}>{flagged ? '⚠ FLAGGED — cần kiểm tra' : row?.status === 'synced' ? '✓ OK — server đã đối soát' : 'Đang chờ đồng bộ server'}</div><dl><div><dt>Mã phiếu</dt><dd>{response?.id ?? clientUuid}</dd></div><div><dt>Trạm</dt><dd>{station.name}</dd></div><div><dt>Tổng server đối soát</dt><dd>{formatLiters(response?.expected_liters ?? expectedLiters)}</dd></div><div><dt>Thực tế đổ</dt><dd>{formatLiters(actual)}</dd></div><div><dt>Chênh lệch</dt><dd>{response ? `${response.variance_l >= 0 ? '+' : ''}${response.variance_l.toFixed(1)} L (${(response.variance_pct * 100).toFixed(1)}%)` : 'Chờ server tính'}</dd></div><div><dt>Giờ ghi nhận</dt><dd>{formatTime(response?.created_at ?? row?.created_at ?? null)}</dd></div></dl></section>{row?.status === 'failed' ? <div className="error-panel">{deliveryErrorMessage(row.last_error ?? '')}</div> : null}<div className="receipt-actions"><button className="secondary-button" onClick={() => window.print()}>Lưu ảnh biên nhận</button><button className="primary-button" onClick={onCloseOut} disabled={row?.status !== 'synced'}>{row?.status === 'synced' ? 'Kết ca' : 'Đang chờ giao trạm thành công…'}</button></div><button className="back-button" onClick={onBack}>← Về tóm tắt ca</button></div>;
+  async function retryDelivery(): Promise<void> {
+    if (retrying) return;
+    setRetrying(true);
+    try {
+      await retryOutbox(clientUuid);
+      await syncOutbox();
+    } finally {
+      setRetrying(false);
+    }
+  }
+  return <div className="page-content collector-content station-page receipt-page"><header className="collector-screen-heading"><p className="eyebrow">BIÊN NHẬN NỘP TRẠM</p><h1>{flagged ? 'Đã ghi nhận có chênh lệch' : 'Đã lưu phiếu nộp trạm'}</h1><p>{station.name}</p></header><section className="receipt-card"><div className={`receipt-status receipt-status-${response?.status ?? row?.status ?? 'pending'}`}>{flagged ? '⚠ FLAGGED — cần kiểm tra' : row?.status === 'synced' ? '✓ OK — server đã đối soát' : 'Đang chờ đồng bộ server'}</div><dl><div><dt>Mã phiếu</dt><dd>{response?.id ?? clientUuid}</dd></div><div><dt>Trạm</dt><dd>{station.name}</dd></div><div><dt>Tổng server đối soát</dt><dd>{formatLiters(response?.expected_liters ?? expectedLiters)}</dd></div><div><dt>Thực tế đổ</dt><dd>{formatLiters(actual)}</dd></div><div><dt>Chênh lệch</dt><dd>{response ? `${response.variance_l >= 0 ? '+' : ''}${response.variance_l.toFixed(1)} L (${(response.variance_pct * 100).toFixed(1)}%)` : 'Chờ server tính'}</dd></div><div><dt>Giờ ghi nhận</dt><dd>{formatTime(response?.created_at ?? row?.created_at ?? null)}</dd></div></dl></section>{row?.status === 'failed' ? <><div className="error-panel">{deliveryErrorMessage(row.last_error ?? '')}</div><button className="secondary-button" onClick={() => { void retryDelivery(); }} disabled={retrying}>{retrying ? 'Đang thử lại…' : 'Thử lại nộp trạm'}</button></> : null}<div className="receipt-actions"><button className="secondary-button" onClick={() => window.print()}>Lưu ảnh biên nhận</button><button className="primary-button" onClick={onCloseOut} disabled={row?.status !== 'synced'}>{row?.status === 'synced' ? 'Kết ca' : 'Đang chờ giao trạm thành công…'}</button></div><button className="back-button" onClick={onBack}>← Về tóm tắt ca</button></div>;
 }
 
 function ShiftCloseout({ candidates, onFinish }: { candidates: DeliveryCandidate[]; onFinish: () => void }) {
@@ -331,8 +346,10 @@ function collectionKilograms(collection: CollectionCreateRequest): number {
 
 function deliveryErrorMessage(error: unknown): string {
   const value = typeof error === 'string' ? error : error instanceof Error ? error.message : 'Chưa xử lý được phiếu nộp trạm.';
+  if (/failed to fetch|network\s*error|network request failed|load failed/i.test(value)) return 'Đang ngoại tuyến hoặc không kết nối được máy chủ. Hãy bật mạng rồi thử lại.';
   if (value.includes('STATION_OVER_CAPACITY')) return 'Trạm vừa hết chỗ, hãy chọn trạm khác.';
   if (value.includes('TRANSACTION_ALREADY_DELIVERED')) return 'Một giao dịch đã được nộp trong phiếu khác.';
+  if (value.includes('TRANSACTION_NOT_SYNCED')) return 'Một giao dịch chưa đồng bộ lên máy chủ. Hãy thử lại sau.';
   return value;
 }
 

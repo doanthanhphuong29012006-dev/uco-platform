@@ -199,4 +199,34 @@ describe('Sync batch and station delivery reconciliation (e2e)', () => {
     expect(saved.gradePhotoUrl).toBe(photo);
     expect(saved.photos).toEqual([photo]);
   });
+
+  it('rejects a collection transaction that has not been synchronized before station delivery', async () => {
+    const merchant = await prisma.merchant.findFirstOrThrow({ where: { user: { zaloId: 'zalo_merchant_01' } } });
+    const unsyncedId = randomUUID();
+    await prisma.collectionTransaction.create({
+      data: {
+        id: unsyncedId,
+        clientUuid: randomUUID(),
+        containerId: containers[0].id,
+        merchantId: merchant.id,
+        collectorId,
+        actualLiters: 10,
+        actualKg: 9.1,
+        massSource: 'SCALE',
+        quality: 'PASS',
+        grade: 'A',
+      },
+    });
+
+    try {
+      const response = await request(app.getHttpServer())
+        .post('/api/v1/station-deliveries')
+        .set('Authorization', `Bearer ${collectorToken}`)
+        .send({ client_uuid: randomUUID(), station_id: stationId, transaction_ids: [unsyncedId], actual_liters: 10 })
+        .expect(409);
+      expect(response.body.code).toBe('TRANSACTION_NOT_SYNCED');
+    } finally {
+      await prisma.collectionTransaction.delete({ where: { id: unsyncedId } });
+    }
+  });
 });
