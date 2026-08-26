@@ -48,6 +48,34 @@ test('pickup priority maps every API level to the Vietnamese label and style', a
   }
 });
 
+test('route progress only restores completed stops for the matching route and reconciles pending outbox rows', async () => {
+  const { reconcileRouteProgress } = await loadPickupPriorityHelpers();
+  const route = {
+    route_id: 'route-a',
+    stops: [stop({ order_id: 'order-a', route_stop_status: 'PENDING' })],
+    total_expected_liters: 20,
+    remaining_capacity_l: 80,
+  } as never;
+  const storedCompleted = {
+    'order-a': { liters: 6, kilograms: 5.46, clientUuid: 'client-a', stop: stop({ order_id: 'order-a' }) },
+  } as never;
+  const restored = reconcileRouteProgress(route, storedCompleted, 'route-a', []);
+  assert.deepEqual(restored.completedOrderIds, ['order-a']);
+
+  const differentRoute = { ...route, route_id: 'route-b' } as never;
+  assert.deepEqual(reconcileRouteProgress(differentRoute, storedCompleted, 'route-a', []).completedOrderIds, []);
+
+  const pending = {
+    client_uuid: 'client-pending',
+    type: 'collection',
+    status: 'pending',
+    payload: { order_id: 'order-a', actual_liters: 7, actual_kg: 6.37 },
+  } as never;
+  const fromOutbox = reconcileRouteProgress(route, {}, 'route-a', [pending]);
+  assert.equal(fromOutbox.completedOrderIds.includes('order-a'), true);
+  assert.equal(fromOutbox.completed['order-a']?.liters, 7);
+});
+
 test('pickup priority translates reason codes and preserves unknown codes safely', async () => {
   const { getPickupPriorityDisplay, pickupPriorityReasonLabel } = await loadPickupPriorityHelpers();
   const display = getPickupPriorityDisplay(stop({

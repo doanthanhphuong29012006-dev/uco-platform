@@ -55,6 +55,18 @@ class MemoryOutboxStore implements OutboxStore {
       over_limit: false,
     };
   }
+
+  async recoverStaleSyncing(now: Date): Promise<number> {
+    let recovered = 0;
+    for (const record of this.records.values()) {
+      const startedAt = record.sync_started_at ?? record.updated_at ?? record.created_at;
+      if (record.status === 'syncing' && new Date(startedAt).getTime() <= now.getTime() - 60_000) {
+        this.records.set(record.client_uuid, { ...record, status: 'pending', sync_started_at: null, updated_at: now.toISOString() });
+        recovered += 1;
+      }
+    }
+    return recovered;
+  }
 }
 
 function record(clientUuid: string): OutboxRecord {
@@ -194,6 +206,31 @@ test('station delivery rows use the delivery endpoint and retain the server rece
   assert.equal(saved?.status, 'synced');
   assert.equal(saved?.server_id, 'delivery-1');
   assert.deepEqual(saved?.server_response, serverResponse);
+});
+
+test('stale syncing rows are recovered to pending before the worker sends them', async () => {
+  const source = { ...record(crypto.randomUUID()), status: 'syncing' as const, sync_started_at: '2026-08-26T07:00:00.000Z' };
+  const store = new MemoryOutboxStore([source]);
+  const result = await syncOutbox({
+    store,
+    now: () => new Date('2026-08-26T08:01:01.000Z'),
+    client: { syncBatch: async (items) => response(items.map((payload) => record(payload.client_uuid))) },
+  });
+  assert.equal(result.synced, 1);
+  assert.equal((await store.get(source.client_uuid))?.status, 'synced');
+});
+
+test('sync timeout releases active sync and returns a row to pending for retry', async () => {
+  const source = record(crypto.randomUUID());
+  const store = new MemoryOutboxStore([source]);
+  const result = await syncOutbox({
+    store,
+    syncTimeoutMs: 10,
+    client: { syncBatch: async () => new Promise<SyncBatchResponse>(() => undefined) },
+  });
+  assert.equal(result.failed, 1);
+  assert.equal((await store.get(source.client_uuid))?.status, 'pending');
+  assert.match((await store.get(source.client_uuid))?.last_error ?? '', /thời gian/);
 });
 
 test('payload-too-large sync errors are translated to a Vietnamese actionable message', () => {

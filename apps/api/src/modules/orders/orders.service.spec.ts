@@ -394,7 +394,14 @@ describe('OrdersService persisted collection route lifecycle', () => {
 
     expect(result.persisted).toBe(true);
     expect(result.route_id).toBe('route-01');
-    expect(result.stops[0]).toMatchObject({ order_id: 'order-01', priority: 10, merchant: { phone: '0900000001' } });
+    expect(result.stops[0]).toMatchObject({
+      order_id: 'order-01',
+      priority: 10,
+      merchant: { phone: '0900000001' },
+      route_stop_status: 'PENDING',
+      collected_at: null,
+      skipped_at: null,
+    });
     expect(db.findReadyOrdersForRoute).not.toHaveBeenCalled();
     expect(db.findRecentCollectionHistoryByMerchantIds).not.toHaveBeenCalled();
   });
