@@ -3,6 +3,7 @@ import test from 'node:test';
 import { resolve } from 'node:path';
 import { createServer } from 'vite';
 import { isValidGeoPoint } from '../src/lib/zalo-client';
+import { formatLiters } from '../src/lib/formatters';
 
 type PickupPriorityHelpers = typeof import('../src/pages/CollectorFlow');
 
@@ -31,6 +32,11 @@ function stop(overrides: Record<string, unknown> = {}) {
     ...overrides,
   } as never;
 }
+
+test('liters formatter renders the unit exactly once', () => {
+  assert.equal(formatLiters(15), '15 lít');
+  assert.equal((formatLiters(15).match(/lít/g) ?? []).length, 1);
+});
 
 test('pickup priority maps every API level to the Vietnamese label and style', async () => {
   const { getPickupPriorityDisplay, pickupPriorityLevelLabel } = await loadPickupPriorityHelpers();

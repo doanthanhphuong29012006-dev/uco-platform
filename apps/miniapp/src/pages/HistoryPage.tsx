@@ -48,7 +48,7 @@ export function HistoryPage() {
         {transactions.map((transaction) => (
           <article className="history-row" key={transaction.id}>
             <div className="history-date"><strong>{formatDate(transaction.collected_at)}</strong><span>{transaction.container_code}</span></div>
-            <div className="history-amount"><strong>{formatLiters(transaction.actual_liters)} lít</strong><span>{transaction.actual_kg === null ? `~${(transaction.actual_liters * DEFAULT_DENSITY_KG_PER_LITER).toFixed(1)} kg ước lượng` : `${transaction.actual_kg.toFixed(1)} kg đã cân`}</span><span className={`quality quality-${transaction.quality.toLowerCase()}`}>{transaction.quality === 'PASS' ? 'Đạt' : 'Cần kiểm tra'}</span></div>
+            <div className="history-amount"><strong>{formatLiters(transaction.actual_liters)}</strong><span>{transaction.actual_kg === null ? `~${(transaction.actual_liters * DEFAULT_DENSITY_KG_PER_LITER).toFixed(1)} kg ước lượng` : `${transaction.actual_kg.toFixed(1)} kg đã cân`}</span><span className={`quality quality-${transaction.quality.toLowerCase()}`}>{transaction.quality === 'PASS' ? 'Đạt' : 'Cần kiểm tra'}</span></div>
             <p className="history-collector">Người thu gom: {transaction.collector_name ?? 'Đang cập nhật'}</p>
           </article>
         ))}

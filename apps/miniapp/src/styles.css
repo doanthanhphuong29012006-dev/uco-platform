@@ -152,6 +152,9 @@ select, input { width: 100%; min-height: 48px; border: 1px solid #cfe0d7; border
 .route-refresh-notice-cache { color: #694f16; border-color: #ead49b; background: #fff8e8; }
 .route-refresh-notice-warning { color: #7d4d0c; border-color: #edca7c; background: #fff7dc; }
 .route-refresh-notice-error { color: #8d3030; border-color: #efbcbc; background: #fff0f0; }
+.receipt-saved-banner { display: grid; gap: 5px; margin: 0 0 14px; padding: 12px 14px; border: 1px solid #b9dfca; border-radius: 14px; color: var(--green-dark); background: #effaf2; line-height: 1.35; }
+.receipt-saved-banner span { overflow-wrap: anywhere; color: var(--muted); font-size: .82rem; }
+.receipt-saved-banner .text-button { justify-self: start; padding: 0; }
 .location-banner, .error-panel, .warning-panel { display: grid; gap: 4px; margin: 0 0 14px; padding: 14px 15px; border-radius: 14px; line-height: 1.4; font-size: .86rem; }
 .location-banner { color: #694f16; border: 1px solid #e7d69c; background: #fff8df; }
 .error-panel { color: #8d3030; border: 1px solid #efbcbc; background: #fff0f0; font-weight: 650; }
