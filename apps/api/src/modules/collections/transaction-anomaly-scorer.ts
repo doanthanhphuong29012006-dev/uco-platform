@@ -6,6 +6,17 @@ export type TransactionAnomalyReason =
   | 'COLLECTION_TIME_OUTLIER'
   | 'FREQUENCY_SPIKE';
 
+export type TransactionAnomalyReasonSeverity = 'LOW' | 'MEDIUM' | 'HIGH';
+
+export type TransactionAnomalyReasonDetail = {
+  code: TransactionAnomalyReason | 'INSUFFICIENT_HISTORY';
+  label: string;
+  description: string;
+  contribution: number | null;
+  evidence: Record<string, unknown>;
+  severity: TransactionAnomalyReasonSeverity;
+};
+
 export type TransactionAnomalyInput = {
   merchantId?: string | null;
   actualKg?: number | null;
@@ -30,6 +41,8 @@ export type TransactionAnomalyResult = {
   score: number;
   level: TransactionAnomalyLevel;
   reasons: TransactionAnomalyReason[];
+  reasonDetails: TransactionAnomalyReasonDetail[];
+  explanationSummary: string;
   explanation: {
     historyCount: number;
     minimumHistoryRequired: number;
@@ -168,6 +181,50 @@ function roundSignal(signal: TransactionAnomalySignal): TransactionAnomalySignal
   };
 }
 
+const REASON_PRESENTATION: Record<TransactionAnomalyReason, Omit<TransactionAnomalyReasonDetail, 'contribution' | 'evidence'>> = {
+  DENSITY_OUTLIER: {
+    code: 'DENSITY_OUTLIER',
+    label: 'Tỷ lệ kg/lít bất thường',
+    description: 'Mật độ khối lượng trên thể tích lệch khỏi lịch sử của quán.',
+    severity: 'HIGH',
+  },
+  MASS_OR_VOLUME_OUTLIER: {
+    code: 'MASS_OR_VOLUME_OUTLIER',
+    label: 'Khối lượng hoặc thể tích bất thường',
+    description: 'Khối lượng hoặc thể tích lệch mạnh khỏi lịch sử của quán.',
+    severity: 'HIGH',
+  },
+  COLLECTION_TIME_OUTLIER: {
+    code: 'COLLECTION_TIME_OUTLIER',
+    label: 'Thời gian thu gom khác thường',
+    description: 'Thời điểm thu gom khác đáng kể so với lịch sử.',
+    severity: 'MEDIUM',
+  },
+  FREQUENCY_SPIKE: {
+    code: 'FREQUENCY_SPIKE',
+    label: 'Tần suất giao dịch tăng đột biến',
+    description: 'Tần suất giao dịch gần đây cao hơn mức lịch sử.',
+    severity: 'MEDIUM',
+  },
+};
+
+function signalEvidence(signal: TransactionAnomalySignal): Record<string, unknown> {
+  return {
+    value: signal.value,
+    median: signal.median,
+    mad: signal.mad,
+    robust_z_score: signal.robustZScore,
+    sample_size: signal.sampleSize,
+    fallback: signal.fallback,
+  };
+}
+
+function reasonSeverity(signal: TransactionAnomalySignal, fallback: TransactionAnomalyReasonSeverity): TransactionAnomalyReasonSeverity {
+  if (signal.contribution >= 20) return 'HIGH';
+  if (signal.contribution >= 10) return 'MEDIUM';
+  return fallback;
+}
+
 export function scoreTransactionAnomaly(
   history: readonly TransactionAnomalyInput[],
   transaction: TransactionAnomalyInput,
@@ -235,11 +292,40 @@ export function scoreTransactionAnomaly(
   );
   const score = Math.round(Math.max(0, Math.min(onlyZeroMadEvidence ? 49 : 100, rawScore)));
   const level: TransactionAnomalyLevel = score >= 60 ? 'HIGH_RISK' : score >= 30 ? 'REVIEW' : 'NORMAL';
+  const signalByReason = new Map<TransactionAnomalyReason, TransactionAnomalySignal>(signalReasons);
+  const reasonDetails: TransactionAnomalyReasonDetail[] = reasons.map((reason) => {
+    const signal = signalByReason.get(reason)!;
+    const presentation = REASON_PRESENTATION[reason];
+    return {
+      ...presentation,
+      contribution: signal.contribution > 0 ? rounded(signal.contribution) : null,
+      evidence: signalEvidence(signal),
+      severity: reasonSeverity(signal, presentation.severity),
+    };
+  });
+  if (scopedHistory.length < MIN_HISTORY) {
+    reasonDetails.push({
+      code: 'INSUFFICIENT_HISTORY',
+      label: 'Chưa đủ lịch sử',
+      description: 'Chưa đủ dữ liệu lịch sử để kết luận tín hiệu bất thường.',
+      contribution: null,
+      evidence: { history_count: scopedHistory.length, minimum_history_required: MIN_HISTORY },
+      severity: 'LOW',
+    });
+  }
+  const explanationSummary =
+    reasonDetails.length === 0
+      ? 'Không phát hiện tín hiệu bất thường từ các dữ liệu hiện có.'
+      : reasonDetails.some((reason) => reason.code !== 'INSUFFICIENT_HISTORY')
+        ? `Phát hiện ${reasons.length} tín hiệu cần xem xét dựa trên dữ liệu lịch sử của quán.`
+        : 'Chưa đủ lịch sử để kết luận giao dịch bất thường.';
 
   return {
     score,
     level,
     reasons,
+    reasonDetails,
+    explanationSummary,
     explanation: {
       historyCount: scopedHistory.length,
       minimumHistoryRequired: MIN_HISTORY,

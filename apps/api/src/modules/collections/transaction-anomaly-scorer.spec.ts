@@ -23,6 +23,40 @@ const normalHistory = history([
 ]);
 
 describe('scoreTransactionAnomaly', () => {
+  it('keeps the score stable while returning structured reasons and evidence', () => {
+    const candidate = {
+      merchantId,
+      actualKg: 60,
+      actualLiters: 65.9,
+      collectedAt: targetDate,
+    };
+    const first = scoreTransactionAnomaly(normalHistory, candidate);
+    const second = scoreTransactionAnomaly(normalHistory, candidate);
+
+    expect(first.score).toBe(second.score);
+    expect(first.level).toBe(second.level);
+    expect(first.reasons).toEqual(second.reasons);
+    expect(first.reasonDetails).toEqual(second.reasonDetails);
+    expect(first.reasonDetails).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'MASS_OR_VOLUME_OUTLIER', evidence: expect.objectContaining({ value: 60 }) }),
+    ]));
+    expect(first.explanationSummary).toContain('tín hiệu');
+  });
+
+  it('explains insufficient history without inventing an anomaly contribution', () => {
+    const result = scoreTransactionAnomaly(normalHistory.slice(0, 2), {
+      merchantId,
+      actualKg: 18,
+      actualLiters: 20,
+      collectedAt: targetDate,
+    });
+
+    expect(result.reasonDetails).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'INSUFFICIENT_HISTORY', contribution: null, severity: 'LOW' }),
+    ]));
+    expect(result.explanationSummary).toContain('Chưa đủ lịch sử');
+  });
+
   it('classifies a transaction consistent with history as normal', () => {
     const result = scoreTransactionAnomaly(normalHistory, {
       merchantId,
