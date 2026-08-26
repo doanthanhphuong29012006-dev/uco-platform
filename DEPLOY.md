@@ -2,6 +2,8 @@
 
 Tài liệu này chuẩn bị cho bản demo chạy trên trình duyệt. Chưa bao gồm đóng gói Zalo Mini App.
 
+Quy trình bật relay GPS, cập nhật Render, mở QR Development và thứ tự trình diễn được ghi tại [`docs/DEMO_RUNBOOK.md`](docs/DEMO_RUNBOOK.md).
+
 ## Biến môi trường
 
 ### API
