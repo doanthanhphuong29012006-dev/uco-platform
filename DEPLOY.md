@@ -17,6 +17,10 @@ Quy trình bật relay GPS, cập nhật Render, mở QR Development và thứ t
 | `ADMIN_PASSWORD` | mật khẩu mạnh | Có cho Admin | Không đặt trong source hoặc frontend |
 | `DEMO_MODE` | `true` | Không | Khi `true`, dev accounts chỉ có MERCHANT/COLLECTOR; Admin dùng mật khẩu |
 | `ZALO_AUTH_MODE` | `real` hoặc `mock` | Không | `mock` chỉ dùng cho local/demo kiểm thử |
+| `ZALO_APP_ID` | ID ứng dụng Zalo | Có khi `ZALO_AUTH_MODE=real` | Chỉ đặt ở API/server |
+| `ZALO_APP_SECRET` | secret key của ứng dụng Zalo | Có khi `ZALO_AUTH_MODE=real` | Chỉ đặt ở API/server, không đưa vào frontend |
+| `ZALO_OAUTH_CALLBACK_URL` | `https://api.example.com/api/v1/auth/zalo/callback` | Có khi OAuth web | Phải khớp Callback URL trong Zalo for Developers |
+| `ZALO_OAUTH_SUCCESS_REDIRECT_URL` | `https://miniapp.example.com/` | Có khi OAuth web | URL frontend nhận phiên đã xác thực qua HttpOnly cookie |
 | `CORS_ORIGINS` | `https://demo.example.com,https://admin.demo.example.com` | Có khi gọi cross-origin | Danh sách origin phân cách bằng dấu phẩy |
 | `REDIS_URL` | `redis://host:6379` | Không | Bỏ trống được; các tính năng phụ thuộc Redis sẽ tắt, API vẫn chạy |
 | `GEO_MISMATCH_THRESHOLD_M` | `500` | Không | Ngưỡng cảnh báo GPS |
@@ -113,7 +117,13 @@ Ba điểm bắt buộc, mỗi điểm đều từng làm deploy chết:
   timeout `P1002` và server chết trong vòng lặp restart.
 
 Biến môi trường trên Render: `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`,
-`ADMIN_PASSWORD`, `CORS_ORIGINS`, `DEMO_MODE`, `NODE_ENV`, `ZALO_AUTH_MODE`.
+`ADMIN_PASSWORD`, `CORS_ORIGINS`, `DEMO_MODE`, `NODE_ENV`, `ZALO_AUTH_MODE`,
+`ZALO_APP_ID`, `ZALO_APP_SECRET`, `ZALO_OAUTH_CALLBACK_URL`,
+`ZALO_OAUTH_SUCCESS_REDIRECT_URL`.
+
+Khi dùng OAuth thật, đặt `ZALO_AUTH_MODE=real`, cấu hình App ID/App Secret ở
+Zalo for Developers, bật đúng quyền Social API cần dùng, và đăng ký chính xác
+Callback URL. Production không khởi động nếu vẫn để mock.
 
 ```
 CORS_ORIGINS=https://uco-platform-miniapp.vercel.app,https://uco-platform-admin.vercel.app

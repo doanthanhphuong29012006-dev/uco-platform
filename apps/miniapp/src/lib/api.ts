@@ -75,7 +75,8 @@ async function refreshAccessToken(): Promise<string | null> {
   const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refresh_token: refreshToken }),
+    body: refreshToken ? JSON.stringify({ refresh_token: refreshToken }) : undefined,
+    credentials: 'include',
   });
   const payload = await parseResponse(response);
   if (!response.ok) {
@@ -113,6 +114,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     ...init,
     headers: requestHeaders,
     body: body === undefined ? undefined : JSON.stringify(body),
+    credentials: 'include',
   });
   const payload = await parseResponse(response);
   if (response.status === 401 && retry) {
@@ -153,7 +155,7 @@ export const api = {
       method: 'POST',
       body: { access_token: accessToken, location_token: locationToken },
     }),
-  logout: (refreshToken: string) => request<{ success: true }>('/auth/logout', { method: 'POST', body: { refresh_token: refreshToken }, retry: false }),
+  logout: (refreshToken?: string) => request<{ success: true }>('/auth/logout', { method: 'POST', ...(refreshToken ? { body: { refresh_token: refreshToken } } : {}), retry: false }),
   me: () => request<AuthUser>('/auth/me'),
   dashboard: () => request<MerchantDashboardResponse>('/merchants/me/dashboard'),
   createReadyOrder: (expectedLiters?: number) =>

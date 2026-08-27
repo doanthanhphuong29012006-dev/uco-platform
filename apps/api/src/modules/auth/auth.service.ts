@@ -1,14 +1,15 @@
-import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Role } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { AdminLoginInput, RealZaloAuthInput, SeedZaloAuthInput, ZaloAuthInput, ZaloLocationInput } from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   ACCESS_TOKEN_TTL_SECONDS,
   REFRESH_TOKEN_TTL_SECONDS,
+  ZALO_OAUTH_STATE_TTL_SECONDS,
   ZALO_AUTH_PROVIDER,
 } from './auth.constants';
 import type { AccessTokenPayload, AuthUserResponse } from './auth.types';
@@ -42,8 +43,9 @@ export class AuthService {
     refresh_token: string;
     user: AuthUserResponse;
   }> {
+    this.assertAuthModeAllowed();
     let zaloId: string;
-    let phone: string;
+    let phone: string | null;
     let requestedName: string | undefined;
 
     if (this.isMockMode()) {
@@ -97,30 +99,66 @@ export class AuthService {
 
     let user = await this.prisma.user.findUnique({ where: { zaloId } });
 
-    if (this.isDemoMode() && this.isMockMode() && user?.role === Role.ADMIN) {
+    if (user?.role === Role.ADMIN) {
       throw new ForbiddenException({ code: 'ADMIN_LOGIN_REQUIRES_PASSWORD', message: 'Tài khoản quản trị phải đăng nhập bằng mật khẩu', details: null });
     }
 
-    if (!user) {
-      user = await this.prisma.user.create({
-        data: {
-          zaloId,
-          phone,
-          name: requestedName ?? null,
-          role: Role.MERCHANT,
-        },
-      });
-    } else {
-      user = await this.prisma.user.update({
-        where: { id: user.id },
-        data: {
-          phone,
-          ...(requestedName ? { name: requestedName } : {}),
-          deletedAt: null,
-        },
+    user = await this.upsertZaloUser(zaloId, phone, requestedName);
+
+    return this.issueTokens(user.id);
+  }
+
+  async startZaloOAuth(): Promise<{ authorizationUrl: string; state: string }> {
+    this.requireRealOAuthMode();
+    const appId = this.requiredConfig('ZALO_APP_ID');
+    const callbackUrl = this.requiredAbsoluteUrl('ZALO_OAUTH_CALLBACK_URL');
+    const codeVerifier = randomBytes(32).toString('base64url');
+    const state = this.sealOAuthState({
+      nonce: randomBytes(24).toString('base64url'),
+      code_verifier: codeVerifier,
+      issued_at: Date.now(),
+    });
+    const codeChallenge = createHash('sha256').update(codeVerifier, 'ascii').digest('base64url');
+    const authorization = new URL('https://oauth.zaloapp.com/v4/permission');
+    authorization.search = new URLSearchParams({
+      app_id: appId,
+      redirect_uri: callbackUrl,
+      code_challenge: codeChallenge,
+      state,
+    }).toString();
+    return { authorizationUrl: authorization.toString(), state };
+  }
+
+  oauthSuccessRedirect(): string {
+    return this.requiredAbsoluteUrl('ZALO_OAUTH_SUCCESS_REDIRECT_URL');
+  }
+
+  async completeZaloOAuth(input: {
+    state: string;
+    cookieState: string | null;
+    code?: string;
+    error?: string;
+    errorDescription?: string;
+  }) {
+    this.requireRealOAuthMode();
+    if (!input.state || !input.cookieState || !this.equalSecrets(input.state, input.cookieState)) {
+      throw new UnauthorizedException({ code: 'INVALID_ZALO_OAUTH_STATE', message: 'OAuth state không hợp lệ hoặc đã hết hạn', details: null });
+    }
+    const sealed = this.openOAuthState(input.state);
+    if (!input.code) {
+      throw new UnauthorizedException({
+        code: 'ZALO_AUTHORIZATION_DENIED',
+        message: input.errorDescription || 'Người dùng chưa cấp quyền Zalo',
+        details: { provider_error: input.error ?? null },
       });
     }
-
+    const token = await this.zaloProvider.exchangeCode(input.code, sealed.code_verifier);
+    const verified = await this.zaloProvider.verify(token.accessToken);
+    const existing = await this.prisma.user.findUnique({ where: { zaloId: verified.zaloId } });
+    if (existing?.role === Role.ADMIN) {
+      throw new ForbiddenException({ code: 'ADMIN_LOGIN_REQUIRES_PASSWORD', message: 'Tài khoản quản trị phải đăng nhập bằng mật khẩu', details: null });
+    }
+    const user = await this.upsertZaloUser(verified.zaloId, verified.phone, verified.name);
     return this.issueTokens(user.id);
   }
 
@@ -140,7 +178,7 @@ export class AuthService {
   }
 
   async devAccounts() {
-    if (this.config.get<string>('ZALO_AUTH_MODE', 'mock') !== 'mock') {
+    if (!this.isDevelopmentOrTest() || !this.isMockMode()) {
       throw new NotFoundException('Dev accounts are only available in mock mode');
     }
     const users = await this.prisma.user.findMany({
@@ -189,7 +227,11 @@ export class AuthService {
     return this.issueTokens(user.id, storedToken.id);
   }
 
-  async logout(userId: string, rawRefreshToken: string): Promise<{ success: true }> {
+  async logout(userId: string, rawRefreshToken?: string): Promise<{ success: true }> {
+    if (!rawRefreshToken) {
+      await this.prisma.refreshToken.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } });
+      return { success: true };
+    }
     const result = await this.prisma.refreshToken.updateMany({
       where: {
         userId,
@@ -302,6 +344,87 @@ export class AuthService {
 
   private isMockMode(): boolean {
     return this.config.get<string>('ZALO_AUTH_MODE', 'mock') === 'mock';
+  }
+
+  private isDevelopmentOrTest(): boolean {
+    const environment = this.config.get<string>('NODE_ENV', process.env.NODE_ENV ?? 'development');
+    return environment === 'development' || environment === 'test';
+  }
+
+  private assertAuthModeAllowed(): void {
+    if (!this.isDevelopmentOrTest() && this.isMockMode()) {
+      throw new ServiceUnavailableException({ code: 'MOCK_AUTH_DISABLED', message: 'Mock Zalo login is disabled outside development/test', details: null });
+    }
+  }
+
+  private requireRealOAuthMode(): void {
+    this.assertAuthModeAllowed();
+    if (this.isMockMode()) {
+      throw new ServiceUnavailableException({ code: 'REAL_ZALO_AUTH_REQUIRED', message: 'Real Zalo OAuth is not enabled', details: null });
+    }
+  }
+
+  private requiredConfig(name: string): string {
+    const value = this.config.get<string>(name)?.trim();
+    if (!value) {
+      throw new ServiceUnavailableException({ code: 'ZALO_CONFIG_MISSING', message: `${name} chưa được cấu hình`, details: { variable: name } });
+    }
+    return value;
+  }
+
+  private requiredAbsoluteUrl(name: string): string {
+    const value = this.requiredConfig(name);
+    try {
+      const parsed = new URL(value);
+      if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Unsupported protocol');
+      return parsed.toString();
+    } catch {
+      throw new ServiceUnavailableException({ code: 'ZALO_CONFIG_INVALID', message: `${name} phải là callback URL hợp lệ`, details: { variable: name } });
+    }
+  }
+
+  private async upsertZaloUser(zaloId: string, phone: string | null, name?: string): Promise<UserWithProfiles> {
+    return this.prisma.user.upsert({
+      where: { zaloId },
+      create: { zaloId, phone, name: name ?? null, role: Role.MERCHANT },
+      update: { ...(phone ? { phone } : {}), ...(name ? { name } : {}), deletedAt: null },
+      include: {
+        merchant: { select: { id: true, approvalStatus: true, rejectionReason: true } },
+        collector: { select: { id: true } },
+        station: { select: { id: true } },
+      },
+    });
+  }
+
+  private sealOAuthState(payload: { nonce: string; code_verifier: string; issued_at: number }): string {
+    const key = createHash('sha256').update(this.config.getOrThrow<string>('JWT_SECRET')).digest();
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', key, iv);
+    const encrypted = Buffer.concat([cipher.update(JSON.stringify(payload), 'utf8'), cipher.final()]);
+    return [iv.toString('base64url'), cipher.getAuthTag().toString('base64url'), encrypted.toString('base64url')].join('.');
+  }
+
+  private openOAuthState(state: string): { nonce: string; code_verifier: string; issued_at: number } {
+    try {
+      const [ivPart, tagPart, encryptedPart] = state.split('.');
+      if (!ivPart || !tagPart || !encryptedPart) throw new Error('Malformed state');
+      const key = createHash('sha256').update(this.config.getOrThrow<string>('JWT_SECRET')).digest();
+      const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(ivPart, 'base64url'));
+      decipher.setAuthTag(Buffer.from(tagPart, 'base64url'));
+      const raw = Buffer.concat([decipher.update(Buffer.from(encryptedPart, 'base64url')), decipher.final()]).toString('utf8');
+      const payload = JSON.parse(raw) as Partial<{ nonce: string; code_verifier: string; issued_at: number }>;
+      const issuedAt = payload.issued_at;
+      if (!payload.nonce || !payload.code_verifier || payload.code_verifier.length !== 43 || typeof issuedAt !== 'number' || !Number.isFinite(issuedAt) || Date.now() - issuedAt > ZALO_OAUTH_STATE_TTL_SECONDS * 1000 || issuedAt > Date.now() + 30_000) throw new Error('Expired state');
+      return { nonce: payload.nonce, code_verifier: payload.code_verifier, issued_at: issuedAt };
+    } catch {
+      throw new UnauthorizedException({ code: 'INVALID_ZALO_OAUTH_STATE', message: 'OAuth state không hợp lệ hoặc đã hết hạn', details: null });
+    }
+  }
+
+  private equalSecrets(left: string, right: string): boolean {
+    const leftBuffer = Buffer.from(left);
+    const rightBuffer = Buffer.from(right);
+    return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
   }
 
   private isSeedZaloAuthInput(input: ZaloAuthInput): input is SeedZaloAuthInput {

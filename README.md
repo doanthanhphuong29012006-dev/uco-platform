@@ -176,10 +176,14 @@ Xem `.env.example` cho development và `.env.test` cho e2e. Các biến runtime:
 | `REDIS_URL` | Redis connection string |
 | `JWT_SECRET` | Secret ký JWT, cấp qua secret manager ở production |
 | `ZALO_AUTH_MODE` | `mock` hoặc `real` |
+| `ZALO_APP_ID` | App ID Zalo, chỉ ở backend khi dùng OAuth thật |
+| `ZALO_APP_SECRET` | App Secret Zalo, chỉ ở backend và secret manager |
+| `ZALO_OAUTH_CALLBACK_URL` | Callback URL đã đăng ký với Zalo |
+| `ZALO_OAUTH_SUCCESS_REDIRECT_URL` | URL frontend sau OAuth callback |
 | `GEO_MISMATCH_THRESHOLD_M` | Ngưỡng cảnh báo vị trí thu gom |
 | `DELIVERY_VARIANCE_THRESHOLD_PCT` | Ngưỡng lệch khi giao trạm |
 
-`real` Zalo provider hiện là interface/TODO cho Sprint 4; MVP mặc định dùng mock provider.
+OAuth thật dùng Zalo Social OAuth v4 + PKCE/state; mock provider chỉ được phép ở development/test.
 
 ## CI
 

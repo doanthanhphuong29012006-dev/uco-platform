@@ -40,7 +40,18 @@ import { ZaloLocationProvider } from './providers/zalo-location.provider';
         config: ConfigService,
         mockProvider: MockZaloAuthProvider,
         realProvider: RealZaloAuthProvider,
-      ) => (config.get<string>('ZALO_AUTH_MODE', 'mock') === 'real' ? realProvider : mockProvider),
+      ) => {
+        const mode = config.get<string>('ZALO_AUTH_MODE')?.trim();
+        const environment = config.get<string>('NODE_ENV', process.env.NODE_ENV ?? 'development');
+        if (environment === 'production' && mode !== 'real') {
+          throw new Error('ZALO_AUTH_MODE=real is required in production');
+        }
+        if (mode === 'real') return realProvider;
+        if (environment !== 'development' && environment !== 'test') {
+          throw new Error('Mock Zalo auth is only allowed in development/test');
+        }
+        return mockProvider;
+      },
     },
     {
       provide: APP_GUARD,

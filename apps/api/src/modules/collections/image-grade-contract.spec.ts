@@ -68,8 +68,8 @@ describe('image grading collection contract', () => {
 
   it('rejects a collection payload without an explicit final-grade confirmation', () => {
     const withoutConfirmation = { ...basePayload };
-    delete withoutConfirmation.collector_selected_grade;
-    delete withoutConfirmation.collector_grade_confirmed;
+    Reflect.deleteProperty(withoutConfirmation, 'collector_selected_grade');
+    Reflect.deleteProperty(withoutConfirmation, 'collector_grade_confirmed');
     expect(() => collectionCreateSchema.parse(withoutConfirmation)).toThrow();
   });
 });

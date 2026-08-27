@@ -31,6 +31,7 @@ export interface ApiClientOptions {
   baseUrl: string;
   storage: TokenStorage;
   onUnauthorized?: () => void;
+  credentials?: RequestCredentials;
 }
 
 export function createApiClient(options: ApiClientOptions) {
@@ -60,11 +61,11 @@ export function createApiClient(options: ApiClientOptions) {
 
   const refreshAccessToken = async (): Promise<string | null> => {
     const refreshToken = options.storage.getRefreshToken();
-    if (!refreshToken) return null;
     const response = await fetch(`${options.baseUrl}/auth/refresh`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: refreshToken }),
+      body: refreshToken ? JSON.stringify({ refresh_token: refreshToken }) : undefined,
+      credentials: options.credentials ?? 'include',
     });
     const payload = await parseResponse(response);
     if (!response.ok) throw errorFromResponse(response.status, payload);
@@ -95,6 +96,7 @@ export function createApiClient(options: ApiClientOptions) {
       ...init,
       headers: requestHeaders,
       body: body === undefined ? undefined : JSON.stringify(body),
+      credentials: options.credentials ?? 'include',
     });
     const payload = await parseResponse(response);
     if (response.status === 401 && retry) {

@@ -21,10 +21,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!browserTokenStorage.getAccessToken()) {
-      setLoading(false);
-      return;
-    }
     api.me().then((nextUser) => {
       if (nextUser.role === 'ADMIN') setUser(nextUser);
       else browserTokenStorage.clear();
@@ -56,7 +52,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signOut: async () => {
       const refreshToken = browserTokenStorage.getRefreshToken();
       try {
-        if (refreshToken) await api.logout(refreshToken);
+        await api.logout(refreshToken ?? undefined);
       } catch {
         // Token cleanup must still happen when the API session has expired.
       } finally {

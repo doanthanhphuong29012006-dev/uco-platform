@@ -1,3 +1,4 @@
 export interface IZaloAuthProvider {
-  verify(code: string): Promise<{ zaloId: string; phone: string; name?: string }>;
+  exchangeCode(code: string, codeVerifier: string): Promise<{ accessToken: string; refreshToken: string; expiresIn: number }>;
+  verify(accessToken: string): Promise<{ zaloId: string; phone: string | null; name?: string }>;
 }

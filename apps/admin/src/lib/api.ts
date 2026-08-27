@@ -52,6 +52,7 @@ export const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? '/api/v1').
 const client = createApiClient({
   baseUrl: API_BASE_URL,
   storage: browserTokenStorage,
+  credentials: 'include',
 });
 
 const query = (params: Record<string, string | number | boolean | undefined>) => {
@@ -73,7 +74,7 @@ export const api = {
   adminLogin: (zaloId: string, phone: string, password: string) =>
     client.request<{ access_token: string; refresh_token: string; user: AuthUser }>('/auth/admin/login', { method: 'POST', body: { zalo_id: zaloId, phone, password }, retry: false }),
   me: () => client.request<AuthUser>('/auth/me'),
-  logout: (refreshToken: string) => client.request('/auth/logout', { method: 'POST', body: { refresh_token: refreshToken } }),
+  logout: (refreshToken?: string) => client.request('/auth/logout', { method: 'POST', ...(refreshToken ? { body: { refresh_token: refreshToken } } : {}) }),
   overview: (from?: string, to?: string) => client.request<AdminOverviewResponse>(`/admin/overview${query({ from, to })}`),
   pickupForecastPerformance: (windowDays: 30 | 90 | 180 = 90) =>
     client.request<AdminPickupForecastPerformanceResponse>(`/admin/ai-performance/pickup-forecast${query({ window_days: windowDays })}`),

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Role } from '@eco-oil/shared-types';
 import type { AdminWardSummary, DevAccount } from '@eco-oil/shared-types';
-import { ApiError, api } from '../lib/api';
+import { ApiError, API_BASE_URL, api } from '../lib/api';
 import { zaloClient } from '../lib/zalo-client';
 import { useAuthStore } from '../stores/auth-store';
 import { getSeedLoginCredentials, shouldShowDevelopmentLogin } from './login-screen-logic';
@@ -50,6 +50,10 @@ export function LoginScreen() {
   }, [registering]);
 
   async function handleZaloLogin() {
+    if (zaloClient.mode === 'mock') {
+      window.location.assign(`${API_BASE_URL}/auth/zalo/start`);
+      return;
+    }
     try {
       const accessToken = await zaloClient.getAccessToken();
       await loginWithZalo(accessToken);

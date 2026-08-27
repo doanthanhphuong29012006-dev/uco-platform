@@ -53,10 +53,6 @@ export const useAuthStore = create<AuthState>((set) => ({
   busy: false,
   error: null,
   hydrate: async () => {
-    if (!tokenStorage.getAccessToken()) {
-      set({ hydrated: true });
-      return;
-    }
     try {
       const user = await api.me();
       if (!isValidAuthUser(user)) {
