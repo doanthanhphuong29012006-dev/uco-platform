@@ -1,10 +1,17 @@
 import { ValidationPipe } from '@nestjs/common';
+import type { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { configureBodyParser } from './http/body-parser';
+import { ZALO_VERIFIER_PATH } from './verification/zalo-verification.constants';
 
 export const CORS_METHODS = ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'] as const;
+export const ROOT_PUBLIC_ROUTES = ['health', ZALO_VERIFIER_PATH] as const;
+
+export function setApiGlobalPrefix(app: INestApplication): void {
+  app.setGlobalPrefix('api/v1', { exclude: [...ROOT_PUBLIC_ROUTES] });
+}
 
 export function createCorsOptions(corsOrigins: string[]) {
   return {
@@ -21,7 +28,7 @@ async function bootstrap(): Promise<void> {
     throw new Error('JWT_SECRET is required and cannot be empty');
   }
   const app = await NestFactory.create(AppModule, { bodyParser: false });
-  app.setGlobalPrefix('api/v1', { exclude: ['health'] });
+  setApiGlobalPrefix(app);
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
