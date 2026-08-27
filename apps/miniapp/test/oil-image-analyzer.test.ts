@@ -24,6 +24,7 @@ test('bright yellow clear pixels suggest grade A deterministically', () => {
   const result = analyzeOilPixels(solid(64, 64, [230, 170, 55]));
   assert.equal(result.suggested_grade, 'A');
   assert.equal(result.model_version, 'oil-image-heuristic-v1');
+  assert.equal(result.provider, 'on-device-heuristic');
   assert.equal(result.analyzed_image_count, 1);
 });
 

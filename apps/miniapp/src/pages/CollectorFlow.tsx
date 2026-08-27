@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ContainerState, DEFAULT_DENSITY_KG_PER_LITER, OilGrade, Quality } from '@eco-oil/shared-types';
+import { ContainerState, DEFAULT_DENSITY_KG_PER_LITER, Quality } from '@eco-oil/shared-types';
+import type { OilGrade } from '@eco-oil/shared-types';
 import type { CollectionCreateRequest, ContainerLookupResponse, CurrentRouteResponse, GeoPoint, OilImageAnalysisPayload, RouteStop } from '@eco-oil/shared-types';
 import { ApiError, api } from '../lib/api';
 import { formatLiters } from '../lib/formatters';
@@ -1252,7 +1253,9 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
   const [photos, setPhotos] = useState<PhotoAsset[]>([]);
   const [imageAnalysis, setImageAnalysis] = useState<OilImageAnalysis | null>(null);
   const [analyzingImages, setAnalyzingImages] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [overrideAcknowledged, setOverrideAcknowledged] = useState(false);
+  const [gradeConfirmed, setGradeConfirmed] = useState(false);
   const [geo, setGeo] = useState<GeoPoint | null>(null);
   const [saving, setSaving] = useState(false);
   const [takingPhoto, setTakingPhoto] = useState(false);
@@ -1288,7 +1291,6 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
     setHighDeviationAcknowledgement(null);
   }, [highDeviationKey]);
   const highDeviationNeedsAcknowledgement = requiresPickupVolumeAcknowledgement(pickupVolumeDeviation, highDeviationAcknowledgement);
-  const gradeRequiresPhoto = grade === OilGrade.B || grade === OilGrade.C || suspectedAdulteration;
   const gradePhotoMissing = isGradePhotoMissing(grade, suspectedAdulteration, photos.length);
   const imageGradeDisplay = getImageGradeAnalysisDisplay(imageAnalysis);
   const suggestedGrade = imageAnalysis?.suggested_grade ?? null;
@@ -1298,6 +1300,8 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
   const imageGradeDecisionBlocked = needsImageGradeOverrideAcknowledgement && !overrideAcknowledged;
   const submitBlockReason = grade === null
     ? 'Vui lòng chọn phân hạng dầu trước khi xác nhận.'
+    : !gradeConfirmed
+      ? 'Vui lòng xác nhận hạng cuối trước khi lưu giao dịch.'
     : invalidMass
       ? (!hasLiters && !hasKilograms ? 'Vui lòng nhập số kg hoặc số lít lớn hơn 0.' : litersDerivedFromKilograms && invalidLiters ? `Số lít suy ra từ khối lượng (${actualLiters.toFixed(2)} lít) vượt dung tích cho phép ${maxLiters.toFixed(1)} lít.` : `Số lít phải lớn hơn 0 và không vượt ${maxLiters.toFixed(1)} lít.`)
       : gradePhotoMissing
@@ -1325,14 +1329,21 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
     if (nextPhotos.length === 0) {
       if (mountedRef.current) {
         setImageAnalysis(null);
+        setAnalysisError(null);
         setAnalyzingImages(false);
       }
       return;
     }
     setAnalyzingImages(true);
+    setAnalysisError(null);
     try {
       const result = await analyzeOilImages(nextPhotos.map((item) => item.url));
       if (mountedRef.current && run === analysisRunRef.current) setImageAnalysis(result);
+    } catch {
+      if (mountedRef.current && run === analysisRunRef.current) {
+        setAnalysisError('Không phân tích được ảnh. Bạn có thể thử lại hoặc chọn/chụp ảnh khác.');
+        setImageAnalysis(null);
+      }
     } finally {
       if (mountedRef.current && run === analysisRunRef.current) setAnalyzingImages(false);
     }
@@ -1345,6 +1356,7 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
     const nextPhotos = [...photos, photo];
     setPhotos(nextPhotos);
     setOverrideAcknowledged(false);
+    setGradeConfirmed(false);
     void analyzePhotos(nextPhotos);
   }
 
@@ -1407,12 +1419,17 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
     const nextPhotos = photos.filter((_, photoIndex) => photoIndex !== index);
     setPhotos(nextPhotos);
     setOverrideAcknowledged(false);
+    setGradeConfirmed(false);
     void analyzePhotos(nextPhotos);
   }
 
   async function submit(): Promise<void> {
     if (grade === null) {
       setError('Vui lòng chọn phân hạng dầu trước khi xác nhận.');
+      return;
+    }
+    if (!gradeConfirmed) {
+      setError('Vui lòng xác nhận hạng cuối trước khi lưu giao dịch.');
       return;
     }
     if (invalidMass) {
@@ -1469,6 +1486,9 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
       ...(gradeNote.trim() ? { grade_note: gradeNote.trim() } : {}),
       suspected_adulteration: suspectedAdulteration,
       image_grade_suggestion: (imageAnalysis?.suggested_grade as OilGrade | null | undefined) ?? null,
+      ai_suggested_grade: (imageAnalysis?.suggested_grade as OilGrade | null | undefined) ?? null,
+      collector_selected_grade: grade,
+      collector_grade_confirmed: true,
       image_grade_confidence: imageAnalysis?.confidence ?? null,
       image_grade_model_version: imageAnalysis?.model_version ?? null,
       image_grade_analysis: imageAnalysis
@@ -1514,7 +1534,8 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
       <section className="entry-target-card"><span>Số lít quán khai</span><strong>{formatLiters(stop.expected_liters)}</strong>{pickupVolumeForecast ? <div className="entry-volume-forecast"><strong>{pickupVolumeForecast.predictedLiters === null ? 'AI chưa đủ dữ liệu để dự báo sản lượng.' : `AI dự báo: khoảng ${formatPickupVolumeLiters(pickupVolumeForecast.predictedLiters)}`}</strong><small>{pickupVolumeForecast.confidenceLabel}</small>{pickupVolumeForecast.declaredOnly ? <small>AI chưa có đủ lịch sử riêng cho quán này.</small> : null}</div> : null}<small>Mã giao dịch: {clientUuid.slice(0, 8)}…</small>{locationFallback ? <p className="location-banner">Không lấy được vị trí GPS, đang dùng vị trí trung tâm phường. Giao dịch có thể bị đánh dấu cần kiểm tra.</p> : null}</section>
       <section className="quality-card">
         <p className="section-label">Phân hạng dầu</p>
-        <OilGradeSelector value={grade} disabled={saving} onChange={setGrade} />
+        <OilGradeSelector value={grade} disabled={saving} onChange={(nextGrade) => { setGrade(nextGrade); setOverrideAcknowledged(false); setGradeConfirmed(false); }} />
+        <label className="toggle-row grade-confirmation-row"><input type="checkbox" checked={gradeConfirmed} onChange={(event) => setGradeConfirmed(event.target.checked)} disabled={saving || grade === null} /><span>Tôi xác nhận hạng cuối: {grade ? `hạng ${grade}` : 'chưa chọn'}</span></label>
         <label className="toggle-row"><input type="checkbox" checked={suspectedAdulteration} onChange={(event) => setSuspectedAdulteration(event.target.checked)} disabled={saving} /><span>Nghi ngờ pha lẫn</span></label>
         <p className="field-help">Bật nếu thấy có nước, dầu nhớt hoặc mùi lạ không phải dầu ăn.</p>
         <label className="grade-note-label" htmlFor="grade-note">Ghi chú phân hạng (không bắt buộc)</label>
@@ -1532,16 +1553,18 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
         {pickupVolumeDeviation?.level === 'HIGH' ? <div className="pickup-volume-deviation pickup-volume-deviation-high"><strong>Chênh lệch rất cao so với AI dự báo.</strong><span>AI dự báo {formatPickupVolumeLiters(pickupVolumeDeviation.predicted_liters)}</span><span>Thực tế nhập {formatPickupVolumeLiters(pickupVolumeDeviation.actual_liters)}</span><span>Chênh lệch {formatSignedDeviationLiters(pickupVolumeDeviation.deviation_liters)} ({formatDeviationPercent(pickupVolumeDeviation.deviation_pct)})</span><label className="pickup-volume-ack"><input type="checkbox" checked={highDeviationAcknowledgement === highDeviationKey} onChange={(event) => setHighDeviationAcknowledgement(event.target.checked ? highDeviationKey : null)} disabled={saving} /><span>Tôi đã kiểm tra lại số lít và xác nhận tiếp tục.</span></label></div> : null}
       </section>
       <section className="quality-card"><p className="section-label">Chất lượng dầu</p><div className="quality-options"><button className={quality === Quality.PASS ? 'quality-option selected' : 'quality-option'} onClick={() => setQuality(Quality.PASS)} disabled={saving}>✓ Đạt</button><button className={quality === Quality.FLAG ? 'quality-option selected flag-selected' : 'quality-option'} onClick={() => setQuality(Quality.FLAG)} disabled={saving}>⚠ Cần kiểm tra</button></div></section>
-      {quality === Quality.FLAG || gradeRequiresPhoto ? <GradePhotoPicker photos={photos} busy={takingPhoto} disabled={saving} message={photoNotice} onTakePhoto={() => { void takePhoto(); }} onChooseAlbum={() => { void chooseAlbumPhoto(); }} onChooseFile={(file) => { void choosePhotoFile(file); }} onRemovePhoto={removePhoto} /> : null}
+      <GradePhotoPicker photos={photos} busy={takingPhoto} disabled={saving} message={photoNotice} onTakePhoto={() => { void takePhoto(); }} onChooseAlbum={() => { void chooseAlbumPhoto(); }} onChooseFile={(file) => { void choosePhotoFile(file); }} onRemovePhoto={removePhoto} />
+      {analysisError ? <section className="image-grade-analysis image-grade-analysis-error" role="alert"><span>{analysisError}</span><button type="button" className="secondary-button" onClick={() => { void analyzePhotos(photos); }} disabled={analyzingImages || saving}>Thử phân tích lại</button></section> : null}
       {analyzingImages ? <section className="image-grade-analysis image-grade-analysis-neutral" aria-live="polite"><strong>AI hỗ trợ phân hạng</strong><span>Đang phân tích ảnh…</span></section> : null}
       {imageGradeDisplay && !analyzingImages ? (
         <section className={`image-grade-analysis image-grade-analysis-${imageAnalysis?.confidence.toLowerCase() ?? 'low'}`} aria-label="AI hỗ trợ phân hạng">
           <div className="image-grade-analysis-heading"><span className="image-grade-ai-label">AI hỗ trợ</span><strong>Phân tích hình ảnh thử nghiệm</strong></div>
           {imageGradeDisplay.suggestedGrade ? <p><strong>Gợi ý: {imageGradeDisplay.suggestedGrade}</strong> · {imageGradeDisplay.confidenceLabel}</p> : <p><strong>Chưa có gợi ý phân hạng</strong> · {imageGradeDisplay.confidenceLabel}</p>}
-          <small>{imageGradeDisplay.qualityLabel}</small>
+          <small>{imageGradeDisplay.qualityLabel} · provider: {imageAnalysis?.provider ?? 'on-device-heuristic'} · model: {imageAnalysis?.model_version ?? 'unknown'}</small>
           <small>{imageGradeDisplay.summary}</small>
           {imageGradeDisplay.reasons.length > 0 ? <div className="image-grade-reasons">{imageGradeDisplay.reasons.map((reason, index) => <span key={`${reason}-${index}`}>{reason}</span>)}</div> : null}
-          {imageGradeDisplay.canUseSuggestion && imageAnalysis?.suggested_grade ? <button type="button" className="secondary-button image-grade-use-button" onClick={() => { setGrade(imageAnalysis.suggested_grade as OilGrade); setOverrideAcknowledged(false); }} disabled={saving}>Dùng gợi ý này</button> : null}
+          {suggestedGrade && grade && suggestedGrade !== grade ? <p className="image-grade-disagreement" role="status"><strong>Khác gợi ý:</strong> bạn chọn hạng {grade}, AI gợi ý hạng {suggestedGrade}. Lý do AI: {imageGradeDisplay.reasons.join(', ') || 'tín hiệu hình ảnh hạn chế'}.</p> : null}
+          {imageGradeDisplay.canUseSuggestion && imageAnalysis?.suggested_grade ? <button type="button" className="secondary-button image-grade-use-button" onClick={() => { setGrade(imageAnalysis.suggested_grade as OilGrade); setOverrideAcknowledged(false); setGradeConfirmed(false); }} disabled={saving}>Dùng gợi ý này</button> : null}
           {needsImageGradeOverrideAcknowledgement ? <label className="image-grade-override"><input type="checkbox" checked={overrideAcknowledged} onChange={(event) => setOverrideAcknowledged(event.target.checked)} disabled={saving} /><span>Tôi đã kiểm tra và xác nhận giữ phân hạng đã chọn.</span></label> : null}
         </section>
       ) : null}
@@ -1646,7 +1669,11 @@ function formatDistance(distanceM: number): string {
 
 function formatTime(value: string | null): string {
   if (!value) return '--:--';
-  return new Intl.DateTimeFormat('vi-VN', { hour: '2-digit', minute: '2-digit' }).format(new Date(value));
+  return new Intl.DateTimeFormat('vi-VN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Ho_Chi_Minh',
+  }).format(new Date(value));
 }
 
 function formatBytes(bytes: number): string {

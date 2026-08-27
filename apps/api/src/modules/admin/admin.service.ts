@@ -168,6 +168,8 @@ export class AdminService {
           'grade', recent."grade",
           'suspected_adulteration', recent."suspected_adulteration",
           'image_grade_suggestion', recent."image_grade_suggestion",
+          'ai_suggested_grade', recent."image_grade_suggestion",
+          'collector_selected_grade', recent."grade",
           'image_grade_confidence', recent."image_grade_confidence",
           'grade_decision_source', recent."grade_decision_source",
           'image_grade_analysis', recent."image_grade_analysis",
@@ -176,7 +178,7 @@ export class AdminService {
         ) ORDER BY recent."collected_at" DESC), '[]'::json) AS recent_transactions
         FROM (
           SELECT ct."id", m."business_name" AS "merchant_name", u."name" AS "collector_name",
-            ct."actual_liters"::float8 AS "actual_liters", ct."actual_kg"::float8 AS "actual_kg", ct."mass_source"::text AS "mass_source", ct."grade"::text AS "grade", ct."suspected_adulteration", ct."image_grade_suggestion"::text AS "image_grade_suggestion", ct."image_grade_confidence"::text AS "image_grade_confidence", ct."grade_decision_source"::text AS "grade_decision_source", ct."image_grade_analysis", ct."quality"::text AS "quality", ct."collected_at"
+            ct."actual_liters"::float8 AS "actual_liters", ct."actual_kg"::float8 AS "actual_kg", ct."mass_source"::text AS "mass_source", ct."grade"::text AS "grade", ct."suspected_adulteration", ct."image_grade_suggestion"::text AS "image_grade_suggestion", ct."image_grade_suggestion"::text AS "ai_suggested_grade", ct."grade"::text AS "collector_selected_grade", ct."image_grade_confidence"::text AS "image_grade_confidence", ct."grade_decision_source"::text AS "grade_decision_source", ct."image_grade_analysis", ct."quality"::text AS "quality", ct."collected_at"
           FROM "collection_transactions" ct
           JOIN "merchants" m ON m."id" = ct."merchant_id"
           LEFT JOIN "collectors" co ON co."id" = ct."collector_id"
@@ -246,6 +248,8 @@ export class AdminService {
              'grade', ct."grade"::text,
             'suspected_adulteration', ct."suspected_adulteration",
             'image_grade_suggestion', ct."image_grade_suggestion"::text,
+            'ai_suggested_grade', ct."image_grade_suggestion"::text,
+            'collector_selected_grade', ct."grade"::text,
             'image_grade_confidence', ct."image_grade_confidence"::text,
             'grade_decision_source', ct."grade_decision_source"::text,
             'image_grade_analysis', ct."image_grade_analysis",
@@ -289,6 +293,8 @@ export class AdminService {
            'grade', ct."grade"::text,
           'suspected_adulteration', ct."suspected_adulteration",
           'image_grade_suggestion', ct."image_grade_suggestion"::text,
+          'ai_suggested_grade', ct."image_grade_suggestion"::text,
+          'collector_selected_grade', ct."grade"::text,
           'image_grade_confidence', ct."image_grade_confidence"::text,
           'grade_decision_source', ct."grade_decision_source"::text,
           'image_grade_analysis', ct."image_grade_analysis",

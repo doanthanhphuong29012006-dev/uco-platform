@@ -292,11 +292,15 @@ export const collectionCreateSchema = z.object({
   grade_note: z.string().trim().max(1000).optional(),
   suspected_adulteration: z.boolean().default(false),
   image_grade_suggestion: z.nativeEnum(OilGrade).nullable().optional(),
+  ai_suggested_grade: z.nativeEnum(OilGrade).nullable().optional(),
+  collector_selected_grade: z.nativeEnum(OilGrade).optional(),
+  collector_grade_confirmed: z.boolean().optional(),
   image_grade_confidence: z.enum(['LOW', 'MEDIUM', 'HIGH']).nullable().optional(),
   image_grade_model_version: z.literal('oil-image-heuristic-v1').nullable().optional(),
   image_grade_analysis: z.object({
     suggested_grade: z.nativeEnum(OilGrade).nullable(),
     confidence: z.enum(['LOW', 'MEDIUM', 'HIGH']),
+    provider: z.literal('on-device-heuristic').optional(),
     model_version: z.literal('oil-image-heuristic-v1'),
     analyzed_image_count: z.number().int().min(0).max(20),
     quality_status: z.enum(['USABLE', 'RETAKE_RECOMMENDED', 'UNSUPPORTED']),
@@ -321,6 +325,16 @@ export const collectionCreateSchema = z.object({
   }),
   photos: z.array(z.string().url()).max(20).default([]),
   collected_at: z.coerce.date().optional(),
+}).superRefine((value, context) => {
+  if (value.collector_selected_grade !== undefined && value.collector_selected_grade !== value.grade) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['collector_selected_grade'], message: 'collector_selected_grade must match grade' });
+  }
+  if (value.ai_suggested_grade !== undefined && value.image_grade_suggestion !== undefined && value.ai_suggested_grade !== value.image_grade_suggestion) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['ai_suggested_grade'], message: 'ai_suggested_grade must match image_grade_suggestion' });
+  }
+  if (value.collector_selected_grade !== undefined && value.collector_grade_confirmed !== true) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['collector_grade_confirmed'], message: 'Collector must confirm the final grade' });
+  }
 });
 export type CollectionCreateInput = z.infer<typeof collectionCreateSchema>;
 

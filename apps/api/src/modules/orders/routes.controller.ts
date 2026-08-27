@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Inject, Post, Query } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { routeCancelSchema, routeQuerySchema, routeStartSchema } from '@eco-oil/validation';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -24,6 +24,7 @@ export class RoutesController {
 
   @Roles(Role.COLLECTOR)
   @Post('current/complete')
+  @HttpCode(200)
   complete(@CurrentUser() user: AccessTokenPayload) {
     return this.service.completeRoute(user);
   }

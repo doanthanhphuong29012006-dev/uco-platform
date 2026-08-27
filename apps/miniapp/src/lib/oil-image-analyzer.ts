@@ -2,6 +2,10 @@ export type OilImageGrade = 'A' | 'B' | 'C';
 export type OilImageConfidence = 'LOW' | 'MEDIUM' | 'HIGH';
 export type OilImageQualityStatus = 'USABLE' | 'RETAKE_RECOMMENDED' | 'UNSUPPORTED';
 
+// This module is a deterministic, on-device heuristic. It is deliberately
+// labelled as experimental and must not be represented as a production AI
+// model or as an accuracy claim.
+
 export type OilImageReasonCode =
   | 'LIGHT_CLEAR_APPEARANCE'
   | 'MEDIUM_BROWN_APPEARANCE'
@@ -29,6 +33,7 @@ export interface OilImageFeatures extends Record<string, number | null> {
 export interface OilImageAnalysis {
   suggested_grade: OilImageGrade | null;
   confidence: OilImageConfidence;
+  provider: 'on-device-heuristic';
   model_version: 'oil-image-heuristic-v1';
   analyzed_image_count: number;
   quality_status: OilImageQualityStatus;
@@ -80,6 +85,7 @@ function unsupported(reason: OilImageReasonCode, count = 0): OilImageAnalysis {
   return {
     suggested_grade: null,
     confidence: 'LOW',
+    provider: 'on-device-heuristic',
     model_version: MODEL_VERSION,
     analyzed_image_count: count,
     quality_status: 'UNSUPPORTED',
@@ -193,7 +199,7 @@ function classifySample(sample: { features: OilImageFeatures; qualityReasons: Oi
   const summary = suggestedGrade === null
     ? 'Chưa đủ tín hiệu hình ảnh để gợi ý phân hạng.'
     : `Ảnh có đặc điểm hình ảnh gần với hạng ${suggestedGrade}. Đây chỉ là gợi ý thử nghiệm, không thay thế quyết định của người thu gom.`;
-  return { suggested_grade: suggestedGrade, confidence, model_version: MODEL_VERSION, analyzed_image_count: 1, quality_status: qualityStatus, reason_codes: uniqueReasons(reasons), summary, features };
+  return { suggested_grade: suggestedGrade, confidence, provider: 'on-device-heuristic', model_version: MODEL_VERSION, analyzed_image_count: 1, quality_status: qualityStatus, reason_codes: uniqueReasons(reasons), summary, features };
 }
 
 export function analyzeOilPixels(frame: OilImagePixelFrame): OilImageAnalysis {

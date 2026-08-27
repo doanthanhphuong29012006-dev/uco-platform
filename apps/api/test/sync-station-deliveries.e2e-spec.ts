@@ -158,8 +158,8 @@ describe('Sync batch and station delivery reconciliation (e2e)', () => {
     await prisma.stationDelivery.deleteMany({ where: { clientUuid: { startsWith: 'mass-test-' } } });
     await prisma.collectionTransaction.deleteMany({ where: { id: { in: [exactTransactionId, flaggedTransactionId] } } });
     await prisma.collectionTransaction.createMany({ data: [
-      { id: exactTransactionId, clientUuid: randomUUID(), containerId: container.id, merchantId: merchant.id, collectorId: collector.id, actualLiters: 10, actualKg: 9.1, massSource: 'SCALE', quality: 'PASS' },
-      { id: flaggedTransactionId, clientUuid: randomUUID(), containerId: container.id, merchantId: merchant.id, collectorId: collector.id, actualLiters: 10, actualKg: 9.1, massSource: 'SCALE', quality: 'PASS' },
+      { id: exactTransactionId, clientUuid: randomUUID(), containerId: container.id, merchantId: merchant.id, collectorId: collector.id, actualLiters: 10, actualKg: 9.1, massSource: 'SCALE', quality: 'PASS', syncedAt: new Date() },
+      { id: flaggedTransactionId, clientUuid: randomUUID(), containerId: container.id, merchantId: merchant.id, collectorId: collector.id, actualLiters: 10, actualKg: 9.1, massSource: 'SCALE', quality: 'PASS', syncedAt: new Date() },
     ] });
     const exact = await request(app.getHttpServer()).post('/api/v1/station-deliveries').set('Authorization', `Bearer ${collectorToken}`).send({ client_uuid: randomUUID(), station_id: stationId, transaction_ids: [exactTransactionId], actual_liters: 10, actual_kg: 9.282, delivered_at: '2026-08-11T15:00:00Z' }).expect(201);
     expect(exact.body.status).toBe('OK');

@@ -43,4 +43,24 @@ describe('image grading collection contract', () => {
   it('rejects non-finite feature values', () => {
     expect(() => collectionCreateSchema.parse({ ...basePayload, image_grade_analysis: { ...analysis, features: { ...analysis.features, contrast: Number.NaN } } })).toThrow();
   });
+
+  it('accepts the explicit AI/collector decision fields only with final confirmation', () => {
+    const parsed = collectionCreateSchema.parse({
+      ...basePayload,
+      ai_suggested_grade: 'B',
+      collector_selected_grade: 'B',
+      collector_grade_confirmed: true,
+    });
+    expect(parsed.ai_suggested_grade).toBe('B');
+    expect(parsed.collector_selected_grade).toBe('B');
+  });
+
+  it('rejects an unconfirmed collector final grade', () => {
+    expect(() => collectionCreateSchema.parse({
+      ...basePayload,
+      ai_suggested_grade: 'B',
+      collector_selected_grade: 'B',
+      collector_grade_confirmed: false,
+    })).toThrow();
+  });
 });

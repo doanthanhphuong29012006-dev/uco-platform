@@ -77,7 +77,10 @@ export class CollectionsService {
   ) {}
 
   async create(user: AccessTokenPayload, input: CollectionCreateInput) {
-    return this.processOne(user, input, false);
+    // A request received through the online API is already persisted by the
+    // server, so it must be marked as synchronized. The explicit sync/batch
+    // path also passes `true`; only locally queued records remain unsynced.
+    return this.processOne(user, input, true);
   }
 
   async processOne(user: AccessTokenPayload, input: CollectionCreateInput, synced: boolean): Promise<{ data: ReturnType<CollectionsService['serialize']>; replayed: boolean }> {
@@ -160,10 +163,30 @@ export class CollectionsService {
       }
 
       const decisionSource = input.grade_decision_source ?? 'MANUAL';
-      const imageSuggestion = input.image_grade_suggestion ?? null;
+      // Keep the legacy column names as the storage contract while accepting the
+      // explicit names used by the collector flow. Both values are persisted
+      // separately: AI suggestion vs collector's final grade.
+      const imageSuggestion = input.ai_suggested_grade ?? input.image_grade_suggestion ?? null;
+      const selectedGrade = input.collector_selected_grade ?? input.grade;
+      if (input.collector_selected_grade !== undefined && input.collector_grade_confirmed !== true) {
+        throw new UnprocessableEntityException({
+          code: 'COLLECTOR_GRADE_CONFIRMATION_REQUIRED',
+          message: 'Người thu gom phải xác nhận hạng cuối trước khi lưu giao dịch.',
+          details: null,
+        });
+      }
+      if (selectedGrade !== input.grade) {
+        throw new UnprocessableEntityException({
+          code: 'COLLECTOR_GRADE_MISMATCH',
+          message: 'Hạng người thu gom chọn không khớp hạng giao dịch.',
+          details: null,
+        });
+      }
       const imageConfidence = input.image_grade_confidence ?? null;
       const imageAnalysis = input.image_grade_analysis ?? null;
-      if (imageAnalysis && (imageAnalysis.suggested_grade !== imageSuggestion || imageAnalysis.confidence !== imageConfidence)) {
+      if (imageAnalysis && (imageAnalysis.suggested_grade !== imageSuggestion
+        || imageAnalysis.confidence !== imageConfidence
+        || input.image_grade_model_version !== imageAnalysis.model_version)) {
         throw new UnprocessableEntityException({
           code: 'IMAGE_GRADE_METADATA_INCONSISTENT',
           message: 'Thông tin phân tích ảnh không khớp với gợi ý phân hạng.',
@@ -258,9 +281,15 @@ export class CollectionsService {
       `;
 
       if (inserted.length === 0) {
-        const replay = await this.loadByClientUuid(tx, input.client_uuid);
+        const replay = await this.loadByClientUuid(tx, input.client_uuid, collector.id);
         if (!replay) {
-          throw new ConflictException('Idempotent transaction could not be loaded');
+          // Never return a transaction belonging to another collector when a
+          // client UUID is accidentally reused across accounts.
+          throw new ConflictException({
+            code: 'IDEMPOTENCY_KEY_REUSED',
+            message: 'Mã giao dịch đã được dùng bởi tài khoản khác.',
+            details: null,
+          });
         }
         if (synced) {
           await tx.collectionTransaction.update({ where: { id: replay.id }, data: { syncedAt: new Date() } });
@@ -421,7 +450,7 @@ export class CollectionsService {
     return { data: rows.map((row) => this.serialize(row)), meta: { page: query.page, limit: query.limit, total: countRows[0]?.total ?? 0 } };
   }
 
-  private async loadByClientUuid(tx: Prisma.TransactionClient, clientUuid: string): Promise<CollectionRow | null> {
+  private async loadByClientUuid(tx: Prisma.TransactionClient, clientUuid: string, collectorId?: string): Promise<CollectionRow | null> {
     const rows = await tx.$queryRaw<CollectionRow[]>`
       SELECT ct."id", ct."client_uuid", ct."order_id", ct."container_id", ct."merchant_id", ct."collector_id",
         ct."actual_liters"::float8 AS "actual_liters", ct."actual_kg"::float8 AS "actual_kg", ct."mass_source"::text AS "mass_source", ct."density_factor"::float8 AS "density_factor", ct."grade"::text AS "grade", ct."grade_photo_url", ct."grade_note", ct."suspected_adulteration", ct."image_grade_suggestion"::text AS "image_grade_suggestion", ct."image_grade_confidence"::text AS "image_grade_confidence", ct."image_grade_model_version", ct."image_grade_analysis", ct."grade_decision_source"::text AS "grade_decision_source", ct."grade_ai_override_acknowledged", ct."quality"::text AS "quality", ct."photos",
@@ -430,6 +459,7 @@ export class CollectionsService {
       FROM "collection_transactions" ct
       JOIN "containers" c ON c."id" = ct."container_id"
       WHERE ct."client_uuid" = ${clientUuid}
+        AND (${collectorId ?? null}::uuid IS NULL OR ct."collector_id" = ${collectorId ?? null}::uuid)
       LIMIT 1
     `;
     return rows[0] ?? null;
@@ -467,6 +497,9 @@ export class CollectionsService {
       grade_note: row.grade_note,
       suspected_adulteration: row.suspected_adulteration,
       image_grade_suggestion: row.image_grade_suggestion,
+      ai_suggested_grade: row.image_grade_suggestion,
+      collector_selected_grade: row.grade,
+      collector_grade_confirmed: row.grade !== null,
       image_grade_confidence: row.image_grade_confidence,
       image_grade_model_version: row.image_grade_model_version,
       image_grade_analysis: row.image_grade_analysis,

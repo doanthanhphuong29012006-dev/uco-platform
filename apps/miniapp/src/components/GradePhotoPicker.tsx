@@ -27,7 +27,7 @@ export function GradePhotoPicker({ photos, busy, disabled, message, onTakePhoto,
       {message ? <p role="status">{message}</p> : null}
       <div className="photo-actions">
         <button type="button" className="secondary-button" onClick={onTakePhoto} disabled={busy || disabled}>
-          {busy ? 'Đang xử lý…' : 'Chụp ảnh'}
+          {busy ? 'Đang xử lý…' : photos.length > 0 ? 'Chụp lại ảnh' : 'Chụp ảnh'}
         </button>
         {onChooseAlbum ? (
           <button type="button" className="secondary-button" onClick={onChooseAlbum} disabled={busy || disabled}>

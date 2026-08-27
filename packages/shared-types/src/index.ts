@@ -74,10 +74,13 @@ export enum OilGrade {
 
 export type ImageGradeConfidence = 'LOW' | 'MEDIUM' | 'HIGH';
 export type GradeDecisionSource = 'MANUAL' | 'AI_SUGGESTION_ACCEPTED' | 'MANUAL_OVERRIDE_AI';
+export type ImageGradeProvider = 'on-device-heuristic';
 
 export interface OilImageAnalysisPayload {
   suggested_grade: OilGrade | null;
   confidence: ImageGradeConfidence;
+  /** The implementation that produced this suggestion. This is not a production ML model. */
+  provider?: ImageGradeProvider;
   model_version: 'oil-image-heuristic-v1';
   analyzed_image_count: number;
   quality_status: 'USABLE' | 'RETAKE_RECOMMENDED' | 'UNSUPPORTED';
@@ -372,6 +375,10 @@ export interface CollectionCreateRequest {
   grade_note?: string;
   suspected_adulteration?: boolean;
   image_grade_suggestion?: OilGrade | null;
+  /** Explicit names for the persisted decision pair; legacy aliases remain supported. */
+  ai_suggested_grade?: OilGrade | null;
+  collector_selected_grade?: OilGrade;
+  collector_grade_confirmed?: boolean;
   image_grade_confidence?: ImageGradeConfidence | null;
   image_grade_model_version?: 'oil-image-heuristic-v1' | null;
   image_grade_analysis?: OilImageAnalysisPayload | null;
@@ -383,7 +390,7 @@ export interface CollectionCreateRequest {
   collected_at?: string;
 }
 
-export interface CollectionTransactionResponse extends Omit<CollectionCreateRequest, 'grade' | 'grade_photo_url' | 'grade_note' | 'suspected_adulteration' | 'image_grade_suggestion' | 'image_grade_confidence' | 'image_grade_model_version' | 'image_grade_analysis' | 'grade_decision_source' | 'grade_ai_override_acknowledged'> {
+export interface CollectionTransactionResponse extends Omit<CollectionCreateRequest, 'grade' | 'grade_photo_url' | 'grade_note' | 'suspected_adulteration' | 'image_grade_suggestion' | 'ai_suggested_grade' | 'collector_selected_grade' | 'collector_grade_confirmed' | 'image_grade_confidence' | 'image_grade_model_version' | 'image_grade_analysis' | 'grade_decision_source' | 'grade_ai_override_acknowledged'> {
   id: string;
   actual_liters: number;
   container_id: string;
@@ -398,6 +405,9 @@ export interface CollectionTransactionResponse extends Omit<CollectionCreateRequ
   grade_note: string | null;
   suspected_adulteration: boolean;
   image_grade_suggestion: OilGrade | null;
+  ai_suggested_grade: OilGrade | null;
+  collector_selected_grade: OilGrade | null;
+  collector_grade_confirmed: boolean;
   image_grade_confidence: ImageGradeConfidence | null;
   image_grade_model_version: 'oil-image-heuristic-v1' | null;
   image_grade_analysis: OilImageAnalysisPayload | null;
@@ -467,6 +477,8 @@ export interface AdminRecentTransaction {
   quality: Quality;
   collected_at: string;
   image_grade_suggestion?: OilGrade | null;
+  ai_suggested_grade?: OilGrade | null;
+  collector_selected_grade?: OilGrade | null;
   image_grade_confidence?: ImageGradeConfidence | null;
   grade_decision_source?: GradeDecisionSource | null;
   image_grade_analysis?: OilImageAnalysisPayload | null;
@@ -584,6 +596,8 @@ export interface AdminReconciliationTransaction {
   collected_at: string;
   anomaly?: AdminTransactionAnomaly;
   image_grade_suggestion?: OilGrade | null;
+  ai_suggested_grade?: OilGrade | null;
+  collector_selected_grade?: OilGrade | null;
   image_grade_confidence?: ImageGradeConfidence | null;
   grade_decision_source?: GradeDecisionSource | null;
   image_grade_analysis?: OilImageAnalysisPayload | null;
