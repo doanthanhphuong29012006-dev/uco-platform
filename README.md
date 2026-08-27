@@ -30,7 +30,7 @@ Trên PowerShell, lệnh copy env tương đương là:
 Copy-Item .env.example .env
 ```
 
-API chạy tại `http://127.0.0.1:3000`, health check tại `/health`. PostgreSQL được map ra `5433` để tránh xung đột với project khác; Redis dùng `6379`.
+API chạy tại `http://127.0.0.1:3000`, health check tại `/api/v1/health`. PostgreSQL được map ra `5433` để tránh xung đột với project khác; Redis dùng `6379`.
 
 Để dọn database local và tạo lại từ migration:
 
@@ -66,11 +66,11 @@ curl -s http://127.0.0.1:3000/api/v1/auth/me \
 
 ## API và RBAC
 
-Tất cả route dưới đây có prefix `/api/v1`, trừ `/health`. Các route authenticated đều đi qua JWT guard; role được kiểm tra bởi RolesGuard.
+Tất cả API route dưới đây có prefix `/api/v1`. File xác thực domain Zalo là route public duy nhất ở root domain. Các route authenticated đều đi qua JWT guard; role được kiểm tra bởi RolesGuard.
 
 | Method | Path | Role |
 |---|---|---|
-| GET | `/health` | PUBLIC |
+| GET | `/api/v1/health` | PUBLIC |
 | POST | `/auth/zalo` | PUBLIC |
 | POST | `/auth/refresh` | PUBLIC |
 | POST | `/auth/logout` | MERCHANT, COLLECTOR, STATION, ADMIN |
@@ -112,7 +112,7 @@ Tất cả route dưới đây có prefix `/api/v1`, trừ `/health`. Các route
 | PATCH | `/admin/alerts/:id/resolve` | ADMIN |
 | GET | `/admin/merchants/:id/performance` | ADMIN |
 
-Có 41 endpoint path gồm health, trong đó 40 endpoint nằm dưới `/api/v1`.
+Có 41 API endpoint path gồm health, tất cả đều nằm dưới `/api/v1`; file xác thực domain Zalo được phục vụ riêng ở root domain.
 
 ## Chạy test
 

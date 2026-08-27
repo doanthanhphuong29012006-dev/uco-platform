@@ -21,8 +21,9 @@ import type {
   StationRecommendation,
 } from '@eco-oil/shared-types';
 import { tokenStorage } from './storage';
+import { resolveApiBaseUrl } from './api-base-url';
 
-export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '/api/v1').replace(/\/$/, '');
+export const API_BASE_URL = resolveApiBaseUrl(import.meta.env.MODE, import.meta.env.VITE_API_BASE_URL);
 
 export class ApiError extends Error {
   readonly code: string;

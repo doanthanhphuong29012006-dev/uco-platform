@@ -19,9 +19,9 @@ Quy trình bật relay GPS, cập nhật Render, mở QR Development và thứ t
 | `ZALO_AUTH_MODE` | `real` hoặc `mock` | Không | `mock` chỉ dùng cho local/demo kiểm thử |
 | `ZALO_APP_ID` | ID ứng dụng Zalo | Có khi `ZALO_AUTH_MODE=real` | Chỉ đặt ở API/server |
 | `ZALO_APP_SECRET` | secret key của ứng dụng Zalo | Có khi `ZALO_AUTH_MODE=real` | Chỉ đặt ở API/server, không đưa vào frontend |
-| `ZALO_OAUTH_CALLBACK_URL` | `https://api.example.com/api/v1/auth/zalo/callback` | Có khi OAuth web | Phải khớp Callback URL trong Zalo for Developers |
-| `ZALO_OAUTH_SUCCESS_REDIRECT_URL` | `https://miniapp.example.com/` | Có khi OAuth web | URL frontend nhận phiên đã xác thực qua HttpOnly cookie |
-| `CORS_ORIGINS` | `https://demo.example.com,https://admin.demo.example.com` | Có khi gọi cross-origin | Danh sách origin phân cách bằng dấu phẩy |
+| `ZALO_OAUTH_CALLBACK_URL` | `https://eco-oil-api.onrender.com/api/v1/auth/zalo/callback` | Có khi OAuth web | Phải khớp Callback URL trong Zalo for Developers |
+| `ZALO_OAUTH_SUCCESS_REDIRECT_URL` | `https://uco-platform-miniapp.vercel.app/` | Có khi OAuth web | URL frontend nhận phiên đã xác thực qua HttpOnly cookie |
+| `CORS_ORIGINS` | `https://uco-platform-miniapp.vercel.app,https://uco-platform-admin.vercel.app` | Có khi gọi cross-origin | Danh sách origin phân cách bằng dấu phẩy |
 | `REDIS_URL` | `redis://host:6379` | Không | Bỏ trống được; các tính năng phụ thuộc Redis sẽ tắt, API vẫn chạy |
 | `GEO_MISMATCH_THRESHOLD_M` | `500` | Không | Ngưỡng cảnh báo GPS |
 | `DELIVERY_VARIANCE_THRESHOLD_PCT` | `0.02` | Không | Ngưỡng lệch nộp trạm |
@@ -30,16 +30,17 @@ Quy trình bật relay GPS, cập nhật Render, mở QR Development và thứ t
 
 | Biến | Ví dụ | Bắt buộc |
 |---|---|---:|
-| `VITE_API_BASE_URL` | `https://api.demo.example.com/api/v1` | Có |
+| `VITE_API_BASE_URL` | `https://eco-oil-api.onrender.com/api/v1` | Có |
+| `VITE_DEMO_MODE` | `false` | Không |
 | `VITE_ESTIMATED_PRICE_PER_LITER` | `8000` | Không |
 
-Khi chạy local, có thể dùng `/api/v1` cùng Vite proxy. Khi deploy, đặt URL đầy đủ tới API.
+Khi chạy local, có thể dùng `/api/v1` cùng Vite proxy. Trên Vercel phải đặt URL đầy đủ tới Render API; không dùng localhost, `example.com` hoặc URL tương đối. `VITE_DEMO_MODE` phải là `false` hoặc bỏ trống trên production; khung tài khoản thử nghiệm chỉ xuất hiện khi bật rõ ràng và API trả về tài khoản.
 
 ### Admin Next.js
 
 | Biến | Ví dụ | Bắt buộc |
 |---|---|---:|
-| `NEXT_PUBLIC_API_BASE_URL` | `https://api.demo.example.com/api/v1` | Có |
+| `NEXT_PUBLIC_API_BASE_URL` | `https://eco-oil-api.onrender.com/api/v1` | Có |
 | `NEXT_PUBLIC_ADMIN_ZALO_ID` | `zalo_admin_01` | Có |
 | `NEXT_PUBLIC_ADMIN_PHONE` | `0900000000` | Có |
 
@@ -169,4 +170,4 @@ nhất là bảng `oil_prices` — thiếu giá thì chốt kỳ ném `NO_PRICE_
 ### Lưu ý khi demo
 
 Render gói Free ngủ khi không có request; lần gọi đầu mất khoảng 50 giây.
-Gọi trước `GET /health` vài phút trước khi trình diễn.
+Gọi trước `GET /api/v1/health` vài phút trước khi trình diễn.

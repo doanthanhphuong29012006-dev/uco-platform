@@ -7,7 +7,7 @@ import { configureBodyParser } from './http/body-parser';
 import { ZALO_VERIFIER_PATH } from './verification/zalo-verification.constants';
 
 export const CORS_METHODS = ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'] as const;
-export const ROOT_PUBLIC_ROUTES = ['health', ZALO_VERIFIER_PATH] as const;
+export const ROOT_PUBLIC_ROUTES = [ZALO_VERIFIER_PATH] as const;
 
 export function setApiGlobalPrefix(app: INestApplication): void {
   app.setGlobalPrefix('api/v1', { exclude: [...ROOT_PUBLIC_ROUTES] });

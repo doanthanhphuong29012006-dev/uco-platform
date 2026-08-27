@@ -1,8 +1,12 @@
 import { Role } from '@eco-oil/shared-types';
 import type { AuthUser, DevAccount } from '@eco-oil/shared-types';
 
-export function shouldShowDevelopmentLogin(backendMockDetected: boolean, sdkUnavailable: boolean): boolean {
-  return backendMockDetected || sdkUnavailable;
+export function shouldShowDevelopmentLogin(
+  demoModeEnabled: boolean,
+  backendMockDetected: boolean,
+  accountCount: number,
+): boolean {
+  return demoModeEnabled && backendMockDetected && accountCount > 0;
 }
 
 export function getSeedLoginCredentials(accounts: DevAccount[], selectedId: string): { zaloId: string; phone: string } | null {

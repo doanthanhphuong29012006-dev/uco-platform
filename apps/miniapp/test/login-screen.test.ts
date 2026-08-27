@@ -13,7 +13,8 @@ test('backend mock accounts are usable even when the Zalo SDK client is real', (
     wards: [{ id: 'ward-hb', code: 'HB-HK', name: 'Phường Hàng Bạc' }],
   };
 
-  assert.equal(shouldShowDevelopmentLogin(true, false), true);
+  assert.equal(shouldShowDevelopmentLogin(true, true, 1), true);
+  assert.equal(shouldShowDevelopmentLogin(false, true, 1), false);
   assert.deepEqual(getSeedLoginCredentials([account], 'zalo_collector_03'), {
     zaloId: 'zalo_collector_03',
     phone: '0910000003',
@@ -37,7 +38,7 @@ test('selecting a collector preserves the seed login identity and phone', () => 
 
 test('a real backend represented by 404 has no seed account selected', () => {
   const accounts: DevAccount[] = [];
-  assert.equal(shouldShowDevelopmentLogin(false, false), false);
+  assert.equal(shouldShowDevelopmentLogin(false, false, 0), false);
   assert.equal(getSeedLoginCredentials(accounts, ''), null);
 });
 
