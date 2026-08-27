@@ -1302,6 +1302,8 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
     ? 'Vui lòng chọn phân hạng dầu trước khi xác nhận.'
     : !gradeConfirmed
       ? 'Vui lòng xác nhận hạng cuối trước khi lưu giao dịch.'
+    : analyzingImages
+      ? 'Vui lòng chờ phân tích ảnh hoàn tất trước khi lưu giao dịch.'
     : invalidMass
       ? (!hasLiters && !hasKilograms ? 'Vui lòng nhập số kg hoặc số lít lớn hơn 0.' : litersDerivedFromKilograms && invalidLiters ? `Số lít suy ra từ khối lượng (${actualLiters.toFixed(2)} lít) vượt dung tích cho phép ${maxLiters.toFixed(1)} lít.` : `Số lít phải lớn hơn 0 và không vượt ${maxLiters.toFixed(1)} lít.`)
       : gradePhotoMissing
@@ -1336,6 +1338,7 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
     }
     setAnalyzingImages(true);
     setAnalysisError(null);
+    setImageAnalysis(null);
     try {
       const result = await analyzeOilImages(nextPhotos.map((item) => item.url));
       if (mountedRef.current && run === analysisRunRef.current) setImageAnalysis(result);

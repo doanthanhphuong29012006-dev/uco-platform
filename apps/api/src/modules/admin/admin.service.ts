@@ -362,6 +362,7 @@ export class AdminService {
       delivered_kg: deliveredKg,
       variance_kg: varianceKg,
       variance_kg_pct: collectedKg === 0 ? 0 : varianceKg / collectedKg,
+      variance_threshold_pct: threshold,
       has_estimated_mass: Boolean(row?.has_estimated_mass),
       by_collector: enrichedByCollector,
       undelivered_transactions: enrichedUndelivered,

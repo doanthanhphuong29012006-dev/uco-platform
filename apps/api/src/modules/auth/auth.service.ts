@@ -133,7 +133,7 @@ export class AuthService {
       throw new UnauthorizedException({ code: 'INVALID_ADMIN_CREDENTIALS', message: 'Sai tài khoản hoặc mật khẩu quản trị', details: null });
     }
     const user = await this.prisma.user.findUnique({ where: { zaloId: input.zalo_id } });
-    if (!user || user.role !== Role.ADMIN || user.deletedAt) {
+    if (!user || user.role !== Role.ADMIN || user.deletedAt || user.phone !== input.phone) {
       throw new UnauthorizedException({ code: 'INVALID_ADMIN_CREDENTIALS', message: 'Sai tài khoản hoặc mật khẩu quản trị', details: null });
     }
     return this.issueTokens(user.id);

@@ -50,6 +50,8 @@ describe('Sync batch and station delivery reconciliation (e2e)', () => {
       actual_liters: actualLiters,
       quality: 'PASS',
       grade: 'A',
+      collector_selected_grade: 'A',
+      collector_grade_confirmed: true,
       geo: { lat: container.lat, lng: container.lng },
       photos: ['https://example.com/sync.jpg'],
       collected_at: '2026-08-11T13:00:00Z',
@@ -184,6 +186,8 @@ describe('Sync batch and station delivery reconciliation (e2e)', () => {
     const item = {
       ...collection(orderId, containers[0], randomUUID()),
       grade: 'C',
+      collector_selected_grade: 'C',
+      collector_grade_confirmed: true,
       photos: [photo],
     };
 

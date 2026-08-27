@@ -7,6 +7,8 @@ const basePayload = {
   container_code: 'ECO-UCO-HB-HK-001',
   actual_liters: 20,
   grade: OilGrade.B,
+  collector_selected_grade: OilGrade.B,
+  collector_grade_confirmed: true,
   quality: 'PASS',
   geo: { lat: 21.0333, lng: 105.85 },
   photos: ['https://example.com/grade.jpg'],
@@ -61,6 +63,13 @@ describe('image grading collection contract', () => {
       ai_suggested_grade: 'B',
       collector_selected_grade: 'B',
       collector_grade_confirmed: false,
-    })).toThrow();
+  })).toThrow();
+  });
+
+  it('rejects a collection payload without an explicit final-grade confirmation', () => {
+    const withoutConfirmation = { ...basePayload };
+    delete withoutConfirmation.collector_selected_grade;
+    delete withoutConfirmation.collector_grade_confirmed;
+    expect(() => collectionCreateSchema.parse(withoutConfirmation)).toThrow();
   });
 });

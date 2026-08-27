@@ -5,6 +5,7 @@ import { JwtService } from '@nestjs/jwt';
 import { Reflector } from '@nestjs/core';
 import { IS_PUBLIC_KEY } from '../auth.constants';
 import type { AccessTokenPayload, AuthenticatedRequest } from '../auth.types';
+import { PrismaService } from '../../../prisma/prisma.service';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -12,6 +13,7 @@ export class JwtAuthGuard implements CanActivate {
     @Inject(Reflector) private readonly reflector: Reflector,
     @Inject(JwtService) private readonly jwt: JwtService,
     @Inject(ConfigService) private readonly config: ConfigService,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -37,7 +39,14 @@ export class JwtAuthGuard implements CanActivate {
       if (!payload.sub || !payload.role) {
         throw new Error('Invalid access token payload');
       }
-      request.user = payload;
+      const user = await this.prisma.user.findUnique({
+        where: { id: payload.sub },
+        select: { role: true, deletedAt: true },
+      });
+      if (!user || user.deletedAt || user.role !== payload.role) {
+        throw new Error('Access token no longer matches the current user');
+      }
+      request.user = { ...payload, role: user.role };
       return true;
     } catch {
       throw new UnauthorizedException('Invalid or expired access token');

@@ -326,14 +326,17 @@ export const collectionCreateSchema = z.object({
   photos: z.array(z.string().url()).max(20).default([]),
   collected_at: z.coerce.date().optional(),
 }).superRefine((value, context) => {
+  if (value.collector_selected_grade === undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['collector_selected_grade'], message: 'Collector must provide the final grade' });
+  }
+  if (value.collector_grade_confirmed !== true) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['collector_grade_confirmed'], message: 'Collector must confirm the final grade' });
+  }
   if (value.collector_selected_grade !== undefined && value.collector_selected_grade !== value.grade) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['collector_selected_grade'], message: 'collector_selected_grade must match grade' });
   }
   if (value.ai_suggested_grade !== undefined && value.image_grade_suggestion !== undefined && value.ai_suggested_grade !== value.image_grade_suggestion) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['ai_suggested_grade'], message: 'ai_suggested_grade must match image_grade_suggestion' });
-  }
-  if (value.collector_selected_grade !== undefined && value.collector_grade_confirmed !== true) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ['collector_grade_confirmed'], message: 'Collector must confirm the final grade' });
   }
 });
 export type CollectionCreateInput = z.infer<typeof collectionCreateSchema>;

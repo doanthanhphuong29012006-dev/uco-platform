@@ -370,15 +370,15 @@ export interface CollectionCreateRequest {
   container_code: string;
   actual_liters?: number;
   actual_kg?: number;
-  grade?: OilGrade;
+  grade: OilGrade;
   grade_photo_url?: string;
   grade_note?: string;
   suspected_adulteration?: boolean;
   image_grade_suggestion?: OilGrade | null;
   /** Explicit names for the persisted decision pair; legacy aliases remain supported. */
   ai_suggested_grade?: OilGrade | null;
-  collector_selected_grade?: OilGrade;
-  collector_grade_confirmed?: boolean;
+  collector_selected_grade: OilGrade;
+  collector_grade_confirmed: boolean;
   image_grade_confidence?: ImageGradeConfidence | null;
   image_grade_model_version?: 'oil-image-heuristic-v1' | null;
   image_grade_analysis?: OilImageAnalysisPayload | null;
@@ -627,6 +627,7 @@ export interface AdminReconciliationResponse {
   delivered_kg: number;
   variance_kg: number;
   variance_kg_pct: number;
+  variance_threshold_pct?: number;
   has_estimated_mass: boolean;
   by_collector: AdminReconciliationCollector[];
   undelivered_transactions: AdminReconciliationTransaction[];

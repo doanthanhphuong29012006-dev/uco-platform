@@ -60,6 +60,8 @@ describe('Admin KPIs, reconciliation and access control (e2e)', () => {
         actual_liters: 10,
         quality: 'PASS',
         grade: 'A',
+        collector_selected_grade: 'A',
+        collector_grade_confirmed: true,
         geo: { lat: 10.78095, lng: 106.68425 },
         photos: ['https://example.com/admin.jpg'],
         collected_at: '2026-08-11T10:00:00Z',
