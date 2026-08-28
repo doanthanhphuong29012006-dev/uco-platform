@@ -30,6 +30,7 @@ h2 { font-size: 1.08rem; margin-bottom: .35rem; }
 .lead { max-width: 360px; margin: 14px auto 28px; color: var(--muted); line-height: 1.55; }
 .primary-button, .secondary-button, .danger-button, .ready-button { border: 0; border-radius: 15px; padding: 0 18px; font-weight: 750; transition: transform .15s ease, background .15s ease; }
 .primary-button { color: white; background: var(--green); box-shadow: 0 8px 18px #0b6b4f29; }
+.login-oauth-link { display: flex; align-items: center; justify-content: center; min-height: 46px; text-decoration: none; }
 .primary-button:active, .ready-button:active, .secondary-button:active { transform: scale(.98); }
 .secondary-button { color: var(--green-dark); background: var(--mint); }
 .danger-button { color: white; background: var(--danger); }

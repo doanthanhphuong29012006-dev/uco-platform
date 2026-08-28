@@ -1,0 +1,11 @@
+{
+  "error": 0,
+  "message": "Success",
+  "id": "1234567890",
+  "name": "Nguyen Van A",
+  "picture": {
+    "data": {
+      "url": "https://example.test/zalo-avatar.jpg"
+    }
+  }
+}

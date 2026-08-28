@@ -22,6 +22,8 @@ export function LoginScreen() {
   const [registerForm, setRegisterForm] = useState({ zalo_id: 'zalo_merchant_new_01', name: '', address: '', phone: '', business_type: 'Quán ăn', lat: null as number | null, lng: null as number | null, ward_id: '' });
   const [wards, setWards] = useState<AdminWardSummary[]>([]);
   const [wardLoadError, setWardLoadError] = useState<string | null>(null);
+  const zaloOAuthStartUrl = `${API_BASE_URL}/auth/zalo/start`;
+  const useNativeZaloLogin = isZaloEnvironment() && zaloClient.mode === 'real';
 
   useEffect(() => {
     let active = true;
@@ -56,18 +58,7 @@ export function LoginScreen() {
 
   async function handleZaloLogin() {
     setOauthStartError(null);
-    if (!isZaloEnvironment() || zaloClient.mode === 'mock') {
-      try {
-        const oauthUrl = `${API_BASE_URL}/auth/zalo/start`;
-        if (import.meta.env.PROD && !oauthUrl.startsWith('https://')) {
-          throw new Error('API production chưa được cấu hình bằng URL Render HTTPS.');
-        }
-        window.location.assign(oauthUrl);
-      } catch (reason) {
-        setOauthStartError(reason instanceof Error ? reason.message : 'Không thể bắt đầu đăng nhập Zalo. Vui lòng thử lại.');
-      }
-      return;
-    }
+    if (!useNativeZaloLogin) return;
     try {
       const accessToken = await zaloClient.getAccessToken();
       await loginWithZalo(accessToken);
@@ -105,7 +96,7 @@ export function LoginScreen() {
       <p className="eyebrow">ECO-OIL</p>
       <h1>Thu gom dầu dễ dàng</h1>
       <p className="lead">Đăng nhập để báo can sẵn sàng và theo dõi lịch sử thu gom của quán.</p>
-      <button className="primary-button" onClick={() => void handleZaloLogin()} disabled={busy || showDevelopmentLogin}>{showDevelopmentLogin ? 'Chọn tài khoản thử nghiệm để tiếp tục' : busy ? 'Đang đăng nhập…' : 'Đăng nhập bằng Zalo'}</button>
+      {useNativeZaloLogin ? <button className="primary-button" onClick={() => void handleZaloLogin()} disabled={busy || showDevelopmentLogin}>{showDevelopmentLogin ? 'Chọn tài khoản thử nghiệm để tiếp tục' : busy ? 'Đang đăng nhập…' : 'Đăng nhập bằng Zalo'}</button> : showDevelopmentLogin ? <button className="primary-button" disabled>Chọn tài khoản thử nghiệm để tiếp tục</button> : <a className="primary-button login-oauth-link" href={zaloOAuthStartUrl}>Đăng nhập bằng Zalo</a>}
       {showDevelopmentLogin ? <p className="error-text">Backend đang ở môi trường phát triển. Chọn tài khoản thử nghiệm để tiếp tục.</p> : null}
       {oauthStartError ? <p className="error-text">{oauthStartError}</p> : null}
       {showDevelopmentLogin ? (
