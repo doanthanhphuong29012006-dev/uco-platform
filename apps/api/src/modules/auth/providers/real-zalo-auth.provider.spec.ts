@@ -4,9 +4,9 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { RealZaloAuthProvider } from './real-zalo-auth.provider';
 
-function provider() {
+function provider(values: Record<string, string> = {}) {
   const config = {
-    get: jest.fn((name: string) => ({ ZALO_APP_ID: '123456789', ZALO_APP_SECRET: 'server-only-secret' }[name])),
+    get: jest.fn((name: string) => ({ ZALO_APP_ID: '123456789', ZALO_APP_SECRET: 'server-only-secret', ...values }[name])),
   } as unknown as ConfigService;
   return new RealZaloAuthProvider(config);
 }
@@ -44,6 +44,29 @@ describe('RealZaloAuthProvider', () => {
     jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(fixture('zalo-profile-without-avatar.json')), { status: 200, headers: { 'content-type': 'application/json' } }));
 
     await expect(provider().verify('zalo-access')).resolves.toEqual({ zaloId: '9876543210', phone: null, name: 'Tran Thi B' });
+  });
+
+  it('loads the profile through the configured relay and keeps the access token out of diagnostics', async () => {
+    const accessToken = 'relay-access-token-that-must-not-be-logged';
+    const relaySecret = 'relay-secret-that-must-not-be-logged-123456';
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      error: -501,
+      message: `IP restriction ${accessToken} ${relaySecret}`,
+      secret_value: relaySecret,
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+
+    await expect(provider({
+      ZALO_PROFILE_RELAY_URL: 'https://relay.example.test',
+      ZALO_PROFILE_RELAY_SECRET: relaySecret,
+    }).verify(accessToken)).rejects.toMatchObject({ response: expect.objectContaining({ code: 'ZALO_PROFILE_API_ERROR' }) });
+    expect(fetchMock).toHaveBeenCalledWith('https://relay.example.test/zalo/profile', expect.objectContaining({
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-zalo-profile-relay-secret': relaySecret },
+      body: JSON.stringify({ access_token: accessToken }),
+    }));
+    expect(JSON.stringify(warnSpy.mock.calls)).not.toContain(accessToken);
+    expect(JSON.stringify(warnSpy.mock.calls)).not.toContain(relaySecret);
   });
 
   it('normalizes a numeric profile id to a string without coercing it through Number', async () => {

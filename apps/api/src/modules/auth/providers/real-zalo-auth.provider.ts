@@ -5,6 +5,7 @@ import type { IZaloAuthProvider, ZaloProfile } from './zalo-auth.provider';
 const ZALO_TOKEN_URL = 'https://oauth.zaloapp.com/v4/access_token';
 const ZALO_PROFILE_URL = 'https://graph.zalo.me/v2.0/me?fields=id,name,picture';
 const ZALO_REQUEST_TIMEOUT_MS = 10_000;
+const ZALO_PROFILE_RELAY_PATH = '/zalo/profile';
 
 type JsonObject = Record<string, unknown>;
 
@@ -70,18 +71,29 @@ export class RealZaloAuthProvider implements IZaloAuthProvider {
       throw new UnauthorizedException({ code: 'INVALID_ZALO_ACCESS_TOKEN', message: 'Access token Zalo trống', details: null });
     }
 
+    const relay = this.profileRelayConfig();
     let response: Response;
     try {
-      response = await fetch(ZALO_PROFILE_URL, {
-        headers: { access_token: accessToken },
-        signal: AbortSignal.timeout(ZALO_REQUEST_TIMEOUT_MS),
-      });
+      response = relay
+        ? await fetch(relay.url, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-zalo-profile-relay-secret': relay.secret,
+          },
+          body: JSON.stringify({ access_token: accessToken }),
+          signal: AbortSignal.timeout(ZALO_REQUEST_TIMEOUT_MS),
+        })
+        : await fetch(ZALO_PROFILE_URL, {
+          headers: { access_token: accessToken },
+          signal: AbortSignal.timeout(ZALO_REQUEST_TIMEOUT_MS),
+        });
     } catch {
       throw new ServiceUnavailableException({ code: 'ZALO_PROFILE_UNAVAILABLE', message: 'Không kết nối được Zalo', details: null });
     }
 
     const body = await this.jsonObject(response);
-    const diagnostics = this.profileDiagnostics(response, body);
+    const diagnostics = this.profileDiagnostics(response, body, [accessToken, ...(relay ? [relay.secret] : [])]);
     const providerError = this.providerError(body);
     if (!response.ok || (providerError !== null && !this.isSuccessfulProviderError(providerError))) {
       this.logger.warn({ event: 'zalo_profile_request_failed', ...diagnostics });
@@ -158,7 +170,7 @@ export class RealZaloAuthProvider implements IZaloAuthProvider {
     }
   }
 
-  private profileDiagnostics(response: Response, body: JsonObject): {
+  private profileDiagnostics(response: Response, body: JsonObject, sensitiveValues: readonly string[] = []): {
     status: number;
     content_type: string | null;
     top_level_keys: string[];
@@ -169,8 +181,8 @@ export class RealZaloAuthProvider implements IZaloAuthProvider {
       status: response.status,
       content_type: response.headers.get('content-type'),
       top_level_keys: Object.keys(body),
-      provider_error: this.safeDiagnostic(this.providerError(body)),
-      provider_message: this.safeDiagnostic(this.providerMessage(body)),
+      provider_error: this.safeDiagnostic(this.providerError(body), sensitiveValues),
+      provider_message: this.safeDiagnostic(this.providerMessage(body), sensitiveValues),
     };
   }
 
@@ -191,10 +203,53 @@ export class RealZaloAuthProvider implements IZaloAuthProvider {
     return error === 0 || error === '0';
   }
 
-  private safeDiagnostic(value: unknown): string | number | boolean | null {
+  private safeDiagnostic(value: unknown, sensitiveValues: readonly string[] = []): string | number | boolean | null {
     if (value === null || typeof value === 'number' || typeof value === 'boolean') return value;
-    if (typeof value === 'string') return value.slice(0, 200);
+    if (typeof value === 'string') {
+      let result = value.slice(0, 200);
+      for (const sensitiveValue of sensitiveValues) {
+        if (sensitiveValue) result = result.split(sensitiveValue).join('[REDACTED]');
+      }
+      return result;
+    }
     return value === undefined ? null : `[${typeof value}]`;
+  }
+
+  private profileRelayConfig(): { url: string; secret: string } | null {
+    const configuredUrl = this.config.get<string>('ZALO_PROFILE_RELAY_URL')?.trim();
+    if (!configuredUrl) return null;
+
+    const secret = this.config.get<string>('ZALO_PROFILE_RELAY_SECRET')?.trim();
+    if (!secret) {
+      throw new ServiceUnavailableException({
+        code: 'ZALO_CONFIG_MISSING',
+        message: 'ZALO_PROFILE_RELAY_SECRET chưa được cấu hình',
+        details: { variable: 'ZALO_PROFILE_RELAY_SECRET' },
+      });
+    }
+
+    let relayUrl: URL;
+    try {
+      relayUrl = new URL(configuredUrl);
+    } catch {
+      throw new ServiceUnavailableException({
+        code: 'ZALO_PROFILE_RELAY_CONFIG_INVALID',
+        message: 'Cấu hình relay profile Zalo không hợp lệ',
+        details: null,
+      });
+    }
+    const isLocalHttp = relayUrl.protocol === 'http:' && (relayUrl.hostname === '127.0.0.1' || relayUrl.hostname === 'localhost');
+    if ((relayUrl.protocol !== 'https:' && !isLocalHttp) || relayUrl.username || relayUrl.password || !secret) {
+      throw new ServiceUnavailableException({
+        code: 'ZALO_PROFILE_RELAY_CONFIG_INVALID',
+        message: 'Relay profile Zalo cần URL HTTPS hoặc localhost HTTP',
+        details: null,
+      });
+    }
+    relayUrl.pathname = ZALO_PROFILE_RELAY_PATH;
+    relayUrl.search = '';
+    relayUrl.hash = '';
+    return { url: relayUrl.toString(), secret };
   }
 
   private required(name: string): string {
