@@ -41,6 +41,17 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return typeof value === 'string' ? value : null;
   }
 
+  async deleteOneTime(key: string): Promise<void> {
+    if (!this.client) throw new Error('Redis is not configured');
+    await this.client.del(key);
+  }
+
+  async restoreOneTime(key: string, value: string, ttlSeconds: number): Promise<void> {
+    if (!this.client) throw new Error('Redis is not configured');
+    if (ttlSeconds <= 0) return;
+    await this.client.set(key, value, 'EX', ttlSeconds, 'NX');
+  }
+
   async onModuleDestroy(): Promise<void> {
     if (this.client && this.client.status !== 'end') {
       try {

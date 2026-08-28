@@ -453,17 +453,21 @@ export type AdminMerchantListQueryInput = z.infer<typeof adminMerchantListQueryS
 export const adminCollectorCreateSchema = z.object({
   name: z.string().trim().min(1).max(200),
   phone: phoneSchema,
-  zalo_id: z.string().trim().min(1).max(120),
   vehicle_type: z.string().trim().min(1).max(120),
   max_capacity_l: z.number().finite().positive().max(100000),
   ward_ids: z.array(uuidSchema).min(1).max(50),
-});
+}).strict();
 export type AdminCollectorCreateInput = z.infer<typeof adminCollectorCreateSchema>;
 
 export const adminCollectorPatchSchema = adminCollectorCreateSchema.partial().extend({
   status: z.nativeEnum(EntityStatus).optional(),
-});
+}).strict();
 export type AdminCollectorPatchInput = z.infer<typeof adminCollectorPatchSchema>;
+
+export const collectorInviteAcceptSchema = z.object({
+  code: z.string().trim().min(1).max(256),
+}).strict();
+export type CollectorInviteAcceptInput = z.infer<typeof collectorInviteAcceptSchema>;
 
 export const merchantRejectSchema = z.object({
   reason: z.string().trim().min(1).max(1000),

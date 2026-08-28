@@ -159,6 +159,12 @@ export const api = {
       body: { code },
       retry: false,
     }),
+  acceptCollectorInvite: (code: string) =>
+    request<AuthSession>('/auth/collector-invites/accept', {
+      method: 'POST',
+      body: { code },
+      retry: false,
+    }),
   registerMyMerchant: (payload: MerchantOnboardingRequest) =>
     request<unknown>('/merchants/me', { method: 'POST', body: payload, retry: false }),
   resolveZaloLocation: (accessToken: string, locationToken: string) =>

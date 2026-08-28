@@ -1,7 +1,8 @@
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AlertSeverity, AlertType, EntityStatus, MerchantApprovalStatus, Role } from '@prisma/client';
+import { AlertSeverity, AlertType, EntityStatus, MerchantApprovalStatus } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type {
   AdminCollectorListQueryInput,
   AdminMerchantListQueryInput,
@@ -28,6 +29,8 @@ import type {
   MerchantApprovalInput,
 } from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RedisService } from '../../redis/redis.service';
+import { COLLECTOR_INVITE_KEY_PREFIX, COLLECTOR_INVITE_TTL_SECONDS } from '../auth/auth.constants';
 import { getDensityKgPerLiter } from '../../config/mass.constants';
 import {
   scoreTransactionAnomaly,
@@ -97,6 +100,7 @@ export class AdminService {
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(ConfigService) private readonly config: ConfigService,
     @Inject(StationsService) private readonly stations: StationsService,
+    @Optional() @Inject(RedisService) private readonly redis?: RedisService,
   ) {}
 
   async overview(query: AdminOverviewQueryInput) {
@@ -1018,9 +1022,15 @@ export class AdminService {
         display_name: row.displayName,
         status: row.status,
         is_active: row.isActive,
+        link_status: row.linkStatus,
+        invite_status: row.linkStatus === 'PENDING_LINK'
+          ? row.inviteExpiresAt && row.inviteExpiresAt.getTime() > Date.now() ? 'PENDING' : 'EXPIRED'
+          : null,
+        invite_expires_at: row.inviteExpiresAt?.toISOString() ?? null,
         last_seen_at: row.lastSeenAt,
         wards: row.collectorWards.map((item) => ({ id: item.ward.id, code: item.ward.code, name: item.ward.name })),
-        user: { id: row.user.id, name: row.user.name, phone: row.user.phone },
+        contact_phone: row.contactPhone,
+        user: row.user ? { id: row.user.id, name: row.user.name, phone: row.user.phone } : null,
         vehicle_type: row.vehicleType,
         max_capacity_l: Number(row.maxCapacityLiters),
         ward_ids: row.collectorWards.map((item) => item.wardId),
@@ -1499,27 +1509,79 @@ export class AdminService {
   }
 
   async createCollector(input: AdminCollectorCreateInput) {
-    const [existingZalo, existingPhone, wards] = await Promise.all([
-      this.prisma.user.findUnique({ where: { zaloId: input.zalo_id } }),
-      this.prisma.user.findUnique({ where: { phone: input.phone } }),
-      this.prisma.ward.findMany({ where: { id: { in: input.ward_ids }, deletedAt: null } }),
-    ]);
-    if (existingZalo || existingPhone) throw new ConflictException({ code: 'COLLECTOR_ALREADY_EXISTS', message: 'Tài khoản người thu gom đã tồn tại', details: null });
+    const wards = await this.prisma.ward.findMany({ where: { id: { in: input.ward_ids }, deletedAt: null } });
     if (wards.length !== input.ward_ids.length) throw new NotFoundException('Ward not found');
-    const collector = await this.prisma.$transaction(async (tx) => {
-      const user = await tx.user.create({ data: { zaloId: input.zalo_id, phone: input.phone, name: input.name, role: Role.COLLECTOR } });
-      const row = await tx.collector.create({
+    const collectorId = randomUUID();
+    const inviteCode = randomBytes(32).toString('base64url');
+    const inviteCodeHash = this.hashInviteCode(inviteCode);
+    const inviteExpiresAt = new Date(Date.now() + COLLECTOR_INVITE_TTL_SECONDS * 1000);
+    const inviteKey = COLLECTOR_INVITE_KEY_PREFIX + inviteCodeHash;
+    const inviteUrl = this.collectorInviteUrl(inviteCode);
+    const redis = this.requiredRedis();
+    await redis.setOneTime(inviteKey, collectorId, COLLECTOR_INVITE_TTL_SECONDS);
+    try {
+      await this.prisma.collector.create({
         data: {
-          userId: user.id,
+          id: collectorId,
+          userId: null,
           displayName: input.name,
+          contactPhone: input.phone,
           vehicleType: input.vehicle_type,
           maxCapacityLiters: input.max_capacity_l,
+          linkStatus: 'PENDING_LINK',
+          inviteCodeHash,
+          inviteExpiresAt,
           collectorWards: { create: input.ward_ids.map((wardId) => ({ wardId })) },
         },
       });
-      return row;
+    } catch (error) {
+      await redis.deleteOneTime(inviteKey).catch(() => undefined);
+      throw error;
+    }
+    return {
+      collector: await this.collectorProfile(collectorId),
+      invite_url: inviteUrl,
+      invite_expires_at: inviteExpiresAt.toISOString(),
+    };
+  }
+
+  async regenerateCollectorInvite(id: string) {
+    const existing = await this.prisma.collector.findUnique({
+      where: { id },
+      select: { id: true, userId: true, linkStatus: true, status: true, isActive: true, inviteCodeHash: true },
     });
-    return this.collectorProfile(collector.id);
+    if (!existing) throw new NotFoundException('Collector not found');
+    if (existing.userId || existing.linkStatus === 'LINKED') {
+      throw new ConflictException({ code: 'COLLECTOR_ALREADY_LINKED', message: 'Người thu gom đã liên kết Zalo', details: null });
+    }
+    if (!existing.isActive || existing.status !== EntityStatus.ACTIVE) {
+      throw new ForbiddenException({ code: 'COLLECTOR_LOCKED', message: 'Người thu gom đã bị khóa', details: null });
+    }
+
+    const inviteCode = randomBytes(32).toString('base64url');
+    const inviteCodeHash = this.hashInviteCode(inviteCode);
+    const inviteExpiresAt = new Date(Date.now() + COLLECTOR_INVITE_TTL_SECONDS * 1000);
+    const inviteKey = COLLECTOR_INVITE_KEY_PREFIX + inviteCodeHash;
+    const inviteUrl = this.collectorInviteUrl(inviteCode);
+    const redis = this.requiredRedis();
+    await redis.setOneTime(inviteKey, id, COLLECTOR_INVITE_TTL_SECONDS);
+    try {
+      await this.prisma.collector.update({
+        where: { id },
+        data: { linkStatus: 'PENDING_LINK', inviteCodeHash, inviteExpiresAt },
+      });
+    } catch (error) {
+      await redis.deleteOneTime(inviteKey).catch(() => undefined);
+      throw error;
+    }
+    if (existing.inviteCodeHash) {
+      await redis.deleteOneTime(COLLECTOR_INVITE_KEY_PREFIX + existing.inviteCodeHash).catch(() => undefined);
+    }
+    return {
+      collector: await this.collectorProfile(id),
+      invite_url: inviteUrl,
+      invite_expires_at: inviteExpiresAt.toISOString(),
+    };
   }
 
   async updateCollector(id: string, input: AdminCollectorPatchInput) {
@@ -1536,10 +1598,11 @@ export class AdminService {
           ...(input.name !== undefined ? { displayName: input.name } : {}),
           ...(input.vehicle_type !== undefined ? { vehicleType: input.vehicle_type } : {}),
           ...(input.max_capacity_l !== undefined ? { maxCapacityLiters: input.max_capacity_l } : {}),
+          ...(!collector.userId && input.phone !== undefined ? { contactPhone: input.phone } : {}),
           ...(input.status !== undefined ? { status: input.status, isActive: input.status === EntityStatus.ACTIVE, deletedAt: input.status === EntityStatus.INACTIVE ? new Date() : null } : {}),
         },
       });
-      if (input.name !== undefined || input.phone !== undefined) {
+      if (collector.userId && (input.name !== undefined || input.phone !== undefined)) {
         await tx.user.update({ where: { id: collector.userId }, data: { ...(input.name !== undefined ? { name: input.name } : {}), ...(input.phone !== undefined ? { phone: input.phone } : {}) } });
       }
       if (input.ward_ids) {
@@ -1559,7 +1622,48 @@ export class AdminService {
   private async collectorProfile(id: string) {
     const row = await this.prisma.collector.findUnique({ where: { id }, include: { user: true, collectorWards: { include: { ward: true }, orderBy: { createdAt: 'asc' } } } });
     if (!row) throw new NotFoundException('Collector not found');
-    return { id: row.id, display_name: row.displayName, vehicle_type: row.vehicleType, max_capacity_l: Number(row.maxCapacityLiters), status: row.status, is_active: row.isActive, wards: row.collectorWards.map((item) => ({ id: item.ward.id, code: item.ward.code, name: item.ward.name })), ward_ids: row.collectorWards.map((item) => item.wardId), user: { id: row.user.id, name: row.user.name, phone: row.user.phone } };
+    return {
+      id: row.id,
+      display_name: row.displayName,
+      vehicle_type: row.vehicleType,
+      max_capacity_l: Number(row.maxCapacityLiters),
+      status: row.status,
+      is_active: row.isActive,
+      link_status: row.linkStatus,
+      invite_status: row.linkStatus === 'PENDING_LINK'
+        ? row.inviteExpiresAt && row.inviteExpiresAt.getTime() > Date.now() ? 'PENDING' : 'EXPIRED'
+        : null,
+      invite_expires_at: row.inviteExpiresAt?.toISOString() ?? null,
+      last_seen_at: row.lastSeenAt,
+      contact_phone: row.contactPhone,
+      wards: row.collectorWards.map((item) => ({ id: item.ward.id, code: item.ward.code, name: item.ward.name })),
+      ward_ids: row.collectorWards.map((item) => item.wardId),
+      user: row.user ? { id: row.user.id, name: row.user.name, phone: row.user.phone } : null,
+    };
+  }
+
+  private hashInviteCode(code: string): string {
+    return createHash('sha256').update(code).digest('hex');
+  }
+
+  private requiredRedis(): RedisService {
+    if (!this.redis) throw new ServiceUnavailableException({ code: 'COLLECTOR_INVITE_UNAVAILABLE', message: 'Không tạo được lời mời người thu gom', details: null });
+    return this.redis;
+  }
+
+  private collectorInviteUrl(code: string): string {
+    const rawBaseUrl = this.config.get<string>('ZALO_OAUTH_SUCCESS_REDIRECT_URL')?.trim();
+    if (!rawBaseUrl) {
+      throw new ServiceUnavailableException({ code: 'COLLECTOR_INVITE_URL_NOT_CONFIGURED', message: 'Chưa cấu hình địa chỉ Mini App cho lời mời', details: null });
+    }
+    try {
+      const url = new URL(rawBaseUrl);
+      if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Unsupported protocol');
+      url.searchParams.set('collector_invite', code);
+      return url.toString();
+    } catch {
+      throw new ServiceUnavailableException({ code: 'COLLECTOR_INVITE_URL_NOT_CONFIGURED', message: 'Địa chỉ Mini App cho lời mời không hợp lệ', details: null });
+    }
   }
 
   private period(fromInput?: Date, toInput?: Date) {

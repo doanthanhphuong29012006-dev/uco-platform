@@ -116,7 +116,7 @@ export class CollectorsService {
       last_seen_at: row.lastSeenAt,
       wards: row.collectorWards.map((item) => ({ id: item.ward.id, code: item.ward.code, name: item.ward.name })),
       ward_ids: row.collectorWards.map((item) => item.wardId),
-      user: { id: row.user.id, name: row.user.name, phone: row.user.phone },
+      user: row.user ? { id: row.user.id, name: row.user.name, phone: row.user.phone } : null,
     };
   }
 }

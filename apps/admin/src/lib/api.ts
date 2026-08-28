@@ -7,6 +7,7 @@ import type {
   AnomalyFeedbackVerdict,
   AdminCollectorPerformance,
   AdminCollectorSummary,
+  AdminCollectorInviteResponse,
   AdminMerchantSummary,
   AdminOverviewResponse,
   AdminPickupForecastPerformanceResponse,
@@ -107,11 +108,14 @@ export const api = {
   },
   merchants: (params: { search?: string; anomaly?: boolean; status?: string }) =>
     client.request<PagedResponse<AdminMerchantSummary>>(`/admin/merchants${query({ page: 1, limit: 100, ...params })}`),
-  collectors: () => client.request<PagedResponse<AdminCollectorSummary>>('/admin/collectors?page=1&limit=100'),
+  collectors: () => client.request<PagedResponse<AdminCollectorSummary>>('/admin/collectors?page=1&limit=100&include_inactive=true'),
   collectorPerformance: (id: string) => client.request<AdminCollectorPerformance>(`/admin/collectors/${id}/performance`),
   approveMerchant: (id: string, body: { lat: number; lng: number }) => client.request(`/admin/merchants/${id}/approve`, { method: 'POST', body }),
   rejectMerchant: (id: string, reason: string) => client.request(`/admin/merchants/${id}/reject`, { method: 'POST', body: { reason } }),
-  createCollector: (body: { name: string; phone: string; zalo_id: string; vehicle_type: string; max_capacity_l: number; ward_ids: string[] }) => client.request('/admin/collectors', { method: 'POST', body }),
+  createCollector: (body: { name: string; phone: string; vehicle_type: string; max_capacity_l: number; ward_ids: string[] }) =>
+    client.request<AdminCollectorInviteResponse>('/admin/collectors', { method: 'POST', body }),
+  regenerateCollectorInvite: (id: string) =>
+    client.request<AdminCollectorInviteResponse>('/admin/collectors/' + id + '/invite', { method: 'POST' }),
   updateCollector: (id: string, body: Record<string, unknown>) => client.request(`/admin/collectors/${id}`, { method: 'PATCH', body }),
   containers: (params: { state?: string; merchant_id?: string; unassigned?: boolean } = {}) => client.request<PagedResponse<AdminContainerSummary>>(`/admin/containers${query({ page: 1, limit: 100, ...params })}`),
   wards: (includeInactive = false) => client.request<AdminWardSummary[]>(`/admin/wards?include_inactive=${includeInactive}`),

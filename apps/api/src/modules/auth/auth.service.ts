@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Role } from '@prisma/client';
@@ -8,6 +8,8 @@ import type { AdminLoginInput, RealZaloAuthInput, SeedZaloAuthInput, ZaloAuthInp
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   ACCESS_TOKEN_TTL_SECONDS,
+  COLLECTOR_INVITE_KEY_PREFIX,
+  COLLECTOR_INVITE_TTL_SECONDS,
   REFRESH_TOKEN_TTL_SECONDS,
   ZALO_OAUTH_HANDOFF_KEY_PREFIX,
   ZALO_OAUTH_HANDOFF_TTL_SECONDS,
@@ -186,6 +188,89 @@ export class AuthService {
     return this.issueTokens(userId);
   }
 
+  async acceptCollectorInvite(user: AccessTokenPayload, code: string) {
+    const normalizedCode = code.trim();
+    if (!normalizedCode || normalizedCode.length > 256) {
+      throw new UnauthorizedException({ code: 'COLLECTOR_INVITE_INVALID', message: 'Lời mời người thu gom không hợp lệ hoặc đã hết hạn', details: null });
+    }
+    const inviteCodeHash = this.hashToken(normalizedCode);
+    const inviteKey = COLLECTOR_INVITE_KEY_PREFIX + inviteCodeHash;
+    let collectorId: string | null;
+    try {
+      collectorId = await this.redis.consumeOneTime(inviteKey);
+    } catch {
+      throw new ServiceUnavailableException({ code: 'COLLECTOR_INVITE_UNAVAILABLE', message: 'Không hoàn tất được lời mời người thu gom', details: null });
+    }
+    if (!collectorId) {
+      throw new UnauthorizedException({ code: 'COLLECTOR_INVITE_INVALID', message: 'Lời mời người thu gom không hợp lệ hoặc đã hết hạn', details: null });
+    }
+
+    let restoreTtl = 0;
+    let linkedSuccessfully = false;
+    try {
+      const invitation = await this.prisma.collector.findUnique({
+        where: { id: collectorId },
+        select: { id: true, userId: true, linkStatus: true, inviteCodeHash: true, inviteExpiresAt: true, status: true, isActive: true },
+      });
+      if (
+        !invitation
+        || invitation.userId
+        || invitation.linkStatus !== 'PENDING_LINK'
+        || invitation.inviteCodeHash !== inviteCodeHash
+        || !invitation.inviteExpiresAt
+        || invitation.inviteExpiresAt.getTime() <= Date.now()
+        || invitation.status !== 'ACTIVE'
+        || !invitation.isActive
+      ) {
+        throw new UnauthorizedException({ code: 'COLLECTOR_INVITE_INVALID', message: 'Lời mời người thu gom không hợp lệ hoặc đã hết hạn', details: null });
+      }
+      restoreTtl = Math.max(1, Math.ceil((invitation.inviteExpiresAt.getTime() - Date.now()) / 1000));
+
+      await this.prisma.$transaction(async (transaction) => {
+        const currentUser = await transaction.user.findUnique({
+          where: { id: user.sub },
+          include: { merchant: true, collector: true },
+        });
+        if (!currentUser || currentUser.deletedAt) {
+          throw new UnauthorizedException('Invalid or expired access token');
+        }
+        if (currentUser.collector) {
+          throw new ConflictException({ code: 'USER_ALREADY_LINKED_COLLECTOR', message: 'Tài khoản đã liên kết người thu gom khác', details: null });
+        }
+        if (currentUser.merchant) {
+          throw new ConflictException({ code: 'COLLECTOR_INVITE_ROLE_CONFLICT', message: 'Tài khoản đã có hồ sơ quán và không thể dùng lời mời người thu gom', details: null });
+        }
+        if (currentUser.role !== Role.MERCHANT && currentUser.role !== Role.COLLECTOR) {
+          throw new ForbiddenException({ code: 'COLLECTOR_INVITE_ROLE_CONFLICT', message: 'Tài khoản không thể liên kết người thu gom', details: null });
+        }
+
+        const linked = await transaction.collector.updateMany({
+          where: {
+            id: collectorId,
+            userId: null,
+            linkStatus: 'PENDING_LINK',
+            inviteCodeHash,
+            inviteExpiresAt: { gt: new Date() },
+            status: 'ACTIVE',
+            isActive: true,
+          },
+          data: { userId: currentUser.id, linkStatus: 'LINKED', inviteCodeHash: null, inviteExpiresAt: null },
+        });
+        if (linked.count !== 1) {
+          throw new ConflictException({ code: 'COLLECTOR_INVITE_ALREADY_USED', message: 'Lời mời người thu gom đã được sử dụng', details: null });
+        }
+        await transaction.user.update({ where: { id: currentUser.id }, data: { role: Role.COLLECTOR } });
+      });
+      linkedSuccessfully = true;
+      return this.issueTokens(user.sub);
+    } catch (error) {
+      if (!linkedSuccessfully && restoreTtl > 0) {
+        await this.redis.restoreOneTime(inviteKey, collectorId, Math.min(restoreTtl, COLLECTOR_INVITE_TTL_SECONDS)).catch(() => undefined);
+      }
+      throw error;
+    }
+  }
+
   async adminLogin(input: AdminLoginInput) {
     const configuredPassword = this.config.get<string>('ADMIN_PASSWORD')?.trim();
     if (!configuredPassword) {
@@ -215,7 +300,7 @@ export class AuthService {
       },
     });
     return users.filter((user) => {
-      if (user.zaloId.includes(':')) return false;
+      if (!user.zaloId || user.zaloId.includes(':')) return false;
       if (this.isDemoMode() && user.role !== Role.MERCHANT && user.role !== Role.COLLECTOR) return false;
       if (user.merchant) return user.merchant.status === 'ACTIVE' && user.merchant.isActive && user.merchant.deletedAt === null;
       if (user.collector) return user.collector.status === 'ACTIVE' && user.collector.isActive && user.collector.deletedAt === null;
@@ -223,7 +308,7 @@ export class AuthService {
       return true;
     }).map((user) => ({
       id: user.id,
-      zalo_id: user.zaloId,
+      zalo_id: user.zaloId ?? '',
       phone: user.phone,
       name: user.collector?.displayName ?? user.name,
       role: user.role,
@@ -347,7 +432,7 @@ export class AuthService {
   private serializeUser(user: UserWithProfiles): AuthUserResponse {
     return {
       id: user.id,
-      zalo_id: user.zaloId,
+      zalo_id: user.zaloId ?? '',
       phone: user.phone,
       name: user.name,
       role: user.role,

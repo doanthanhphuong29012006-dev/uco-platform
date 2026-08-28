@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Role } from '@eco-oil/shared-types';
 import { useAuthStore } from './stores/auth-store';
+import { ApiError } from './lib/api';
+import { captureCollectorInvite, clearStoredCollectorInvite, getStoredCollectorInvite } from './lib/collector-invite';
 import { LoginScreen } from './components/LoginScreen';
 import { HomePage } from './pages/HomePage';
 import { HistoryPage } from './pages/HistoryPage';
@@ -23,11 +25,36 @@ export function App() {
   const user = useAuthStore((state) => state.user);
   const hydrated = useAuthStore((state) => state.hydrated);
   const hydrate = useAuthStore((state) => state.hydrate);
+  const acceptCollectorInvite = useAuthStore((state) => state.acceptCollectorInvite);
   const signOut = useAuthStore((state) => state.signOut);
   const outboxStats = useOutboxStats();
   const [tab, setTab] = useState<Tab>('home');
+  const [collectorInviteError, setCollectorInviteError] = useState<string | null>(null);
+  const [collectorInviteRetry, setCollectorInviteRetry] = useState(0);
 
-  useEffect(() => { void hydrate(); }, [hydrate]);
+  useEffect(() => {
+    captureCollectorInvite();
+    void hydrate();
+  }, [hydrate]);
+
+  useEffect(() => {
+    if (!hydrated || !user) return undefined;
+    const code = getStoredCollectorInvite();
+    if (!code) return undefined;
+    let active = true;
+    void acceptCollectorInvite(code).then(() => {
+      if (!active) return;
+      clearStoredCollectorInvite();
+      setCollectorInviteError(null);
+    }).catch((error) => {
+      if (!active) return;
+      if (error instanceof ApiError && ['COLLECTOR_INVITE_INVALID', 'COLLECTOR_INVITE_ALREADY_USED', 'COLLECTOR_INVITE_ROLE_CONFLICT', 'USER_ALREADY_LINKED_COLLECTOR', 'COLLECTOR_LOCKED'].includes(error.code)) {
+        clearStoredCollectorInvite();
+      }
+      setCollectorInviteError(error instanceof ApiError ? error.message : 'Không thể liên kết lời mời người thu gom.');
+    });
+    return () => { active = false; };
+  }, [acceptCollectorInvite, collectorInviteRetry, hydrated, user?.id]);
 
   useEffect(() => {
     if (user?.role !== Role.COLLECTOR) return undefined;
@@ -36,6 +63,10 @@ export function App() {
 
   if (!hydrated) return <div className="app-loading">Đang mở Eco-Oil…</div>;
   if (!user) return <LoginScreen />;
+
+  if (collectorInviteError) {
+    return <StatusView title="Không thể liên kết lời mời" message={collectorInviteError} action={{ label: 'Thử lại', onClick: () => { setCollectorInviteError(null); setCollectorInviteRetry((attempt) => attempt + 1); } }} />;
+  }
 
   if (user.role === Role.COLLECTOR) {
     async function handleCollectorSignOut(): Promise<void> {

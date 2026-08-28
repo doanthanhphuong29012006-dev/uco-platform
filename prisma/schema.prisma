@@ -19,6 +19,11 @@ enum EntityStatus {
   INACTIVE
 }
 
+enum CollectorLinkStatus {
+  PENDING_LINK
+  LINKED
+}
+
 enum MerchantApprovalStatus {
   PENDING
   APPROVED
@@ -131,7 +136,7 @@ enum GradeDecisionSource {
 
 model User {
   id        String    @id @default(uuid()) @db.Uuid
-  zaloId    String    @unique @map("zalo_id")
+  zaloId    String?   @unique @map("zalo_id")
   phone     String?   @unique
   name      String?
   role      Role
@@ -203,17 +208,21 @@ model Merchant {
 
 model Collector {
   id           String                  @id @default(uuid()) @db.Uuid
-  userId       String                  @unique @map("user_id") @db.Uuid
+  userId       String?                 @unique @map("user_id") @db.Uuid
   displayName  String                  @map("display_name")
+  contactPhone String?                 @map("contact_phone")
   vehicleType  String?                 @map("vehicle_type")
   maxCapacityLiters Decimal             @default(100) @map("max_capacity_l") @db.Decimal(10, 2)
   status       EntityStatus            @default(ACTIVE)
   isActive     Boolean                 @default(true) @map("is_active")
+  linkStatus   CollectorLinkStatus     @default(LINKED) @map("link_status")
+  inviteCodeHash String?               @map("invite_code_hash")
+  inviteExpiresAt DateTime?            @map("invite_expires_at")
   lastSeenAt   DateTime?               @map("last_seen_at")
   createdAt    DateTime                @default(now()) @map("created_at")
   updatedAt    DateTime                @updatedAt @map("updated_at")
   deletedAt    DateTime?               @map("deleted_at")
-  user         User                    @relation(fields: [userId], references: [id])
+  user         User?                   @relation(fields: [userId], references: [id])
   orders       CollectionOrder[]
   transactions CollectionTransaction[]
   deliveries   StationDelivery[]

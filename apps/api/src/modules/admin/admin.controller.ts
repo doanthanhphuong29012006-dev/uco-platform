@@ -191,6 +191,12 @@ export class AdminController {
   }
 
   @Roles(Role.ADMIN)
+  @Post('collectors/:id/invite')
+  regenerateCollectorInvite(@Param('id') id: string) {
+    return this.service.regenerateCollectorInvite(id);
+  }
+
+  @Roles(Role.ADMIN)
   @Patch('collectors/:id')
   updateCollector(@Param('id') id: string, @Body() body: unknown) {
     return this.service.updateCollector(id, adminCollectorPatchSchema.parse(body));

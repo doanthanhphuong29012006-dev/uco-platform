@@ -2,7 +2,6 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { HealthModule } from './health/health.module';
 import { AuthModule } from './modules/auth/auth.module';
-import { CollectorsModule } from './modules/collectors/collectors.module';
 import { ContainersModule } from './modules/containers/containers.module';
 import { CollectionsModule } from './modules/collections/collections.module';
 import { MerchantsModule } from './modules/merchants/merchants.module';
@@ -27,7 +26,6 @@ import { ZaloVerificationModule } from './verification/zalo-verification.module'
     AuthModule,
     MerchantsModule,
     OrdersModule,
-    CollectorsModule,
     StationsModule,
     ContainersModule,
     CollectionsModule,

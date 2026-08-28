@@ -14,6 +14,7 @@ interface AuthState {
   hydrate: () => Promise<void>;
   loginSeed: (zaloId: string, phone: string) => Promise<void>;
   loginWithZalo: (accessToken: string) => Promise<void>;
+  acceptCollectorInvite: (code: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -133,6 +134,25 @@ export const useAuthStore = create<AuthState>((set) => ({
       set({ user: session.user, busy: false });
     } catch (error) {
       set({ busy: false, error: loginErrorMessage(error, '/auth/zalo') });
+    }
+  },
+  acceptCollectorInvite: async (code) => {
+    set({ busy: true, error: null });
+    try {
+      const session = await api.acceptCollectorInvite(code);
+      if (!isValidAuthSession(session)) {
+        throw new Error('Phản hồi liên kết người thu gom không hợp lệ.');
+      }
+      tokenStorage.setTokens(session.access_token, session.refresh_token);
+      const user = await api.me();
+      if (!isValidAuthUser(user)) {
+        throw new Error('Phản hồi phiên người thu gom không hợp lệ.');
+      }
+      applyUserScope(user);
+      set({ user, busy: false, error: null });
+    } catch (error) {
+      set({ busy: false, error: loginErrorMessage(error, '/auth/collector-invites/accept') });
+      throw error;
     }
   },
   signOut: async () => {

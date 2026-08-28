@@ -727,12 +727,22 @@ export interface AdminCollectorSummary {
   display_name: string;
   status: EntityStatus;
   is_active: boolean;
+  link_status: 'PENDING_LINK' | 'LINKED';
+  invite_status: 'PENDING' | 'EXPIRED' | null;
+  invite_expires_at: string | null;
   last_seen_at: string | null;
   wards: Array<{ id: string; code: string; name: string }>;
-  user: { id: string; name: string | null; phone: string | null };
+  contact_phone: string | null;
+  user: { id: string; name: string | null; phone: string | null } | null;
   vehicle_type?: string | null;
   max_capacity_l?: number;
   ward_ids?: string[];
+}
+
+export interface AdminCollectorInviteResponse {
+  collector: AdminCollectorSummary;
+  invite_url: string;
+  invite_expires_at: string;
 }
 
 export interface AdminCollectorPerformance {

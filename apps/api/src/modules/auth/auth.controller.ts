@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Inject, Post, Query, Req, Res } from '@nestjs/common';
 import { Role } from '@prisma/client';
-import { adminLoginSchema, refreshTokenSchema, zaloAuthSchema, zaloLocationSchema, zaloOAuthExchangeSchema } from '@eco-oil/validation';
+import { adminLoginSchema, collectorInviteAcceptSchema, refreshTokenSchema, zaloAuthSchema, zaloLocationSchema, zaloOAuthExchangeSchema } from '@eco-oil/validation';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './decorators/current-user.decorator';
@@ -49,6 +49,12 @@ export class AuthController {
   @Post('zalo/exchange')
   exchangeZaloOAuth(@Body() body: unknown) {
     return this.authService.exchangeZaloOAuthCode(zaloOAuthExchangeSchema.parse(body).code);
+  }
+
+  @Roles(Role.MERCHANT, Role.COLLECTOR)
+  @Post('collector-invites/accept')
+  acceptCollectorInvite(@CurrentUser() user: AccessTokenPayload, @Body() body: unknown) {
+    return this.authService.acceptCollectorInvite(user, collectorInviteAcceptSchema.parse(body).code);
   }
 
   @Public()

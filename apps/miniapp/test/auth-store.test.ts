@@ -46,3 +46,37 @@ test('OAuth exchange then /me bootstraps the authenticated store without a third
     else delete (globalThis as { window?: unknown }).window;
   }
 });
+
+test('authenticated collector invite acceptance exchanges the session and routes by the refreshed role', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith('/auth/collector-invites/accept')) {
+      assert.equal(JSON.parse(String(init?.body)).code, 'collector-invite-fixture');
+      assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer existing-access-fixture');
+      return new Response(JSON.stringify({
+        access_token: 'collector-access-fixture',
+        refresh_token: 'collector-refresh-fixture',
+        user: { id: 'user-collector', zalo_id: 'zalo-collector', phone: '0900000000', name: 'Collector', role: 'COLLECTOR', merchantId: null, collectorId: 'collector-1', merchantApprovalStatus: null, merchantRejectionReason: null },
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    if (url.endsWith('/auth/me')) {
+      assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer collector-access-fixture');
+      return new Response(JSON.stringify({ id: 'user-collector', zalo_id: 'zalo-collector', phone: '0900000000', name: 'Collector', role: 'COLLECTOR', merchantId: null, collectorId: 'collector-1', merchantApprovalStatus: null, merchantRejectionReason: null }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    throw new Error(`Unexpected auth URL: ${url}`);
+  };
+
+  tokenStorage.setTokens('existing-access-fixture', 'existing-refresh-fixture');
+  useAuthStore.setState({ user: { id: 'user-collector', zalo_id: 'zalo-collector', phone: '0900000000', name: 'Collector', role: 'MERCHANT', merchantId: null, collectorId: null, merchantApprovalStatus: null, merchantRejectionReason: null }, hydrated: true, busy: false, error: null });
+  try {
+    await useAuthStore.getState().acceptCollectorInvite('collector-invite-fixture');
+    assert.equal(useAuthStore.getState().user?.role, 'COLLECTOR');
+    assert.equal(useAuthStore.getState().user?.collectorId, 'collector-1');
+    assert.equal(tokenStorage.getAccessToken(), 'collector-access-fixture');
+  } finally {
+    tokenStorage.clear();
+    useAuthStore.setState({ user: null, hydrated: false, busy: false, error: null });
+    globalThis.fetch = originalFetch;
+  }
+});
