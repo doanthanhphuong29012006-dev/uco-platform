@@ -131,16 +131,17 @@ select, input { width: 100%; min-height: 48px; border: 1px solid #cfe0d7; border
 .brand-header strong { font-size: .95rem; }
 .header-signout { margin-left: auto; min-height: 38px; padding: 0 12px; border: 1px solid #b9dfca; border-radius: 10px; color: var(--green-dark); background: white; font-weight: 800; }
 .login-logo { width: 112px; height: 112px; margin: 0 auto 10px; }
-.approval-page { display: grid; place-items: center; min-height: 100vh; padding: 28px 22px; text-align: center; }
+.approval-page { display: flex; flex-direction: column; align-items: center; min-height: 100svh; width: 100%; overflow-x: hidden; padding: max(44px, env(safe-area-inset-top)) clamp(20px, 5vw, 24px) max(36px, env(safe-area-inset-bottom)); text-align: center; }
 .approval-page .approval-logo { width: 86px; height: 86px; margin-bottom: 18px; }
 .approval-page h1 { margin: 12px 0 8px; font-size: 1.45rem; }
 .approval-page > p { max-width: 360px; color: var(--muted); line-height: 1.55; }
 .approval-page .hotline { color: var(--green); font-weight: 800; }
 .approval-page .primary-button, .approval-page .secondary-button { width: min(360px, 100%); margin-top: 12px; }
-.approval-form { display: grid; gap: 11px; width: min(430px, 100%); margin-top: 15px; text-align: left; }
-.approval-form label { display: grid; gap: 6px; font-size: .82rem; font-weight: 750; }
-.approval-form input { width: 100%; min-height: 44px; border: 1px solid #cfe0d7; border-radius: 11px; padding: 0 12px; color: inherit; background: white; font: inherit; }
-.approval-form .primary-button { margin-top: 4px; }
+.approval-form { display: grid; gap: 14px; width: min(430px, 100%); margin-top: 15px; text-align: left; }
+.approval-form label { display: grid; gap: 7px; width: 100%; font-size: .82rem; font-weight: 750; }
+.approval-form input, .approval-form select { width: 100%; min-height: 44px; border: 1px solid #cfe0d7; border-radius: 11px; padding: 0 12px; color: inherit; background: white; font: inherit; }
+.approval-form .primary-button { width: 100%; margin-top: 2px; }
+.approval-page > .text-button { width: min(430px, 100%); margin-top: 8px; text-align: center; }
 .notice-text { color: var(--green) !important; font-weight: 700; }
 
 .collector-content { background: #f5f8f6; min-height: 100vh; }
