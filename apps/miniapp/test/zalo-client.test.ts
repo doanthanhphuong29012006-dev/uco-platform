@@ -51,6 +51,21 @@ test('mock getLocation returns the real browser geolocation', async () => {
   assert.deepEqual(await client.getLocation({ lat: 10, lng: 106 }), { lat: 21.0333, lng: 105.85 });
 });
 
+test('browser-like Zalo globals do not activate the native runtime', async () => {
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+      zmp: {},
+      zmpSdk: {},
+      ZaloMiniApp: {},
+      ZaloMiniAppSDK: {},
+      ZaloJavaScriptInterface: {},
+    },
+  });
+  const { isZaloEnvironment } = await import('../src/lib/zalo-client');
+  assert.equal(isZaloEnvironment(), false);
+});
+
 test('mock getLocation falls back to the supplied ward center without a hardcoded Saigon coordinate', async () => {
   setBrowserGeolocation((_success, failure) => failure(new Error('permission denied')));
   const { createZaloClient } = await import('../src/lib/zalo-client');

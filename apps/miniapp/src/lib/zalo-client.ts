@@ -56,13 +56,13 @@ export function isZaloEnvironment(): boolean {
     return false;
   }
   const runtime = window as WindowWithZaloRuntime;
+  const nativeStorage = runtime.ZaloMiniAppSDK?.nativeStorage;
   return Boolean(
-    runtime.zmp
-      || runtime.__zmp
-      || runtime.zmpSdk
-      || runtime.ZaloMiniApp
-      || runtime.ZaloMiniAppSDK
-      || runtime.ZaloJavaScriptInterface,
+    runtime.ZaloJavaScriptInterface
+      && nativeStorage
+      && typeof nativeStorage.getItem === 'function'
+      && typeof nativeStorage.setItem === 'function'
+      && typeof nativeStorage.removeItem === 'function',
   );
 }
 

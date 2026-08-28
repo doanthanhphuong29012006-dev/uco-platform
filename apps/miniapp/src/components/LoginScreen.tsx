@@ -5,6 +5,7 @@ import { ApiError, API_BASE_URL, api } from '../lib/api';
 import { isZaloEnvironment, zaloClient } from '../lib/zalo-client';
 import { useAuthStore } from '../stores/auth-store';
 import { getSeedLoginCredentials, shouldShowDevelopmentLogin } from './login-screen-logic';
+import { WebZaloLoginLink } from './WebZaloLoginLink';
 
 export function LoginScreen() {
   const demoModeEnabled = import.meta.env.VITE_DEMO_MODE === 'true';
@@ -96,7 +97,7 @@ export function LoginScreen() {
       <p className="eyebrow">ECO-OIL</p>
       <h1>Thu gom dầu dễ dàng</h1>
       <p className="lead">Đăng nhập để báo can sẵn sàng và theo dõi lịch sử thu gom của quán.</p>
-      {useNativeZaloLogin ? <button className="primary-button" onClick={() => void handleZaloLogin()} disabled={busy || showDevelopmentLogin}>{showDevelopmentLogin ? 'Chọn tài khoản thử nghiệm để tiếp tục' : busy ? 'Đang đăng nhập…' : 'Đăng nhập bằng Zalo'}</button> : showDevelopmentLogin ? <button className="primary-button" disabled>Chọn tài khoản thử nghiệm để tiếp tục</button> : <a className="primary-button login-oauth-link" href={zaloOAuthStartUrl}>Đăng nhập bằng Zalo</a>}
+      {useNativeZaloLogin ? <button className="primary-button" onClick={() => void handleZaloLogin()} disabled={busy || showDevelopmentLogin}>{showDevelopmentLogin ? 'Chọn tài khoản thử nghiệm để tiếp tục' : busy ? 'Đang đăng nhập…' : 'Đăng nhập bằng Zalo'}</button> : showDevelopmentLogin ? <button className="primary-button" disabled>Chọn tài khoản thử nghiệm để tiếp tục</button> : <WebZaloLoginLink href={zaloOAuthStartUrl} />}
       {showDevelopmentLogin ? <p className="error-text">Backend đang ở môi trường phát triển. Chọn tài khoản thử nghiệm để tiếp tục.</p> : null}
       {oauthStartError ? <p className="error-text">{oauthStartError}</p> : null}
       {showDevelopmentLogin ? (
