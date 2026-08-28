@@ -1,6 +1,7 @@
 import type {
   ApiErrorBody,
   AdminWardSummary,
+  AuthSession,
   AuthUser,
   DevAccount,
   CollectionCreateRequest,
@@ -13,6 +14,7 @@ import type {
   MerchantDashboardResponse,
   MerchantTransaction,
   MerchantRegistrationRequest,
+  MerchantOnboardingRequest,
   PagedResponse,
   PaymentListResponse,
   SyncBatchResponse,
@@ -23,7 +25,7 @@ import type {
 import { tokenStorage } from './storage';
 import { resolveApiBaseUrl } from './api-base-url';
 
-export const API_BASE_URL = resolveApiBaseUrl(import.meta.env.MODE, import.meta.env.VITE_API_BASE_URL);
+export const API_BASE_URL = resolveApiBaseUrl(import.meta.env?.MODE ?? 'test', import.meta.env?.VITE_API_BASE_URL);
 
 export class ApiError extends Error {
   readonly code: string;
@@ -140,23 +142,25 @@ export const api = {
   updateMerchant: (id: string, payload: Partial<MerchantRegistrationRequest>) =>
     request<unknown>(`/merchants/${id}`, { method: 'PATCH', body: payload }),
   loginSeed: (zaloId: string, phone: string) =>
-    request<{ access_token: string; refresh_token: string; user: AuthUser }>('/auth/zalo', {
+    request<AuthSession>('/auth/zalo', {
       method: 'POST',
       body: { zalo_id: zaloId, phone },
       retry: false,
     }),
   loginWithZaloAccessToken: (accessToken: string) =>
-    request<{ access_token: string; refresh_token: string; user: AuthUser }>('/auth/zalo', {
+    request<AuthSession>('/auth/zalo', {
       method: 'POST',
       body: { access_token: accessToken },
       retry: false,
     }),
   exchangeZaloOAuthCode: (code: string) =>
-    request<{ access_token: string; refresh_token: string; user: AuthUser }>('/auth/zalo/exchange', {
+    request<AuthSession>('/auth/zalo/exchange', {
       method: 'POST',
       body: { code },
       retry: false,
     }),
+  registerMyMerchant: (payload: MerchantOnboardingRequest) =>
+    request<unknown>('/merchants/me', { method: 'POST', body: payload, retry: false }),
   resolveZaloLocation: (accessToken: string, locationToken: string) =>
     request<GeoPoint>('/auth/zalo/location', {
       method: 'POST',

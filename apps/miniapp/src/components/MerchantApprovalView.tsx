@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { AuthUser } from '@eco-oil/shared-types';
+import type { AdminWardSummary } from '@eco-oil/shared-types';
 import { api, ApiError } from '../lib/api';
 import { zaloClient } from '../lib/zalo-client';
 import { useAuthStore } from '../stores/auth-store';
@@ -11,7 +12,15 @@ export function MerchantApprovalView({ user }: { user: AuthUser }) {
   const [editing, setEditing] = useState(user.merchantApprovalStatus === 'REJECTED');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [wards, setWards] = useState<AdminWardSummary[]>([]);
+  const [wardId, setWardId] = useState('');
   const [form, setForm] = useState({ name: user.name ?? '', address: '', phone: user.phone ?? '', business_type: 'Quán ăn', lat: null as number | null, lng: null as number | null });
+  const hydrate = useAuthStore((state) => state.hydrate);
+
+  useEffect(() => {
+    if (user.merchantId) return;
+    void api.registrationWards().then(setWards).catch(() => setMessage('Không tải được danh sách phường. Vui lòng thử lại.'));
+  }, [user.merchantId]);
 
   async function save() {
     if (!user.merchantId) return;
@@ -25,6 +34,23 @@ export function MerchantApprovalView({ user }: { user: AuthUser }) {
     } catch (error) {
       setMessage(error instanceof ApiError ? error.message : 'Không thể gửi lại hồ sơ. Vui lòng thử lại.');
     } finally { setBusy(false); }
+  }
+
+  async function registerMerchant(): Promise<void> {
+    if (user.merchantId || !wardId) return;
+    setBusy(true); setMessage(null);
+    try {
+      const point = await zaloClient.getLocation();
+      if (!point) throw new Error('Không lấy được vị trí GPS. Vui lòng bật quyền vị trí rồi thử lại.');
+      await api.registerMyMerchant({ ...form, ward_id: wardId, lat: point.lat, lng: point.lng });
+      await hydrate();
+    } catch (error) {
+      setMessage(error instanceof ApiError ? error.message : error instanceof Error ? error.message : 'Không thể tạo hồ sơ quán. Vui lòng thử lại.');
+    } finally { setBusy(false); }
+  }
+
+  if (!user.merchantId) {
+    return <main className="approval-page"><img className="approval-logo" src="/logo.svg" alt="Eco-Oil" /><h1>Hoàn tất hồ sơ quán</h1><p>Bạn đã đăng nhập thành công. Bổ sung thông tin quán để gửi hồ sơ xét duyệt.</p><div className="approval-form"><label>Tên quán<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label><label>Địa chỉ<input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} /></label><label>Số điện thoại<input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></label><label>Loại hình<input value={form.business_type} onChange={(e) => setForm({ ...form, business_type: e.target.value })} /></label><label>Phường<select value={wardId} onChange={(e) => setWardId(e.target.value)} disabled={!wards.length}><option value="">Chọn phường</option>{wards.map((ward) => <option key={ward.id} value={ward.id}>{ward.name}, {ward.district}</option>)}</select></label><button className="primary-button" onClick={() => void registerMerchant()} disabled={busy || !wardId || !form.name.trim() || !form.address.trim()}>{busy ? 'Đang gửi…' : 'Gửi hồ sơ quán'}</button></div>{message && <p className="notice-text">{message}</p>}<button className="text-button" onClick={signOut}>Đăng xuất</button></main>;
   }
 
   if (editing) return <main className="approval-page"><img className="approval-logo" src="/logo.svg" alt="Eco-Oil" /><h1>Cập nhật hồ sơ quán</h1><p>Vui lòng chỉnh lại thông tin rồi gửi lại để Eco-Oil xét duyệt.</p><div className="approval-form"><label>Tên quán<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label><label>Địa chỉ<input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} /></label><label>Số điện thoại<input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></label><label>Loại hình<input value={form.business_type} onChange={(e) => setForm({ ...form, business_type: e.target.value })} /></label><button className="primary-button" onClick={() => void save()} disabled={busy}>{busy ? 'Đang gửi…' : 'Gửi lại hồ sơ'}</button></div>{message && <p className="notice-text">{message}</p>}<button className="text-button" onClick={signOut}>Đăng xuất</button></main>;

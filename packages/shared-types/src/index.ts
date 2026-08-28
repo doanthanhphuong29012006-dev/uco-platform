@@ -142,13 +142,30 @@ export interface ApiErrorBody {
 export interface AuthUser {
   id: string;
   zalo_id: string;
-  phone: string;
+  phone: string | null;
   name: string | null;
   role: Role;
   merchantId: string | null;
   collectorId: string | null;
   merchantApprovalStatus: MerchantApprovalStatus | null;
   merchantRejectionReason: string | null;
+}
+
+export interface AuthSession {
+  access_token: string;
+  refresh_token: string;
+  user: AuthUser;
+}
+
+export interface MerchantOnboardingRequest {
+  name: string;
+  address: string;
+  phone?: string;
+  business_type?: string;
+  lat: number;
+  lng: number;
+  ward_id: string;
+  avg_daily_liters?: number;
 }
 
 export interface DevAccount {

@@ -5,6 +5,7 @@ import {
   entityStatusSchema,
   merchantListQuerySchema,
   merchantPatchSchema,
+  merchantRegisterSchema,
   merchantPublicRegisterSchema,
 } from '@eco-oil/validation';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -21,6 +22,12 @@ export class MerchantsController {
   @Post('register')
   register(@Body() body: unknown) {
     return this.service.registerPublic(merchantPublicRegisterSchema.parse(body));
+  }
+
+  @Roles(Role.MERCHANT)
+  @Post('me')
+  registerForAuthenticatedUser(@CurrentUser() user: AccessTokenPayload, @Body() body: unknown) {
+    return this.service.register(user, merchantRegisterSchema.parse(body));
   }
 
   @Public()

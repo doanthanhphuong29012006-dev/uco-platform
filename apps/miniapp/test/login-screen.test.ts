@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Role } from '@eco-oil/shared-types';
 import type { DevAccount } from '@eco-oil/shared-types';
-import { getSeedLoginCredentials, isValidAuthUser, shouldShowDevelopmentLogin } from '../src/components/login-screen-logic';
+import { getSeedLoginCredentials, isValidAuthSession, isValidAuthUser, shouldShowDevelopmentLogin } from '../src/components/login-screen-logic';
 
 test('backend mock accounts are usable even when the Zalo SDK client is real', () => {
   const account: DevAccount = {
@@ -54,6 +54,20 @@ test('demo merchant selections preserve their distinct Zalo identities', () => {
 test('missing profile identity is rejected instead of falling back to another merchant', () => {
   const base = { id: 'user-1', zalo_id: 'zalo_demo_merchant_05', phone: '0901000005', name: 'Cơm Nhà Hồ Gươm', role: Role.MERCHANT, merchantId: 'merchant-05', collectorId: null, merchantApprovalStatus: 'APPROVED', merchantRejectionReason: null };
   assert.equal(isValidAuthUser(base), true);
-  assert.equal(isValidAuthUser({ ...base, merchantId: null }), false);
+  assert.equal(isValidAuthUser({ ...base, merchantId: null }), true);
+  assert.equal(isValidAuthUser({ ...base, id: '' }), false);
   assert.equal(isValidAuthUser(null), false);
+});
+
+test('normalized auth session accepts a new authenticated user without a merchant', () => {
+  assert.equal(isValidAuthSession({
+    access_token: 'access-token-fixture',
+    refresh_token: 'refresh-token-fixture',
+    user: { id: 'user-1', zalo_id: 'zalo-new', phone: null, name: 'New user', role: Role.MERCHANT, merchantId: null, collectorId: null, merchantApprovalStatus: null, merchantRejectionReason: null },
+  }), true);
+  assert.equal(isValidAuthSession({
+    access_token: 'access-token-fixture',
+    refresh_token: 'refresh-token-fixture',
+    user: { zalo_id: 'zalo-new', role: Role.MERCHANT, merchantId: null },
+  }), false);
 });

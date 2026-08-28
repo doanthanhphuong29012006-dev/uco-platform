@@ -16,6 +16,7 @@ describe('Real Zalo OAuth callback (e2e)', () => {
   const users = new Map<string, Record<string, unknown>>();
   const refreshTokens: Record<string, unknown>[] = [];
   const handoffTtls = new Map<string, number>();
+  let merchantForOauth: Record<string, unknown> | null = null;
   const fakePrisma = {
     user: {
       findUnique: jest.fn(async ({ where }: { where: { id?: string; zaloId?: string } }) => {
@@ -28,7 +29,7 @@ describe('Real Zalo OAuth callback (e2e)', () => {
         const user = { ...(current ?? create), ...(current ? update : {}), id: current?.id ?? `user-${where.zaloId}` };
         const result = {
           ...user,
-          merchant: { id: 'merchant-oauth-test', approvalStatus: 'APPROVED', rejectionReason: null },
+          merchant: merchantForOauth,
           collector: null,
           station: null,
         };
@@ -160,14 +161,20 @@ describe('Real Zalo OAuth callback (e2e)', () => {
         expect(handoffTtls.get(key)).toBe(ttl);
       }
       for (const handoffCode of handoffCodes) {
-        await request(app.getHttpServer())
+        const exchange = await request(app.getHttpServer())
           .post('/api/v1/auth/zalo/exchange')
           .send({ code: handoffCode })
           .expect(201)
           .expect((result) => {
             expect(result.body.access_token).toEqual(expect.any(String));
             expect(result.body.refresh_token).toEqual(expect.any(String));
+            expect(result.body.user).toMatchObject({ id: 'user-' + zaloId, zalo_id: zaloId, role: 'MERCHANT', merchantId: null });
           });
+        await request(app.getHttpServer())
+          .get('/api/v1/auth/me')
+          .set('Authorization', `Bearer ${exchange.body.access_token}`)
+          .expect(200)
+          .expect((result) => expect(result.body).toMatchObject({ id: 'user-' + zaloId, zalo_id: zaloId, role: 'MERCHANT', merchantId: null }));
       }
       await request(app.getHttpServer())
         .post('/api/v1/auth/zalo/exchange')
@@ -183,6 +190,33 @@ describe('Real Zalo OAuth callback (e2e)', () => {
       expect(refreshTokens).toHaveLength(2);
       expect(fetchMock).toHaveBeenCalledTimes(4);
     } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it('keeps the normalized session DTO when the existing user has a merchant', async () => {
+    merchantForOauth = { id: 'merchant-oauth-test', approvalStatus: 'APPROVED', rejectionReason: null };
+    const fetchMock = jest.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      if (String(input) === 'https://oauth.zaloapp.com/v4/access_token') {
+        return new Response(JSON.stringify({ access_token: 'zalo-access', refresh_token: 'zalo-refresh', expires_in: '3600' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ error: 0, message: 'Success', id: zaloId, name: 'OAuth Tester' }), { status: 200 });
+    });
+    try {
+      const response = await start();
+      const stateCookie = cookieFrom(response);
+      const callback = await request(app.getHttpServer())
+        .get('/api/v1/auth/zalo/callback')
+        .query({ code: 'oauth-code-with-merchant', state: stateCookie.slice(stateCookie.indexOf('=') + 1) })
+        .set('Cookie', stateCookie)
+        .expect(302);
+      const code = new URL(callback.headers.location).searchParams.get('zalo_code');
+      const exchange = await request(app.getHttpServer()).post('/api/v1/auth/zalo/exchange').send({ code }).expect(201);
+      expect(exchange.body.user).toMatchObject({ id: 'user-' + zaloId, zalo_id: zaloId, role: 'MERCHANT', merchantId: 'merchant-oauth-test' });
+      const me = await request(app.getHttpServer()).get('/api/v1/auth/me').set('Authorization', `Bearer ${exchange.body.access_token}`).expect(200);
+      expect(me.body).toMatchObject({ id: 'user-' + zaloId, zalo_id: zaloId, role: 'MERCHANT', merchantId: 'merchant-oauth-test' });
+    } finally {
+      merchantForOauth = null;
       fetchMock.mockRestore();
     }
   });

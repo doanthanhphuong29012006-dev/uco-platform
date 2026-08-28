@@ -3,7 +3,7 @@ import { create } from 'zustand';
 import { ApiError, API_BASE_URL, api, setUnauthorizedHandler } from '../lib/api';
 import { tokenStorage } from '../lib/storage';
 import { setOutboxOwner } from '../lib/outbox-db';
-import { isValidAuthUser } from '../components/login-screen-logic';
+import { isValidAuthSession, isValidAuthUser } from '../components/login-screen-logic';
 import { consumeZaloOAuthCode } from '../lib/oauth-callback';
 
 interface AuthState {
@@ -69,8 +69,8 @@ export const useAuthStore = create<AuthState>((set) => ({
       }
       if (handoffSession) {
         try {
-          if (!isValidAuthUser(handoffSession.user)) {
-            throw new Error('Phản hồi đăng nhập không có định danh quán/người dùng hợp lệ.');
+          if (!isValidAuthSession(handoffSession)) {
+            throw new Error('Phản hồi đăng nhập không có định danh người dùng hợp lệ.');
           }
           tokenStorage.setTokens(handoffSession.access_token, handoffSession.refresh_token);
           const user = await api.me();
@@ -111,8 +111,8 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ busy: true, error: null });
     try {
       const session = await api.loginSeed(zaloId, phone);
-      if (!isValidAuthUser(session.user)) {
-        throw new Error('Phản hồi đăng nhập không có định danh quán/người dùng hợp lệ.');
+      if (!isValidAuthSession(session)) {
+        throw new Error('Phản hồi đăng nhập không có định danh người dùng hợp lệ.');
       }
       tokenStorage.setTokens(session.access_token, session.refresh_token);
       applyUserScope(session.user);
@@ -125,8 +125,8 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ busy: true, error: null });
     try {
       const session = await api.loginWithZaloAccessToken(accessToken);
-      if (!isValidAuthUser(session.user)) {
-        throw new Error('Phản hồi đăng nhập không có định danh quán/người dùng hợp lệ.');
+      if (!isValidAuthSession(session)) {
+        throw new Error('Phản hồi đăng nhập không có định danh người dùng hợp lệ.');
       }
       tokenStorage.setTokens(session.access_token, session.refresh_token);
       applyUserScope(session.user);

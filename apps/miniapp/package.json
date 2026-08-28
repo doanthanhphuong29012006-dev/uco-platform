@@ -9,7 +9,7 @@
     "build:zmp": "tsc -b && vite build --mode production && npx --yes zmp-cli@4.0.3 sync-config dist/index.html && node -e \"require('node:fs').copyFileSync('app-config.json', 'dist/app-config.json')\"",
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test test/outbox.test.ts test/outbox-persistence.test.ts test/zalo-client.test.ts test/container-code.test.ts test/station-delivery.test.ts test/oil-grade-selector.test.ts test/grade-photo-picker.test.ts test/oil-image-analyzer.test.ts test/collector-flow.test.ts test/login-screen.test.ts test/api-base-url.test.ts test/oauth-callback.test.ts"
+    "test": "node --import tsx --test test/outbox.test.ts test/outbox-persistence.test.ts test/zalo-client.test.ts test/container-code.test.ts test/station-delivery.test.ts test/oil-grade-selector.test.ts test/grade-photo-picker.test.ts test/oil-image-analyzer.test.ts test/collector-flow.test.ts test/login-screen.test.ts test/api-base-url.test.ts test/oauth-callback.test.ts test/auth-store.test.ts test/production-web-login.test.tsx"
   },
   "dependencies": {
     "@eco-oil/shared-types": "workspace:*",
