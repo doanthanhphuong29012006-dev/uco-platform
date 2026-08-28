@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Inject, Post, Query, Req, Res } from '@nestjs/common';
 import { Role } from '@prisma/client';
-import { adminLoginSchema, refreshTokenSchema, zaloAuthSchema, zaloLocationSchema } from '@eco-oil/validation';
+import { adminLoginSchema, refreshTokenSchema, zaloAuthSchema, zaloLocationSchema, zaloOAuthExchangeSchema } from '@eco-oil/validation';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './decorators/current-user.decorator';
@@ -38,11 +38,17 @@ export class AuthController {
       errorDescription: this.optionalStringQuery(query.error_description),
     });
     response.setHeader('Set-Cookie', [
-      this.cookie(ZALO_ACCESS_COOKIE, result.access_token, 15 * 60, '/'),
-      this.cookie(ZALO_REFRESH_COOKIE, result.refresh_token, 30 * 24 * 60 * 60, '/'),
+      this.cookie(ZALO_ACCESS_COOKIE, '', 0, '/'),
+      this.cookie(ZALO_REFRESH_COOKIE, '', 0, '/'),
       this.cookie(ZALO_OAUTH_STATE_COOKIE, '', 0, '/api/v1/auth/zalo'),
     ]);
-    response.redirect(this.authService.oauthSuccessRedirect());
+    response.redirect(this.authService.oauthSuccessRedirect(result.code));
+  }
+
+  @Public()
+  @Post('zalo/exchange')
+  exchangeZaloOAuth(@Body() body: unknown) {
+    return this.authService.exchangeZaloOAuthCode(zaloOAuthExchangeSchema.parse(body).code);
   }
 
   @Public()

@@ -25,9 +25,29 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return this.client ? this.client.ping() : 'DISABLED';
   }
 
+  async setOneTime(key: string, value: string, ttlSeconds: number): Promise<void> {
+    if (!this.client) throw new Error('Redis is not configured');
+    const result = await this.client.set(key, value, 'EX', ttlSeconds, 'NX');
+    if (result !== 'OK') throw new Error('Redis one-time key was not created');
+  }
+
+  async consumeOneTime(key: string): Promise<string | null> {
+    if (!this.client) throw new Error('Redis is not configured');
+    const value = await this.client.eval(
+      'local value = redis.call("GET", KEYS[1]); if value then redis.call("DEL", KEYS[1]); end; return value',
+      1,
+      key,
+    );
+    return typeof value === 'string' ? value : null;
+  }
+
   async onModuleDestroy(): Promise<void> {
     if (this.client && this.client.status !== 'end') {
-      await this.client.quit();
+      try {
+        await this.client.quit();
+      } catch {
+        this.client.disconnect();
+      }
     }
   }
 }

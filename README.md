@@ -179,7 +179,7 @@ Xem `.env.example` cho development và `.env.test` cho e2e. Các biến runtime:
 | `ZALO_APP_ID` | App ID Zalo, chỉ ở backend khi dùng OAuth thật |
 | `ZALO_APP_SECRET` | App Secret Zalo, chỉ ở backend và secret manager |
 | `ZALO_OAUTH_CALLBACK_URL` | Callback URL đã đăng ký với Zalo |
-| `ZALO_OAUTH_SUCCESS_REDIRECT_URL` | URL frontend sau OAuth callback |
+| `ZALO_OAUTH_SUCCESS_REDIRECT_URL` | URL frontend callback sau OAuth; nhận one-time `zalo_code` |
 | `GEO_MISMATCH_THRESHOLD_M` | Ngưỡng cảnh báo vị trí thu gom |
 | `DELIVERY_VARIANCE_THRESHOLD_PCT` | Ngưỡng lệch khi giao trạm |
 

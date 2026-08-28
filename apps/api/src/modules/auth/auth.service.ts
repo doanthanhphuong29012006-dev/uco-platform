@@ -9,12 +9,15 @@ import { PrismaService } from '../../prisma/prisma.service';
 import {
   ACCESS_TOKEN_TTL_SECONDS,
   REFRESH_TOKEN_TTL_SECONDS,
+  ZALO_OAUTH_HANDOFF_KEY_PREFIX,
+  ZALO_OAUTH_HANDOFF_TTL_SECONDS,
   ZALO_OAUTH_STATE_TTL_SECONDS,
   ZALO_AUTH_PROVIDER,
 } from './auth.constants';
 import type { AccessTokenPayload, AuthUserResponse } from './auth.types';
 import type { IZaloAuthProvider } from './providers/zalo-auth.provider';
 import { ZaloLocationProvider } from './providers/zalo-location.provider';
+import { RedisService } from '../../redis/redis.service';
 
 type UserWithProfiles = Prisma.UserGetPayload<{
   include: {
@@ -32,6 +35,7 @@ export class AuthService {
     @Inject(ConfigService) private readonly config: ConfigService,
     @Inject(ZALO_AUTH_PROVIDER) private readonly zaloProvider: IZaloAuthProvider,
     @Inject(ZaloLocationProvider) private readonly zaloLocationProvider: ZaloLocationProvider,
+    @Inject(RedisService) private readonly redis: RedisService,
   ) {}
 
   async resolveZaloLocation(input: ZaloLocationInput): Promise<{ lat: number; lng: number }> {
@@ -129,8 +133,10 @@ export class AuthService {
     return { authorizationUrl: authorization.toString(), state };
   }
 
-  oauthSuccessRedirect(): string {
-    return this.requiredAbsoluteUrl('ZALO_OAUTH_SUCCESS_REDIRECT_URL');
+  oauthSuccessRedirect(handoffCode: string): string {
+    const redirect = new URL(this.requiredAbsoluteUrl('ZALO_OAUTH_SUCCESS_REDIRECT_URL'));
+    redirect.searchParams.set('zalo_code', handoffCode);
+    return redirect.toString();
   }
 
   async completeZaloOAuth(input: {
@@ -159,7 +165,25 @@ export class AuthService {
       throw new ForbiddenException({ code: 'ADMIN_LOGIN_REQUIRES_PASSWORD', message: 'Tài khoản quản trị phải đăng nhập bằng mật khẩu', details: null });
     }
     const user = await this.upsertZaloUser(verified.zaloId, verified.phone, verified.name);
-    return this.issueTokens(user.id);
+    return this.createOAuthHandoff(user.id);
+  }
+
+  async exchangeZaloOAuthCode(code: string) {
+    const normalizedCode = code.trim();
+    if (!normalizedCode || normalizedCode.length > 256) {
+      throw new UnauthorizedException({ code: 'ZALO_OAUTH_HANDOFF_INVALID', message: 'Mã bàn giao đăng nhập không hợp lệ hoặc đã hết hạn', details: null });
+    }
+
+    let userId: string | null;
+    try {
+      userId = await this.redis.consumeOneTime(`${ZALO_OAUTH_HANDOFF_KEY_PREFIX}${this.hashToken(normalizedCode)}`);
+    } catch {
+      throw new ServiceUnavailableException({ code: 'ZALO_OAUTH_HANDOFF_UNAVAILABLE', message: 'Không hoàn tất được phiên đăng nhập Zalo', details: null });
+    }
+    if (!userId) {
+      throw new UnauthorizedException({ code: 'ZALO_OAUTH_HANDOFF_INVALID', message: 'Mã bàn giao đăng nhập không hợp lệ hoặc đã hết hạn', details: null });
+    }
+    return this.issueTokens(userId);
   }
 
   async adminLogin(input: AdminLoginInput) {
@@ -336,6 +360,20 @@ export class AuthService {
 
   private hashToken(token: string): string {
     return createHash('sha256').update(token).digest('hex');
+  }
+
+  private async createOAuthHandoff(userId: string): Promise<{ code: string }> {
+    const code = randomBytes(32).toString('base64url');
+    try {
+      await this.redis.setOneTime(
+        `${ZALO_OAUTH_HANDOFF_KEY_PREFIX}${this.hashToken(code)}`,
+        userId,
+        ZALO_OAUTH_HANDOFF_TTL_SECONDS,
+      );
+    } catch {
+      throw new ServiceUnavailableException({ code: 'ZALO_OAUTH_HANDOFF_UNAVAILABLE', message: 'Không tạo được phiên bàn giao đăng nhập Zalo', details: null });
+    }
+    return { code };
   }
 
   private isDemoMode(): boolean {

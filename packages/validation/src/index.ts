@@ -27,6 +27,11 @@ export const zaloLocationSchema = z.object({
 }).strict();
 export type ZaloLocationInput = z.infer<typeof zaloLocationSchema>;
 
+export const zaloOAuthExchangeSchema = z.object({
+  code: z.string().trim().min(1).max(256),
+}).strict();
+export type ZaloOAuthExchangeInput = z.infer<typeof zaloOAuthExchangeSchema>;
+
 export const adminLoginSchema = z.object({
   zalo_id: z.string().trim().min(1).max(120),
   phone: phoneSchema,

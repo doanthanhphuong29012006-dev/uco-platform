@@ -4,6 +4,7 @@ import { ApiError, API_BASE_URL, api, setUnauthorizedHandler } from '../lib/api'
 import { tokenStorage } from '../lib/storage';
 import { setOutboxOwner } from '../lib/outbox-db';
 import { isValidAuthUser } from '../components/login-screen-logic';
+import { consumeZaloOAuthCode } from '../lib/oauth-callback';
 
 interface AuthState {
   user: AuthUser | null;
@@ -47,27 +48,64 @@ function loginErrorMessage(error: unknown, endpoint: string): string {
   return error instanceof Error ? error.message : 'Đăng nhập thất bại. Vui lòng thử lại.';
 }
 
+let hydratePromise: Promise<void> | null = null;
+
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   hydrated: false,
   busy: false,
   error: null,
-  hydrate: async () => {
-    try {
-      const user = await api.me();
-      if (!isValidAuthUser(user)) {
+  hydrate: () => {
+    if (hydratePromise) return hydratePromise;
+    hydratePromise = (async () => {
+      let handoffSession: Awaited<ReturnType<typeof api.exchangeZaloOAuthCode>> | null = null;
+      try {
+        handoffSession = await consumeZaloOAuthCode((code) => api.exchangeZaloOAuthCode(code));
+      } catch (error) {
         tokenStorage.clear();
         applyUserScope(null);
-        set({ user: null, hydrated: true, error: 'Phiên đăng nhập không hợp lệ. Vui lòng chọn lại tài khoản.' });
+        set({ user: null, hydrated: true, busy: false, error: loginErrorMessage(error, '/auth/zalo/exchange') });
         return;
       }
-      applyUserScope(user);
-      set({ user, hydrated: true });
-    } catch {
-      tokenStorage.clear();
-      applyUserScope(null);
-      set({ user: null, hydrated: true });
-    }
+      if (handoffSession) {
+        try {
+          if (!isValidAuthUser(handoffSession.user)) {
+            throw new Error('Phản hồi đăng nhập không có định danh quán/người dùng hợp lệ.');
+          }
+          tokenStorage.setTokens(handoffSession.access_token, handoffSession.refresh_token);
+          const user = await api.me();
+          if (!isValidAuthUser(user)) {
+            throw new Error('Phản hồi phiên đăng nhập không hợp lệ.');
+          }
+          applyUserScope(user);
+          set({ user, hydrated: true, busy: false, error: null });
+        } catch (error) {
+          tokenStorage.clear();
+          applyUserScope(null);
+          set({ user: null, hydrated: true, busy: false, error: loginErrorMessage(error, '/auth/zalo/exchange') });
+        }
+        return;
+      }
+
+      try {
+        const user = await api.me();
+        if (!isValidAuthUser(user)) {
+          tokenStorage.clear();
+          applyUserScope(null);
+          set({ user: null, hydrated: true, error: 'Phiên đăng nhập không hợp lệ. Vui lòng chọn lại tài khoản.' });
+          return;
+        }
+        applyUserScope(user);
+        set({ user, hydrated: true, error: null });
+      } catch {
+        tokenStorage.clear();
+        applyUserScope(null);
+        set({ user: null, hydrated: true, busy: false });
+      }
+    })().finally(() => {
+      hydratePromise = null;
+    });
+    return hydratePromise;
   },
   loginSeed: async (zaloId, phone) => {
     set({ busy: true, error: null });

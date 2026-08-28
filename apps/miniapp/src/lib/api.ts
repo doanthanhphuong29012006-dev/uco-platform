@@ -151,6 +151,12 @@ export const api = {
       body: { access_token: accessToken },
       retry: false,
     }),
+  exchangeZaloOAuthCode: (code: string) =>
+    request<{ access_token: string; refresh_token: string; user: AuthUser }>('/auth/zalo/exchange', {
+      method: 'POST',
+      body: { code },
+      retry: false,
+    }),
   resolveZaloLocation: (accessToken: string, locationToken: string) =>
     request<GeoPoint>('/auth/zalo/location', {
       method: 'POST',

@@ -20,7 +20,7 @@ Quy trình bật relay GPS, cập nhật Render, mở QR Development và thứ t
 | `ZALO_APP_ID` | ID ứng dụng Zalo | Có khi `ZALO_AUTH_MODE=real` | Chỉ đặt ở API/server |
 | `ZALO_APP_SECRET` | secret key của ứng dụng Zalo | Có khi `ZALO_AUTH_MODE=real` | Chỉ đặt ở API/server, không đưa vào frontend |
 | `ZALO_OAUTH_CALLBACK_URL` | `https://eco-oil-api.onrender.com/api/v1/auth/zalo/callback` | Có khi OAuth web | Phải khớp Callback URL trong Zalo for Developers |
-| `ZALO_OAUTH_SUCCESS_REDIRECT_URL` | `https://uco-platform-miniapp.vercel.app/` | Có khi OAuth web | URL frontend nhận phiên đã xác thực qua HttpOnly cookie |
+| `ZALO_OAUTH_SUCCESS_REDIRECT_URL` | `https://uco-platform-miniapp.vercel.app/` | Có khi OAuth web | URL frontend callback; API gắn one-time `zalo_code`, không gắn access/refresh token |
 | `CORS_ORIGINS` | `https://uco-platform-miniapp.vercel.app,https://uco-platform-admin.vercel.app` | Có khi gọi cross-origin | Danh sách origin phân cách bằng dấu phẩy |
 | `REDIS_URL` | `redis://host:6379` | Không | Bỏ trống được; các tính năng phụ thuộc Redis sẽ tắt, API vẫn chạy |
 | `GEO_MISMATCH_THRESHOLD_M` | `500` | Không | Ngưỡng cảnh báo GPS |
@@ -121,6 +121,12 @@ Biến môi trường trên Render: `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`,
 `ADMIN_PASSWORD`, `CORS_ORIGINS`, `DEMO_MODE`, `NODE_ENV`, `ZALO_AUTH_MODE`,
 `ZALO_APP_ID`, `ZALO_APP_SECRET`, `ZALO_OAUTH_CALLBACK_URL`,
 `ZALO_OAUTH_SUCCESS_REDIRECT_URL`.
+
+`REDIS_URL` phải trỏ tới Redis dùng chung của API khi bật OAuth web. Sau callback,
+API lưu hash của one-time handoff code trong Redis trong 60 giây; frontend POST
+code tới `/api/v1/auth/zalo/exchange`, lưu session theo cơ chế token hiện có,
+rồi xóa code khỏi URL. `CORS_ORIGINS` phải chứa chính xác origin của frontend
+Vercel và API phải giữ `credentials: true`.
 
 Khi dùng OAuth thật, đặt `ZALO_AUTH_MODE=real`, cấu hình App ID/App Secret ở
 Zalo for Developers, bật đúng quyền Social API cần dùng, và đăng ký chính xác
