@@ -18,7 +18,7 @@ import { useOutboxStats } from './lib/outbox-hooks';
 type Tab = 'home' | 'history' | 'orders' | 'payments';
 
 function BrandHeader({ title, action }: { title: string; action?: ReactNode }) {
-  return <header className="brand-header"><img src="/logo.svg" alt="Eco-Oil" /><strong>{title}</strong>{action}</header>;
+  return <header className="brand-header"><img src="/logo.svg" alt="ECollect" /><div className="brand-header-copy"><strong>ECollect</strong><span>{title}</span></div>{action}</header>;
 }
 
 export function App() {
@@ -61,7 +61,7 @@ export function App() {
     return startOutboxSyncWorker();
   }, [user?.role]);
 
-  if (!hydrated) return <div className="app-loading">Đang mở Eco-Oil…</div>;
+  if (!hydrated) return <div className="app-loading"><img src="/logo.svg" alt="" /><strong>ECollect</strong><span>Đang chuẩn bị ứng dụng…</span></div>;
   if (!user) return <LoginScreen />;
 
   if (collectorInviteError) {
@@ -93,11 +93,11 @@ export function App() {
       {tab === 'payments' ? <PaymentsPage key={user.id} /> : null}
     </main>
     <nav className="bottom-nav" aria-label="Điều hướng chính">
-      <button className={tab === 'home' ? 'nav-item active' : 'nav-item'} onClick={() => setTab('home')}><span>⌂</span><small>Trang chủ</small></button>
-      <button className={tab === 'orders' ? 'nav-item active' : 'nav-item'} onClick={() => setTab('orders')}><span>▤</span><small>Đơn của tôi</small></button>
-      <button className={tab === 'history' ? 'nav-item active' : 'nav-item'} onClick={() => setTab('history')}><span>◷</span><small>Lịch sử</small></button>
-      <button className={tab === 'payments' ? 'nav-item active' : 'nav-item'} onClick={() => setTab('payments')}><span>₫</span><small>Thanh toán</small></button>
-      <button className="nav-item" onClick={() => { void signOut(); }}><span>↪</span><small>Thoát</small></button>
+      <button className={tab === 'home' ? 'nav-item active' : 'nav-item'} onClick={() => setTab('home')}><small>Trang chủ</small></button>
+      <button className={tab === 'orders' ? 'nav-item active' : 'nav-item'} onClick={() => setTab('orders')}><small>Đơn</small></button>
+      <button className={tab === 'history' ? 'nav-item active' : 'nav-item'} onClick={() => setTab('history')}><small>Lịch sử</small></button>
+      <button className={tab === 'payments' ? 'nav-item active' : 'nav-item'} onClick={() => setTab('payments')}><small>Thanh toán</small></button>
+      <button className="nav-item" onClick={() => { void signOut(); }}><small>Đăng xuất</small></button>
     </nav>
   </div>;
 }

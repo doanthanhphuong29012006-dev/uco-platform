@@ -93,10 +93,10 @@ export function LoginScreen() {
 
   return (
     <main className="login-page">
-      <img className="login-logo" src="/logo.svg" alt="Eco-Oil" />
-      <p className="eyebrow">ECO-OIL</p>
-      <h1>Thu gom dầu dễ dàng</h1>
-      <p className="lead">Đăng nhập để báo can sẵn sàng và theo dõi lịch sử thu gom của quán.</p>
+      <img className="login-logo" src="/logo.svg" alt="ECollect" />
+      <p className="eyebrow">ECOLLECT</p>
+      <h1>Thu gom dầu minh bạch, thuận tiện</h1>
+      <p className="lead">Đăng nhập để quản lý thu gom, theo dõi giao dịch và thanh toán của bạn.</p>
       {useNativeZaloLogin ? <button className="primary-button" onClick={() => void handleZaloLogin()} disabled={busy || showDevelopmentLogin}>{showDevelopmentLogin ? 'Chọn tài khoản thử nghiệm để tiếp tục' : busy ? 'Đang đăng nhập…' : 'Đăng nhập bằng Zalo'}</button> : showDevelopmentLogin ? <button className="primary-button" disabled>Chọn tài khoản thử nghiệm để tiếp tục</button> : <WebZaloLoginLink href={zaloOAuthStartUrl} />}
       {showDevelopmentLogin ? <p className="error-text">Backend đang ở môi trường phát triển. Chọn tài khoản thử nghiệm để tiếp tục.</p> : null}
       {oauthStartError ? <p className="error-text">{oauthStartError}</p> : null}

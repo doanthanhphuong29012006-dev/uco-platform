@@ -1,8 +1,8 @@
 {
   "app": {
-    "title": "Eco-Oil",
-    "headerTitle": "Eco-Oil",
-    "headerColor": "#0E7A4E",
+    "title": "ECollect",
+    "headerTitle": "ECollect",
+    "headerColor": "#075E54",
     "textColor": "white",
     "leftButton": "back",
     "statusBar": "normal",

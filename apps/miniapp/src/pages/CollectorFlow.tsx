@@ -1039,7 +1039,7 @@ function CollectorRouteScreen({ stops, route, location, locationDenied, complete
         <div><p className="eyebrow">CA HÔM NAY</p><h1>Tuyến thu gom</h1></div>
         <div className="collector-header-actions">
           <OutboxBadge stats={outboxStats} onClick={onOpenOutbox} />
-          <button type="button" className={`round-action ${refreshing ? 'round-action-loading' : ''}`} onClick={onRefresh} disabled={refreshing} aria-busy={refreshing ? 'true' : 'false'} aria-label={refreshing ? 'Đang tải lại tuyến' : 'Tải lại tuyến'}><span className="route-refresh-icon" aria-hidden="true">↻</span></button>
+          <button type="button" className={`round-action ${refreshing ? 'round-action-loading' : ''}`} onClick={onRefresh} disabled={refreshing} aria-busy={refreshing ? 'true' : 'false'}>{refreshing ? 'Đang tải' : 'Tải lại'}</button>
         </div>
       </header>
       {refreshNotice ? <div className={`route-refresh-notice route-refresh-notice-${refreshNotice.kind}`} role={refreshNotice.kind === 'error' ? 'alert' : 'status'}>{refreshNotice.message}</div> : null}
@@ -1048,7 +1048,7 @@ function CollectorRouteScreen({ stops, route, location, locationDenied, complete
       {route.fromCache ? <div className="offline-cache-banner">Đang dùng dữ liệu lúc {formatTime(route.cachedAt)}</div> : null}
       {lastReceipt ? <section className="receipt-saved-banner" role="status"><strong>Đã lưu biên nhận trên máy</strong><span>Mã phiếu: {lastReceipt.receipt_id}</span><button className="text-button" onClick={onOpenLastReceipt}>Xem lại biên nhận</button></section> : null}
       <OutboxIssueNotice rows={outboxRows} stats={outboxStats} onOpen={onOpenOutbox} />
-      {!shiftStarted ? <button className="start-shift-button" onClick={onStartShift} disabled={prefetching}>{prefetching ? 'Đang lưu tuyến và mã QR…' : 'Bắt đầu ca — lưu tuyến offline'}</button> : <div className="shift-ready-note">✓ Tuyến và mã QR đã sẵn sàng khi mất sóng{route.route.started_at ? ` · Bắt đầu lúc ${formatTime(route.route.started_at)}` : ''} <button className="text-button" onClick={onCancelShift} disabled={prefetching || Object.keys(completed).length > 0}>Hủy ca</button></div>}
+      {!shiftStarted ? <button className="start-shift-button" onClick={onStartShift} disabled={prefetching}>{prefetching ? 'Đang lưu tuyến và mã QR…' : 'Bắt đầu ca, lưu tuyến để dùng ngoại tuyến'}</button> : <div className="shift-ready-note"><strong>Tuyến đã sẵn sàng khi mất sóng.</strong>{route.route.started_at ? ` Bắt đầu lúc ${formatTime(route.route.started_at)}.` : ''} <button className="text-button" onClick={onCancelShift} disabled={prefetching || Object.keys(completed).length > 0}>Hủy ca</button></div>}
       {shiftError ? <p className="error-text" role="alert">{shiftError}</p> : null}
       <section className="route-capacity-card">
         <div className="route-capacity-top"><span>Tổng lít dự kiến</span><strong>{formatLiters(route.route.total_expected_liters)} / {formatLiters(vehicleCapacity)}</strong></div>
@@ -1155,8 +1155,8 @@ function CollectorStopCard({ stop, outboxRow, onOpenQr }: { stop: RouteStop; out
         ) : null}
         {status ? <p className={`transaction-status transaction-status-${status}`}>{statusLabel(status)}</p> : null}
         <div className="stop-actions">
-          <button type="button" className={`call-action ${!canCall ? 'disabled-action' : ''}`} onClick={openPhone} disabled={!canCall || actionBusy !== null}>{actionBusy === 'phone' ? 'Đang mở…' : '☎ Gọi quán'}</button>
-          <button type="button" className={`map-action ${!canOpenDirections ? 'disabled-action' : ''}`} onClick={openDirections} disabled={!canOpenDirections || actionBusy !== null}>{actionBusy === 'directions' ? 'Đang mở…' : '↗ Chỉ đường'}</button>
+          <button type="button" className={`call-action ${!canCall ? 'disabled-action' : ''}`} onClick={openPhone} disabled={!canCall || actionBusy !== null}>{actionBusy === 'phone' ? 'Đang mở…' : 'Gọi quán'}</button>
+          <button type="button" className={`map-action ${!canOpenDirections ? 'disabled-action' : ''}`} onClick={openDirections} disabled={!canOpenDirections || actionBusy !== null}>{actionBusy === 'directions' ? 'Đang mở…' : 'Chỉ đường'}</button>
           <button className="collect-action" onClick={onOpenQr} disabled={status === 'pending' || status === 'syncing'}>{status === 'synced' ? 'Đã thu' : 'Thu gom'}</button>
         </div>
         {actionError ? <p className="action-error" role="alert">{actionError}</p> : null}
@@ -1218,10 +1218,10 @@ function CollectorQrScreen({ stop, onBack, onContinue }: { stop: RouteStop; onBa
 
   return (
     <div className="page-content collector-content">
-      <button className="back-button" onClick={onBack}>← Quay lại tuyến</button>
+      <button className="back-button" onClick={onBack}>Quay lại tuyến</button>
       <header className="collector-screen-heading"><p className="eyebrow">ĐIỂM {stop.seq}</p><h1>Quét mã can</h1><p>{stop.merchant.name}</p></header>
       <section className="qr-target-card"><span>Can cần thu</span><strong>{stop.container_code}</strong><small>{stop.merchant.address ?? ''}</small></section>
-      <button className="scan-button" onClick={() => { void scan(); }} disabled={busy}>▣ {busy ? 'Đang kiểm tra…' : 'Quét QR bằng camera'}</button>
+      <button className="scan-button" onClick={() => { void scan(); }} disabled={busy}>{busy ? 'Đang kiểm tra…' : 'Quét QR bằng camera'}</button>
       <section className="manual-qr-card">
         <p className="section-label">Nhập mã can</p>
         <label htmlFor="manual-qr">Bạn có thể nhập hoặc sửa mã can</label>
@@ -1232,7 +1232,7 @@ function CollectorQrScreen({ stop, onBack, onContinue }: { stop: RouteStop; onBa
       {mismatch ? <div className="warning-panel"><strong>Đây không phải can của điểm này</strong><span>Kiểm tra lại mã QR. Không thể ghi nhận nhầm can.</span></div> : null}
       {container ? (
         <section className="verified-container-card">
-          <span className="verified-badge">✓ Đã đối chiếu</span>
+          <span className="verified-badge">Đã đối chiếu</span>
           {cachedAt ? <p className="offline-cache-note">Dữ liệu lúc {formatTime(cachedAt)}</p> : null}
           <h2>{container.merchant.name}</h2>
           <p>{container.qr_code} · {formatLiters(container.capacity_liters)} · {container.state === ContainerState.AT_MERCHANT ? 'Đang ở quán' : container.state}</p>
@@ -1527,12 +1527,12 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
   }
 
   if (success) {
-    return <div className="success-screen"><div className="success-icon">✓</div><h1>Đã lưu an toàn</h1><p>{formatLiters(actualLiters)} {actualKg === null ? `(~${(actualLiters * DEFAULT_DENSITY_KG_PER_LITER).toFixed(1)} kg ước lượng)` : `· ${actualKg.toFixed(1)} kg đã cân`} · Giao dịch sẽ tự đồng bộ khi có mạng.</p></div>;
+    return <div className="success-screen"><div className="status-label">Đã ghi nhận</div><h1>Đã lưu an toàn</h1><p>{formatLiters(actualLiters)} {actualKg === null ? `(~${(actualLiters * DEFAULT_DENSITY_KG_PER_LITER).toFixed(1)} kg ước lượng)` : `· ${actualKg.toFixed(1)} kg đã cân`} · Giao dịch sẽ tự đồng bộ khi có mạng.</p></div>;
   }
 
   return (
     <div className="page-content collector-content">
-      <button className="back-button" onClick={onBack} disabled={saving}>← Quay lại quét mã</button>
+      <button className="back-button" onClick={onBack} disabled={saving}>Quay lại quét mã</button>
        <header className="collector-screen-heading"><p className="eyebrow">GHI NHẬN THU GOM</p><h1>{container.merchant.name}</h1><p>{containerCode}</p></header>
       <section className="entry-target-card"><span>Số lít quán khai</span><strong>{formatLiters(stop.expected_liters)}</strong>{pickupVolumeForecast ? <div className="entry-volume-forecast"><strong>{pickupVolumeForecast.predictedLiters === null ? 'AI chưa đủ dữ liệu để dự báo sản lượng.' : `AI dự báo: khoảng ${formatPickupVolumeLiters(pickupVolumeForecast.predictedLiters)}`}</strong><small>{pickupVolumeForecast.confidenceLabel}</small>{pickupVolumeForecast.declaredOnly ? <small>AI chưa có đủ lịch sử riêng cho quán này.</small> : null}</div> : null}<small>Mã giao dịch: {clientUuid.slice(0, 8)}…</small>{locationFallback ? <p className="location-banner">Không lấy được vị trí GPS, đang dùng vị trí trung tâm phường. Giao dịch có thể bị đánh dấu cần kiểm tra.</p> : null}</section>
       <section className="quality-card">
@@ -1555,7 +1555,7 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
         {pickupVolumeDeviation?.level === 'REVIEW' ? <p className="pickup-volume-deviation pickup-volume-deviation-review">Số lít đang chênh {formatDeviationPercent(pickupVolumeDeviation.deviation_pct)} so với AI dự báo. Hãy kiểm tra lại số nhập và mức dầu trong can.</p> : null}
         {pickupVolumeDeviation?.level === 'HIGH' ? <div className="pickup-volume-deviation pickup-volume-deviation-high"><strong>Chênh lệch rất cao so với AI dự báo.</strong><span>AI dự báo {formatPickupVolumeLiters(pickupVolumeDeviation.predicted_liters)}</span><span>Thực tế nhập {formatPickupVolumeLiters(pickupVolumeDeviation.actual_liters)}</span><span>Chênh lệch {formatSignedDeviationLiters(pickupVolumeDeviation.deviation_liters)} ({formatDeviationPercent(pickupVolumeDeviation.deviation_pct)})</span><label className="pickup-volume-ack"><input type="checkbox" checked={highDeviationAcknowledgement === highDeviationKey} onChange={(event) => setHighDeviationAcknowledgement(event.target.checked ? highDeviationKey : null)} disabled={saving} /><span>Tôi đã kiểm tra lại số lít và xác nhận tiếp tục.</span></label></div> : null}
       </section>
-      <section className="quality-card"><p className="section-label">Chất lượng dầu</p><div className="quality-options"><button className={quality === Quality.PASS ? 'quality-option selected' : 'quality-option'} onClick={() => setQuality(Quality.PASS)} disabled={saving}>✓ Đạt</button><button className={quality === Quality.FLAG ? 'quality-option selected flag-selected' : 'quality-option'} onClick={() => setQuality(Quality.FLAG)} disabled={saving}>⚠ Cần kiểm tra</button></div></section>
+      <section className="quality-card"><p className="section-label">Chất lượng dầu</p><div className="quality-options"><button className={quality === Quality.PASS ? 'quality-option selected' : 'quality-option'} onClick={() => setQuality(Quality.PASS)} disabled={saving}>Đạt</button><button className={quality === Quality.FLAG ? 'quality-option selected flag-selected' : 'quality-option'} onClick={() => setQuality(Quality.FLAG)} disabled={saving}>Cần kiểm tra</button></div></section>
       <GradePhotoPicker photos={photos} busy={takingPhoto} disabled={saving} message={photoNotice} onTakePhoto={() => { void takePhoto(); }} onChooseAlbum={() => { void chooseAlbumPhoto(); }} onChooseFile={(file) => { void choosePhotoFile(file); }} onRemovePhoto={removePhoto} />
       {analysisError ? <section className="image-grade-analysis image-grade-analysis-error" role="alert"><span>{analysisError}</span><button type="button" className="secondary-button" onClick={() => { void analyzePhotos(photos); }} disabled={analyzingImages || saving}>Thử phân tích lại</button></section> : null}
       {analyzingImages ? <section className="image-grade-analysis image-grade-analysis-neutral" aria-live="polite"><strong>AI hỗ trợ phân hạng</strong><span>Đang phân tích ảnh…</span></section> : null}
@@ -1581,7 +1581,7 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
 function SavedStationReceiptView({ receipt, onBack }: { receipt: StoredStationReceipt; onBack: () => void }) {
   return (
     <div className="page-content collector-content station-page receipt-page">
-      <button className="back-button" onClick={onBack}>← Về tuyến hôm nay</button>
+      <button className="back-button" onClick={onBack}>Về tuyến hôm nay</button>
       <header className="collector-screen-heading"><p className="eyebrow">BIÊN NHẬN ĐÃ LƯU</p><h1>{receipt.station_name}</h1><p>Mã phiếu: {receipt.receipt_id}</p></header>
       <section className="receipt-card">
         <dl>
@@ -1605,7 +1605,7 @@ function CollectorSummaryScreen({ route, completed, completedCount, totalStops, 
   const vehicleCapacity = route ? route.total_expected_liters + route.remaining_capacity_l : 0;
   return (
     <div className="page-content collector-content summary-page">
-      <button className="back-button" onClick={onBack}>← Về tuyến hôm nay</button>
+      <button className="back-button" onClick={onBack}>Về tuyến hôm nay</button>
       <header className="collector-screen-heading"><p className="eyebrow">KẾT QUẢ CA</p><h1>Tóm tắt thu gom</h1></header>
       <div className="summary-hero"><span>Đã thu hôm nay</span><strong>{formatLiters(totalCollected)} (~{totalCollectedKg.toFixed(1)} kg)</strong></div>
       <section className="summary-grid"><div><span>Điểm đã thu</span><strong>{completedCount} / {displayedTotalStops}</strong></div><div><span>Dung tích còn lại</span><strong>{formatLiters(Math.max(vehicleCapacity - totalCollected, 0))}</strong></div></section>
@@ -1631,7 +1631,7 @@ function OutboxQueueScreen({ onBack }: { onBack: () => void }) {
 
   return (
     <div className="page-content collector-content outbox-page">
-      <button className="back-button" onClick={onBack}>← Về tuyến hôm nay</button>
+      <button className="back-button" onClick={onBack}>Về tuyến hôm nay</button>
       <header className="collector-screen-heading"><p className="eyebrow">AN TOÀN DỮ LIỆU</p><h1>Hàng chờ đồng bộ</h1><p>{formatBytes(stats.bytes)} đang lưu trên máy</p></header>
       <OutboxIssueNotice rows={rows} stats={stats} />
       {stats.over_limit ? <div className="warning-panel"><strong>Hàng chờ đang vượt 50MB</strong><span>Hãy bật mạng để đồng bộ bớt dữ liệu ảnh.</span></div> : null}
