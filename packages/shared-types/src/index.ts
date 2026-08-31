@@ -270,7 +270,7 @@ export interface CollectionOrderResponse {
   container_id: string | null;
   container_code: string | null;
   expected_liters: number | null;
-    collector_available?: boolean;
+  collector_available?: boolean;
   priority: number;
   status: OrderStatus;
   source: OrderSource;
@@ -289,7 +289,13 @@ export interface GeoPoint {
 export interface RouteStop {
   seq: number;
   order_id: string;
-  merchant: { name: string; address: string | null; phone?: string | null; lat: number; lng: number };
+  merchant: {
+    name: string;
+    address: string | null;
+    phone?: string | null;
+    lat: number;
+    lng: number;
+  };
   container_code: string;
   expected_liters: number;
   priority: number;
@@ -323,7 +329,13 @@ export interface CurrentRouteResponse {
     estimated_distance_after_m: number | null;
     saved_distance_m: number | null;
     optimization_applied: boolean;
-    reason_codes: Array<'ROUTE_OPTIMIZED' | 'ALREADY_OPTIMAL' | 'INSUFFICIENT_STOPS' | 'INVALID_ORIGIN' | 'INVALID_STOP_COORDINATES'>;
+    reason_codes: Array<
+      | 'ROUTE_OPTIMIZED'
+      | 'ALREADY_OPTIMAL'
+      | 'INSUFFICIENT_STOPS'
+      | 'INVALID_ORIGIN'
+      | 'INVALID_STOP_COORDINATES'
+    >;
   };
   route_capacity_risk?: {
     predicted_total_liters: number | null;
@@ -407,7 +419,22 @@ export interface CollectionCreateRequest {
   collected_at?: string;
 }
 
-export interface CollectionTransactionResponse extends Omit<CollectionCreateRequest, 'grade' | 'grade_photo_url' | 'grade_note' | 'suspected_adulteration' | 'image_grade_suggestion' | 'ai_suggested_grade' | 'collector_selected_grade' | 'collector_grade_confirmed' | 'image_grade_confidence' | 'image_grade_model_version' | 'image_grade_analysis' | 'grade_decision_source' | 'grade_ai_override_acknowledged'> {
+export interface CollectionTransactionResponse extends Omit<
+  CollectionCreateRequest,
+  | 'grade'
+  | 'grade_photo_url'
+  | 'grade_note'
+  | 'suspected_adulteration'
+  | 'image_grade_suggestion'
+  | 'ai_suggested_grade'
+  | 'collector_selected_grade'
+  | 'collector_grade_confirmed'
+  | 'image_grade_confidence'
+  | 'image_grade_model_version'
+  | 'image_grade_analysis'
+  | 'grade_decision_source'
+  | 'grade_ai_override_acknowledged'
+> {
   id: string;
   actual_liters: number;
   container_id: string;
@@ -503,11 +530,19 @@ export interface AdminRecentTransaction {
 
 export interface AdminStationSummary {
   id: string;
+  user_id?: string;
+  ward_id?: string;
   name: string;
   address: string | null;
+  lat?: number | null;
+  lng?: number | null;
   current_volume_l: number;
   capacity_l: number;
   fill_pct: number;
+  status?: EntityStatus;
+  is_active?: boolean;
+  ward?: { id: string; code: string; name: string };
+  user?: { id: string; name: string | null; phone: string | null };
 }
 
 export interface AdminMerchantSummary {
@@ -531,7 +566,12 @@ export interface AdminMerchantSummary {
 
 export interface AdminOverviewResponse {
   period: { from: string; to: string };
-  totals: { liters: number; transactions: number; active_merchants: number; active_collectors: number };
+  totals: {
+    liters: number;
+    transactions: number;
+    active_merchants: number;
+    active_collectors: number;
+  };
   orders: { ready: number; assigned: number; collected: number; cancelled: number };
   containers: { at_merchant: number; in_transit: number; at_station: number };
   stations: AdminStationSummary[];
@@ -708,7 +748,10 @@ export interface AdminImageGradingPerformanceResponse {
   agreement_rate_percent: number | null;
   reliability: 'INSUFFICIENT' | 'LOW' | 'MEDIUM' | 'HIGH';
   breakdown_by_confidence: Array<{ confidence: 'LOW' | 'MEDIUM' | 'HIGH'; count: number }>;
-  breakdown_by_decision_source: Array<{ source: 'MANUAL' | 'AI_SUGGESTION_ACCEPTED' | 'MANUAL_OVERRIDE_AI'; count: number }>;
+  breakdown_by_decision_source: Array<{
+    source: 'MANUAL' | 'AI_SUGGESTION_ACCEPTED' | 'MANUAL_OVERRIDE_AI';
+    count: number;
+  }>;
   recent_disagreements: Array<{
     transaction_id: string;
     merchant_id: string;
@@ -730,6 +773,7 @@ export interface AdminCollectorSummary {
   link_status: 'PENDING_LINK' | 'LINKED';
   invite_status: 'PENDING' | 'EXPIRED' | null;
   invite_expires_at: string | null;
+  invite_url: string | null;
   last_seen_at: string | null;
   wards: Array<{ id: string; code: string; name: string }>;
   contact_phone: string | null;

@@ -1,4 +1,13 @@
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, Optional, ServiceUnavailableException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Inject,
+  Injectable,
+  NotFoundException,
+  Optional,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AlertSeverity, AlertType, EntityStatus, MerchantApprovalStatus } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
@@ -30,14 +39,23 @@ import type {
 } from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
-import { COLLECTOR_INVITE_KEY_PREFIX, COLLECTOR_INVITE_TTL_SECONDS } from '../auth/auth.constants';
+import {
+  COLLECTOR_ACTIVE_INVITE_KEY_PREFIX,
+  COLLECTOR_INVITE_KEY_PREFIX,
+  COLLECTOR_INVITE_TTL_SECONDS,
+} from '../auth/auth.constants';
 import { getDensityKgPerLiter } from '../../config/mass.constants';
 import {
   scoreTransactionAnomaly,
   type TransactionAnomalyInput,
   type TransactionAnomalyResult,
 } from '../collections/transaction-anomaly-scorer';
-import { buildContainerQrCode, containerQrPrefix, normalizeWardCode, wardLookupKey } from '../containers/qr-code';
+import {
+  buildContainerQrCode,
+  containerQrPrefix,
+  normalizeWardCode,
+  wardLookupKey,
+} from '../containers/qr-code';
 import type { StationFillAlertCandidate } from '../stations/station-fill-alert';
 import { StationsService } from '../stations/stations.service';
 import { evaluatePickupVolumeBacktest } from '../orders/merchant-pickup-volume-backtester';
@@ -235,7 +253,9 @@ export class AdminService {
   async reconciliation(query: AdminReconciliationQueryInput) {
     const day = this.startOfDay(query.date);
     const nextDay = new Date(day.getTime() + DAY_MS);
-    const threshold = Number(this.config.get<number | string>('DELIVERY_VARIANCE_THRESHOLD_PCT', 0.02));
+    const threshold = Number(
+      this.config.get<number | string>('DELIVERY_VARIANCE_THRESHOLD_PCT', 0.02),
+    );
     const rows = await this.prisma.$queryRaw<ReconciliationRow[]>`
       WITH collected AS (
         SELECT ct."collector_id", c."display_name" AS name, SUM(ct."actual_liters")::float8 AS collected_liters,
@@ -376,7 +396,10 @@ export class AdminService {
   async pickupForecastPerformance(query: AdminAiPerformancePickupForecastQueryInput) {
     const asOf = new Date();
     const windowStart = new Date(asOf.getTime() - query.window_days * DAY_MS);
-    const observations = await this.prisma.findPickupForecastBacktestObservations(windowStart, asOf);
+    const observations = await this.prisma.findPickupForecastBacktestObservations(
+      windowStart,
+      asOf,
+    );
     const result = evaluatePickupVolumeBacktest(observations, {
       evaluation_from: windowStart,
       evaluation_to: asOf,
@@ -412,20 +435,40 @@ export class AdminService {
       },
     });
     const analyzedCount = rows.length;
-    const acceptedCount = rows.filter((row) => row.gradeDecisionSource === 'AI_SUGGESTION_ACCEPTED').length;
-    const overrideCount = rows.filter((row) => row.gradeDecisionSource === 'MANUAL_OVERRIDE_AI').length;
-    const agreementCount = rows.filter((row) => row.imageGradeSuggestion !== null && row.imageGradeSuggestion === row.grade).length;
+    const acceptedCount = rows.filter(
+      (row) => row.gradeDecisionSource === 'AI_SUGGESTION_ACCEPTED',
+    ).length;
+    const overrideCount = rows.filter(
+      (row) => row.gradeDecisionSource === 'MANUAL_OVERRIDE_AI',
+    ).length;
+    const agreementCount = rows.filter(
+      (row) => row.imageGradeSuggestion !== null && row.imageGradeSuggestion === row.grade,
+    ).length;
     const lowConfidenceCount = rows.filter((row) => row.imageGradeConfidence === 'LOW').length;
     const retakeRecommendedCount = rows.filter((row) => {
       const analysis = row.imageGradeAnalysis;
-      return typeof analysis === 'object' && analysis !== null && !Array.isArray(analysis) && (analysis as Record<string, unknown>).quality_status === 'RETAKE_RECOMMENDED';
+      return (
+        typeof analysis === 'object' &&
+        analysis !== null &&
+        !Array.isArray(analysis) &&
+        (analysis as Record<string, unknown>).quality_status === 'RETAKE_RECOMMENDED'
+      );
     }).length;
     const reasonCodes = (value: Prisma.JsonValue): string[] => {
       if (typeof value !== 'object' || value === null || Array.isArray(value)) return [];
       const raw = (value as Record<string, unknown>).reason_codes;
-      return Array.isArray(raw) ? raw.filter((item): item is string => typeof item === 'string').slice(0, 20) : [];
+      return Array.isArray(raw)
+        ? raw.filter((item): item is string => typeof item === 'string').slice(0, 20)
+        : [];
     };
-    const reliability = analyzedCount < 20 ? 'INSUFFICIENT' : analyzedCount < 50 ? 'LOW' : analyzedCount < 100 ? 'MEDIUM' : 'HIGH';
+    const reliability =
+      analyzedCount < 20
+        ? 'INSUFFICIENT'
+        : analyzedCount < 50
+          ? 'LOW'
+          : analyzedCount < 100
+            ? 'MEDIUM'
+            : 'HIGH';
     return {
       window_days: query.window_days as 30 | 90 | 180,
       window_start: windowStart.toISOString(),
@@ -436,12 +479,23 @@ export class AdminService {
       low_confidence_count: lowConfidenceCount,
       retake_recommended_count: retakeRecommendedCount,
       agreement_count: agreementCount,
-      agreement_rate_percent: analyzedCount === 0 ? null : Number(((agreementCount / analyzedCount) * 100).toFixed(2)),
+      agreement_rate_percent:
+        analyzedCount === 0 ? null : Number(((agreementCount / analyzedCount) * 100).toFixed(2)),
       reliability,
-      breakdown_by_confidence: (['LOW', 'MEDIUM', 'HIGH'] as const).map((confidence) => ({ confidence, count: rows.filter((row) => row.imageGradeConfidence === confidence).length })),
-      breakdown_by_decision_source: (['MANUAL', 'AI_SUGGESTION_ACCEPTED', 'MANUAL_OVERRIDE_AI'] as const).map((source) => ({ source, count: rows.filter((row) => row.gradeDecisionSource === source).length })),
+      breakdown_by_confidence: (['LOW', 'MEDIUM', 'HIGH'] as const).map((confidence) => ({
+        confidence,
+        count: rows.filter((row) => row.imageGradeConfidence === confidence).length,
+      })),
+      breakdown_by_decision_source: (
+        ['MANUAL', 'AI_SUGGESTION_ACCEPTED', 'MANUAL_OVERRIDE_AI'] as const
+      ).map((source) => ({
+        source,
+        count: rows.filter((row) => row.gradeDecisionSource === source).length,
+      })),
       recent_disagreements: rows
-        .filter((row) => row.imageGradeSuggestion !== null && row.imageGradeSuggestion !== row.grade)
+        .filter(
+          (row) => row.imageGradeSuggestion !== null && row.imageGradeSuggestion !== row.grade,
+        )
         .slice(0, 30)
         .map((row) => ({
           transaction_id: row.id,
@@ -453,19 +507,24 @@ export class AdminService {
           confidence: row.imageGradeConfidence,
           reason_codes: reasonCodes(row.imageGradeAnalysis ?? null),
         })),
-      explanation: analyzedCount < 20
-        ? 'Dữ liệu đánh giá còn ít; tỷ lệ đồng thuận chỉ mô tả quyết định của người thu gom, không phải độ chính xác của AI.'
-        : 'Tỷ lệ đồng thuận mô tả mức độ người thu gom giữ hoặc thay đổi gợi ý ảnh; đây không phải kết luận độ chính xác của AI.',
+      explanation:
+        analyzedCount < 20
+          ? 'Dữ liệu đánh giá còn ít; tỷ lệ đồng thuận chỉ mô tả quyết định của người thu gom, không phải độ chính xác của AI.'
+          : 'Tỷ lệ đồng thuận mô tả mức độ người thu gom giữ hoặc thay đổi gợi ý ảnh; đây không phải kết luận độ chính xác của AI.',
     };
   }
 
   private records(value: unknown): Array<Record<string, unknown>> {
     return Array.isArray(value)
-      ? value.filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+      ? value.filter(
+          (item): item is Record<string, unknown> => typeof item === 'object' && item !== null,
+        )
       : [];
   }
 
-  private uniqueReconciliationTransactions(rows: Array<Record<string, unknown>>): ReconciliationTransaction[] {
+  private uniqueReconciliationTransactions(
+    rows: Array<Record<string, unknown>>,
+  ): ReconciliationTransaction[] {
     const transactions = new Map<string, ReconciliationTransaction>();
     for (const row of rows) {
       if (
@@ -494,7 +553,11 @@ export class AdminService {
 
     const merchantIds = [...new Set(transactions.map((transaction) => transaction.merchant_id))];
     const latestCollectedAt = new Date(
-      Math.max(...transactions.map((transaction) => new Date(transaction.collected_at).getTime()).filter(Number.isFinite)),
+      Math.max(
+        ...transactions
+          .map((transaction) => new Date(transaction.collected_at).getTime())
+          .filter(Number.isFinite),
+      ),
     );
     const historyRows = Number.isFinite(latestCollectedAt.getTime())
       ? await this.prisma.collectionTransaction.findMany({
@@ -536,16 +599,19 @@ export class AdminService {
       const collectedTimestamp = collectedAt.getTime();
       const history = Number.isFinite(collectedTimestamp)
         ? (historyByMerchant.get(transaction.merchant_id) ?? []).filter(
-            (item) => item.id !== transaction.id && new Date(item.collectedAt).getTime() < collectedTimestamp,
+            (item) =>
+              item.id !== transaction.id &&
+              new Date(item.collectedAt).getTime() < collectedTimestamp,
           )
         : [];
       const anomaly = scoreTransactionAnomaly(history, {
         merchantId: transaction.merchant_id,
         actualKg: this.numberOrNull(transaction.kilograms),
         actualLiters: this.numberOrNull(transaction.liters),
-        massSource: transaction.mass_source === 'SCALE' || transaction.mass_source === 'ESTIMATED_FROM_VOLUME'
-          ? transaction.mass_source
-          : null,
+        massSource:
+          transaction.mass_source === 'SCALE' || transaction.mass_source === 'ESTIMATED_FROM_VOLUME'
+            ? transaction.mass_source
+            : null,
         densityFactor: this.numberOrNull(transaction.density_factor),
         expectedDensityKgPerLiter,
         collectedAt: transaction.collected_at,
@@ -555,7 +621,10 @@ export class AdminService {
     return result;
   }
 
-  private async loadAnomalyCandidates(windowStart: Date, windowEnd: Date): Promise<ReconciliationTransaction[]> {
+  private async loadAnomalyCandidates(
+    windowStart: Date,
+    windowEnd: Date,
+  ): Promise<ReconciliationTransaction[]> {
     const rows = await this.prisma.collectionTransaction.findMany({
       where: { deletedAt: null, collectedAt: { gte: windowStart, lte: windowEnd } },
       orderBy: [{ collectedAt: 'desc' }, { id: 'desc' }],
@@ -573,23 +642,30 @@ export class AdminService {
         collector: { select: { displayName: true } },
       },
     });
-    return rows.map((row) => ({
-      id: row.id,
-      merchant_id: row.merchantId,
-      merchant_name: row.merchant.businessName,
-      collector_name: row.collector.displayName,
-      liters: Number(row.actualLiters),
-      kilograms: row.actualKg === null ? null : Number(row.actualKg),
-      mass_source: row.massSource,
-      density_factor: row.densityFactor === null ? null : Number(row.densityFactor),
-      quality: row.quality,
-      grade: row.grade,
-      collected_at: row.collectedAt,
-    } as ReconciliationTransaction));
+    return rows.map(
+      (row) =>
+        ({
+          id: row.id,
+          merchant_id: row.merchantId,
+          merchant_name: row.merchant.businessName,
+          collector_name: row.collector.displayName,
+          liters: Number(row.actualLiters),
+          kilograms: row.actualKg === null ? null : Number(row.actualKg),
+          mass_source: row.massSource,
+          density_factor: row.densityFactor === null ? null : Number(row.densityFactor),
+          quality: row.quality,
+          grade: row.grade,
+          collected_at: row.collectedAt,
+        }) as ReconciliationTransaction,
+    );
   }
 
   private async feedbackByTransactionIds(transactionIds: string[]) {
-    if (transactionIds.length === 0) return new Map<string, Awaited<ReturnType<typeof this.prisma.anomalyFeedback.findMany>>[number]>();
+    if (transactionIds.length === 0)
+      return new Map<
+        string,
+        Awaited<ReturnType<typeof this.prisma.anomalyFeedback.findMany>>[number]
+      >();
     const feedback = await this.prisma.anomalyFeedback.findMany({
       where: { transactionId: { in: transactionIds } },
       orderBy: { updatedAt: 'desc' },
@@ -597,7 +673,9 @@ export class AdminService {
     return new Map(feedback.map((item) => [item.transactionId, item]));
   }
 
-  private serializeAnomalyFeedback(feedback: Awaited<ReturnType<typeof this.prisma.anomalyFeedback.findMany>>[number] | null) {
+  private serializeAnomalyFeedback(
+    feedback: Awaited<ReturnType<typeof this.prisma.anomalyFeedback.findMany>>[number] | null,
+  ) {
     if (!feedback) return null;
     return {
       id: feedback.id,
@@ -621,8 +699,12 @@ export class AdminService {
       id: `anomaly:${transaction.id}`,
       transaction_id: transaction.id,
       merchant_id: transaction.merchant_id,
-      merchant_name: typeof transaction.merchant_name === 'string' ? transaction.merchant_name : 'Quán chưa xác định',
-      collector_name: typeof transaction.collector_name === 'string' ? transaction.collector_name : null,
+      merchant_name:
+        typeof transaction.merchant_name === 'string'
+          ? transaction.merchant_name
+          : 'Quán chưa xác định',
+      collector_name:
+        typeof transaction.collector_name === 'string' ? transaction.collector_name : null,
       actual_liters: this.numberOrNull(transaction.liters) ?? 0,
       actual_kg: this.numberOrNull(transaction.kilograms),
       quality: transaction.quality,
@@ -642,14 +724,29 @@ export class AdminService {
     const windowStart = new Date(asOf.getTime() - query.window_days * DAY_MS);
     const candidates = await this.loadAnomalyCandidates(windowStart, asOf);
     const anomalyByTransactionId = await this.scoreAnomalyTransactions(candidates);
-    const feedbackByTransaction = await this.feedbackByTransactionIds(candidates.map((candidate) => candidate.id));
+    const feedbackByTransaction = await this.feedbackByTransactionIds(
+      candidates.map((candidate) => candidate.id),
+    );
     const rows = candidates
       .filter((candidate) => {
         const anomaly = anomalyByTransactionId.get(candidate.id);
-        return anomaly && anomaly.level !== 'NORMAL' && (!query.risk_level || anomaly.level === query.risk_level);
+        return (
+          anomaly &&
+          anomaly.level !== 'NORMAL' &&
+          (!query.risk_level || anomaly.level === query.risk_level)
+        );
       })
-      .filter((candidate) => !query.verdict || feedbackByTransaction.get(candidate.id)?.verdict === query.verdict)
-      .map((candidate) => this.anomalyItem(candidate, anomalyByTransactionId.get(candidate.id)!, feedbackByTransaction.get(candidate.id) ?? null));
+      .filter(
+        (candidate) =>
+          !query.verdict || feedbackByTransaction.get(candidate.id)?.verdict === query.verdict,
+      )
+      .map((candidate) =>
+        this.anomalyItem(
+          candidate,
+          anomalyByTransactionId.get(candidate.id)!,
+          feedbackByTransaction.get(candidate.id) ?? null,
+        ),
+      );
     const offset = (query.page - 1) * query.limit;
     return {
       window_days: query.window_days as 30 | 90 | 180,
@@ -658,7 +755,11 @@ export class AdminService {
     };
   }
 
-  async updateAiAnomalyFeedback(transactionId: string, body: AdminAiAnomalyFeedbackInput, reviewerUserId: string) {
+  async updateAiAnomalyFeedback(
+    transactionId: string,
+    body: AdminAiAnomalyFeedbackInput,
+    reviewerUserId: string,
+  ) {
     const transaction = await this.prisma.collectionTransaction.findUnique({
       where: { id: transactionId },
       select: {
@@ -683,7 +784,9 @@ export class AdminService {
     } as ReconciliationTransaction;
     const anomaly = (await this.scoreAnomalyTransactions([candidate])).get(transaction.id);
     if (!anomaly) throw new BadRequestException('Không thể chấm điểm giao dịch này.');
-    const reasonsSnapshot = JSON.parse(JSON.stringify(anomaly.reasonDetails)) as Prisma.InputJsonValue;
+    const reasonsSnapshot = JSON.parse(
+      JSON.stringify(anomaly.reasonDetails),
+    ) as Prisma.InputJsonValue;
     const saved = await this.prisma.anomalyFeedback.upsert({
       where: { transactionId },
       create: {
@@ -712,31 +815,62 @@ export class AdminService {
     const windowStart = new Date(asOf.getTime() - query.window_days * DAY_MS);
     const candidates = await this.loadAnomalyCandidates(windowStart, asOf);
     const anomalyByTransactionId = await this.scoreAnomalyTransactions(candidates);
-    const alertCandidates = candidates.filter((candidate) => anomalyByTransactionId.get(candidate.id)?.level !== 'NORMAL');
-    const feedbackByTransaction = await this.feedbackByTransactionIds(alertCandidates.map((candidate) => candidate.id));
-    const items = alertCandidates.map((candidate) => this.anomalyItem(candidate, anomalyByTransactionId.get(candidate.id)!, feedbackByTransaction.get(candidate.id) ?? null));
+    const alertCandidates = candidates.filter(
+      (candidate) => anomalyByTransactionId.get(candidate.id)?.level !== 'NORMAL',
+    );
+    const feedbackByTransaction = await this.feedbackByTransactionIds(
+      alertCandidates.map((candidate) => candidate.id),
+    );
+    const items = alertCandidates.map((candidate) =>
+      this.anomalyItem(
+        candidate,
+        anomalyByTransactionId.get(candidate.id)!,
+        feedbackByTransaction.get(candidate.id) ?? null,
+      ),
+    );
     const reviewed = items.filter((item) => item.feedback !== null);
-    const confirmedCount = reviewed.filter((item) => item.feedback?.verdict === 'CONFIRMED_ANOMALY').length;
-    const falsePositiveCount = reviewed.filter((item) => item.feedback?.verdict === 'FALSE_POSITIVE').length;
+    const confirmedCount = reviewed.filter(
+      (item) => item.feedback?.verdict === 'CONFIRMED_ANOMALY',
+    ).length;
+    const falsePositiveCount = reviewed.filter(
+      (item) => item.feedback?.verdict === 'FALSE_POSITIVE',
+    ).length;
     const unsureCount = reviewed.filter((item) => item.feedback?.verdict === 'UNSURE').length;
     const reviewedCount = reviewed.length;
     const reasonCounts = new Map<string, number>();
-    for (const item of items) for (const reason of item.reason_codes) reasonCounts.set(reason.code, (reasonCounts.get(reason.code) ?? 0) + 1);
+    for (const item of items)
+      for (const reason of item.reason_codes)
+        reasonCounts.set(reason.code, (reasonCounts.get(reason.code) ?? 0) + 1);
     return {
       window_days: query.window_days as 30 | 90 | 180,
       total_alerts: items.length,
       reviewed_count: reviewedCount,
       unreviewed_count: items.length - reviewedCount,
-      feedback_coverage_percent: items.length === 0 ? 0 : Number(((reviewedCount / items.length) * 100).toFixed(2)),
+      feedback_coverage_percent:
+        items.length === 0 ? 0 : Number(((reviewedCount / items.length) * 100).toFixed(2)),
       confirmed_count: confirmedCount,
       false_positive_count: falsePositiveCount,
       unsure_count: unsureCount,
-      confirmed_rate_percent: reviewedCount === 0 ? null : Number(((confirmedCount / reviewedCount) * 100).toFixed(2)),
-      false_positive_rate_percent: reviewedCount === 0 ? null : Number(((falsePositiveCount / reviewedCount) * 100).toFixed(2)),
-      breakdown_by_risk_level: (['NORMAL', 'REVIEW', 'HIGH_RISK'] as const).map((riskLevel) => ({ risk_level: riskLevel, count: items.filter((item) => item.risk_level === riskLevel).length })),
-      breakdown_by_reason_code: [...reasonCounts.entries()].map(([code, count]) => ({ code, count })).sort((left, right) => right.count - left.count || left.code.localeCompare(right.code)),
-      recent_reviewed_items: [...reviewed].sort((left, right) => (right.feedback?.updated_at ?? '').localeCompare(left.feedback?.updated_at ?? '')).slice(0, 10),
-      explanation: 'Các tỷ lệ chỉ được tính trên những cảnh báo đã được Admin đánh giá; UNSURE không được xem là kết luận đúng hoặc sai.',
+      confirmed_rate_percent:
+        reviewedCount === 0 ? null : Number(((confirmedCount / reviewedCount) * 100).toFixed(2)),
+      false_positive_rate_percent:
+        reviewedCount === 0
+          ? null
+          : Number(((falsePositiveCount / reviewedCount) * 100).toFixed(2)),
+      breakdown_by_risk_level: (['NORMAL', 'REVIEW', 'HIGH_RISK'] as const).map((riskLevel) => ({
+        risk_level: riskLevel,
+        count: items.filter((item) => item.risk_level === riskLevel).length,
+      })),
+      breakdown_by_reason_code: [...reasonCounts.entries()]
+        .map(([code, count]) => ({ code, count }))
+        .sort((left, right) => right.count - left.count || left.code.localeCompare(right.code)),
+      recent_reviewed_items: [...reviewed]
+        .sort((left, right) =>
+          (right.feedback?.updated_at ?? '').localeCompare(left.feedback?.updated_at ?? ''),
+        )
+        .slice(0, 10),
+      explanation:
+        'Các tỷ lệ chỉ được tính trên những cảnh báo đã được Admin đánh giá; UNSURE không được xem là kết luận đúng hoặc sai.',
     };
   }
 
@@ -751,9 +885,10 @@ export class AdminService {
         merchantId: typeof merchantId === 'string' ? merchantId : null,
         actualKg: this.numberOrNull(transaction.kilograms),
         actualLiters: this.numberOrNull(transaction.liters),
-        massSource: transaction.mass_source === 'SCALE' || transaction.mass_source === 'ESTIMATED_FROM_VOLUME'
-          ? transaction.mass_source
-          : null,
+        massSource:
+          transaction.mass_source === 'SCALE' || transaction.mass_source === 'ESTIMATED_FROM_VOLUME'
+            ? transaction.mass_source
+            : null,
         densityFactor: this.numberOrNull(transaction.density_factor),
         expectedDensityKgPerLiter: getDensityKgPerLiter(this.config),
         collectedAt:
@@ -767,28 +902,34 @@ export class AdminService {
   }
 
   private numberOrNull(value: unknown): number | null {
-    const numeric = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN;
+    const numeric =
+      typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN;
     return Number.isFinite(numeric) ? numeric : null;
   }
 
   async listAlerts(query: AdminAlertListQueryInput) {
     const includeFillForecastAlerts = query.type === undefined && query.resolved !== true;
-    const [rows, fillForecastCandidates] = await Promise.all([this.prisma.$queryRaw<Array<{
-      id: string;
-      type: string;
-      severity: string | null;
-      message: string | null;
-      details: Prisma.JsonValue;
-      created_at: Date;
-      resolved_at: Date | null;
-    }>>`
+    const [rows, fillForecastCandidates] = await Promise.all([
+      this.prisma.$queryRaw<
+        Array<{
+          id: string;
+          type: string;
+          severity: string | null;
+          message: string | null;
+          details: Prisma.JsonValue;
+          created_at: Date;
+          resolved_at: Date | null;
+        }>
+      >`
       SELECT a."id", a."type"::text AS "type", a."severity"::text AS "severity", a."message", a."details",
         a."created_at", a."resolved_at"
       FROM "alerts" a
       WHERE (${query.type ?? null}::text IS NULL OR a."type"::text = ${query.type ?? null})
         AND (${query.resolved ?? null}::boolean IS NULL OR (${query.resolved ?? null} AND a."resolved_at" IS NOT NULL) OR (NOT ${query.resolved ?? null} AND a."resolved_at" IS NULL))
       ORDER BY a."created_at" DESC
-    `, includeFillForecastAlerts ? this.stations.listFillAlertCandidates() : Promise.resolve([])]);
+    `,
+      includeFillForecastAlerts ? this.stations.listFillAlertCandidates() : Promise.resolve([]),
+    ]);
     const persistedAlerts = rows.map((row) => this.serializeAlert(row));
     const seenStationIds = new Set<string>();
     const generatedAt = new Date();
@@ -800,7 +941,9 @@ export class AdminService {
     const rankedAlerts = [...persistedAlerts, ...forecastAlerts]
       .map((alert, index) => ({ alert, index }))
       .sort((left, right) => {
-        const rankDifference = this.alertSeverityRank(left.alert.severity) - this.alertSeverityRank(right.alert.severity);
+        const rankDifference =
+          this.alertSeverityRank(left.alert.severity) -
+          this.alertSeverityRank(right.alert.severity);
         return rankDifference || left.index - right.index;
       })
       .map(({ alert }) => alert);
@@ -814,7 +957,11 @@ export class AdminService {
   async listStations(query: AdminStationListQueryInput) {
     const where: Prisma.StationWhereInput = {
       ...(query.ward_id ? { wardId: query.ward_id } : {}),
-      ...(query.status ? { status: query.status } : query.include_inactive ? {} : { status: 'ACTIVE' }),
+      ...(query.status
+        ? { status: query.status }
+        : query.include_inactive
+          ? {}
+          : { status: 'ACTIVE' }),
     };
     const [rows, total] = await Promise.all([
       this.prisma.station.findMany({
@@ -826,7 +973,10 @@ export class AdminService {
       }),
       this.prisma.station.count({ where }),
     ]);
-    const points = await this.prisma.getGeographyPoints('stations', rows.map((row) => row.id));
+    const points = await this.prisma.getGeographyPoints(
+      'stations',
+      rows.map((row) => row.id),
+    );
     const pointMap = new Map(points.map((point) => [point.id, point]));
     return {
       data: rows.map((row) => ({
@@ -837,7 +987,10 @@ export class AdminService {
         lng: pointMap.get(row.id)?.lng ?? null,
         capacity_l: Number(row.capacityLiters),
         current_volume_l: Number(row.currentVolumeLiters),
-        fill_pct: Number(row.capacityLiters) > 0 ? (Number(row.currentVolumeLiters) / Number(row.capacityLiters)) * 100 : 0,
+        fill_pct:
+          Number(row.capacityLiters) > 0
+            ? (Number(row.currentVolumeLiters) / Number(row.capacityLiters)) * 100
+            : 0,
         status: row.status,
         ward: { id: row.ward.id, code: row.ward.code, name: row.ward.name },
       })),
@@ -921,25 +1074,27 @@ export class AdminService {
   }
 
   async listMerchants(query: AdminMerchantListQueryInput) {
-    const rows = await this.prisma.$queryRaw<Array<{
-      id: string;
-      name: string;
-      address: string | null;
-      lat: number | null;
-      lng: number | null;
-      distance_m: number | null;
-      status: string;
-      approval_status: string;
-      rejection_reason: string | null;
-      business_type: string | null;
-      phone: string | null;
-      ward_code: string | null;
-      ward_name: string | null;
-      avg_daily_liters: number | null;
-      last_collected_at: Date | null;
-      anomaly: boolean;
-      total: number;
-    }>>`
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        id: string;
+        name: string;
+        address: string | null;
+        lat: number | null;
+        lng: number | null;
+        distance_m: number | null;
+        status: string;
+        approval_status: string;
+        rejection_reason: string | null;
+        business_type: string | null;
+        phone: string | null;
+        ward_code: string | null;
+        ward_name: string | null;
+        avg_daily_liters: number | null;
+        last_collected_at: Date | null;
+        anomaly: boolean;
+        total: number;
+      }>
+    >`
       SELECT m."id", m."business_name" AS name, m."address", u."phone", w."code" AS ward_code, w."name" AS ward_name,
         ST_Y(m."location"::geometry)::float8 AS lat,
         ST_X(m."location"::geometry)::float8 AS lng,
@@ -1004,7 +1159,11 @@ export class AdminService {
   async listCollectors(query: AdminCollectorListQueryInput) {
     const where: Prisma.CollectorWhereInput = {
       ...(query.ward_id ? { collectorWards: { some: { wardId: query.ward_id } } } : {}),
-      ...(query.status ? { status: query.status } : query.include_inactive ? {} : { status: 'ACTIVE' }),
+      ...(query.status
+        ? { status: query.status }
+        : query.include_inactive
+          ? {}
+          : { status: 'ACTIVE' }),
     };
     const [rows, total] = await Promise.all([
       this.prisma.collector.findMany({
@@ -1012,23 +1171,54 @@ export class AdminService {
         orderBy: { displayName: 'asc' },
         skip: (query.page - 1) * query.limit,
         take: query.limit,
-        include: { user: true, collectorWards: { include: { ward: true }, orderBy: { createdAt: 'asc' } } },
+        include: {
+          user: true,
+          collectorWards: { include: { ward: true }, orderBy: { createdAt: 'asc' } },
+        },
       }),
       this.prisma.collector.count({ where }),
     ]);
+    const now = Date.now();
+    const redis = this.redis;
+    const activeCodes = await Promise.all(
+      rows.map(async (row) => {
+        if (
+          !redis ||
+          row.linkStatus !== 'PENDING_LINK' ||
+          !row.inviteCodeHash ||
+          !row.inviteExpiresAt ||
+          row.inviteExpiresAt.getTime() <= now
+        )
+          return null;
+        try {
+          const code = await redis.getValue(COLLECTOR_ACTIVE_INVITE_KEY_PREFIX + row.id);
+          return code && this.hashInviteCode(code) === row.inviteCodeHash ? code : null;
+        } catch {
+          return null;
+        }
+      }),
+    );
     return {
-      data: rows.map((row) => ({
+      data: rows.map((row, index) => ({
         id: row.id,
         display_name: row.displayName,
         status: row.status,
         is_active: row.isActive,
         link_status: row.linkStatus,
-        invite_status: row.linkStatus === 'PENDING_LINK'
-          ? row.inviteExpiresAt && row.inviteExpiresAt.getTime() > Date.now() ? 'PENDING' : 'EXPIRED'
-          : null,
+        invite_status:
+          row.linkStatus === 'PENDING_LINK'
+            ? row.inviteExpiresAt && row.inviteExpiresAt.getTime() > now
+              ? 'PENDING'
+              : 'EXPIRED'
+            : null,
         invite_expires_at: row.inviteExpiresAt?.toISOString() ?? null,
+        invite_url: activeCodes[index] ? this.collectorInviteUrl(activeCodes[index]) : null,
         last_seen_at: row.lastSeenAt,
-        wards: row.collectorWards.map((item) => ({ id: item.ward.id, code: item.ward.code, name: item.ward.name })),
+        wards: row.collectorWards.map((item) => ({
+          id: item.ward.id,
+          code: item.ward.code,
+          name: item.ward.name,
+        })),
         contact_phone: row.contactPhone,
         user: row.user ? { id: row.user.id, name: row.user.name, phone: row.user.phone } : null,
         vehicle_type: row.vehicleType,
@@ -1040,16 +1230,23 @@ export class AdminService {
   }
 
   async collectorPerformance(id: string) {
-    const collector = await this.prisma.collector.findUnique({ where: { id }, select: { id: true, displayName: true } });
+    const collector = await this.prisma.collector.findUnique({
+      where: { id },
+      select: { id: true, displayName: true },
+    });
     if (!collector) {
       throw new NotFoundException('Collector not found');
     }
-    const threshold = Number(this.config.get<number | string>('DELIVERY_VARIANCE_THRESHOLD_PCT', 0.02));
-    const rows = await this.prisma.$queryRaw<Array<{
-      liters_7d: number;
-      collections_7d: number;
-      delivered_liters_7d: number;
-    }>>`
+    const threshold = Number(
+      this.config.get<number | string>('DELIVERY_VARIANCE_THRESHOLD_PCT', 0.02),
+    );
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        liters_7d: number;
+        collections_7d: number;
+        delivered_liters_7d: number;
+      }>
+    >`
       WITH bounds AS (SELECT NOW() - interval '7 days' AS from_at)
       SELECT
         COALESCE((SELECT SUM(ct."actual_liters")::float8 FROM "collection_transactions" ct, bounds b
@@ -1081,7 +1278,11 @@ export class AdminService {
       throw new NotFoundException('Alert not found');
     }
     if (alert.resolvedAt) {
-      throw new ConflictException({ code: 'ALERT_ALREADY_RESOLVED', message: 'Alert is already resolved', details: { id } });
+      throw new ConflictException({
+        code: 'ALERT_ALREADY_RESOLVED',
+        message: 'Alert is already resolved',
+        details: { id },
+      });
     }
     const updated = await this.prisma.$transaction(async (tx) => {
       const resolved = await tx.alert.update({ where: { id }, data: { resolvedAt: new Date() } });
@@ -1100,14 +1301,16 @@ export class AdminService {
   }
 
   async merchantPerformance(id: string) {
-    const rows = await this.prisma.$queryRaw<Array<{
-      merchant_id: string;
-      total_liters: number;
-      collection_count: number;
-      avg_daily_liters: number | null;
-      last_collected_at: Date | null;
-      flagged_count: number;
-    }>>`
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        merchant_id: string;
+        total_liters: number;
+        collection_count: number;
+        avg_daily_liters: number | null;
+        last_collected_at: Date | null;
+        flagged_count: number;
+      }>
+    >`
       SELECT m."id" AS merchant_id,
         COALESCE(SUM(ct."actual_liters"), 0)::float8 AS total_liters,
         COUNT(ct."id")::int AS collection_count,
@@ -1134,16 +1337,27 @@ export class AdminService {
   }
 
   async approveMerchant(id: string, actorUserId: string, input: MerchantApprovalInput = {}) {
-    const merchant = await this.prisma.merchant.findUnique({ where: { id }, include: { ward: true } });
+    const merchant = await this.prisma.merchant.findUnique({
+      where: { id },
+      include: { ward: true },
+    });
     if (!merchant) throw new NotFoundException('Merchant not found');
     const storedPoint = await this.prisma.getGeographyPoint('merchants', id);
     const lat = input.lat ?? storedPoint?.lat;
     const lng = input.lng ?? storedPoint?.lng;
     if (lat === undefined || lng === undefined || lat === null || lng === null) {
-      throw new BadRequestException({ code: 'MERCHANT_LOCATION_REQUIRED', message: 'Cần nhập tọa độ thực của quán trước khi duyệt', details: { lat, lng } });
+      throw new BadRequestException({
+        code: 'MERCHANT_LOCATION_REQUIRED',
+        message: 'Cần nhập tọa độ thực của quán trước khi duyệt',
+        details: { lat, lng },
+      });
     }
     if (this.isKnownDefaultLocation(lat, lng)) {
-      throw new BadRequestException({ code: 'MERCHANT_LOCATION_REQUIRED', message: 'Tọa độ hiện tại là tọa độ mặc định, cần thay bằng vị trí thực của quán', details: { lat, lng } });
+      throw new BadRequestException({
+        code: 'MERCHANT_LOCATION_REQUIRED',
+        message: 'Tọa độ hiện tại là tọa độ mặc định, cần thay bằng vị trí thực của quán',
+        details: { lat, lng },
+      });
     }
     const updated = await this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw`
@@ -1169,13 +1383,24 @@ export class AdminService {
               type: AlertType.WARD_LOCATION_MISMATCH,
               severity: AlertSeverity.HIGH,
               message: 'Tọa độ quán cách xa tâm phường được gán hơn 20 km',
-              details: { merchant_id: id, ward_id: merchant.wardId, distance_m: distanceM, threshold_m: 20000 },
+              details: {
+                merchant_id: id,
+                ward_id: merchant.wardId,
+                distance_m: distanceM,
+                threshold_m: 20000,
+              },
             },
           });
         }
       }
       await tx.auditLog.create({
-        data: { actorUserId, action: 'APPROVE_MERCHANT', entityType: 'Merchant', entityId: id, details: {} },
+        data: {
+          actorUserId,
+          action: 'APPROVE_MERCHANT',
+          entityType: 'Merchant',
+          entityId: id,
+          details: {},
+        },
       });
       return row;
     });
@@ -1195,7 +1420,13 @@ export class AdminService {
         data: { approvalStatus: MerchantApprovalStatus.REJECTED, rejectionReason: input.reason },
       });
       await tx.auditLog.create({
-        data: { actorUserId, action: 'REJECT_MERCHANT', entityType: 'Merchant', entityId: id, details: { reason: input.reason } },
+        data: {
+          actorUserId,
+          action: 'REJECT_MERCHANT',
+          entityType: 'Merchant',
+          entityId: id,
+          details: { reason: input.reason },
+        },
       });
       return row;
     });
@@ -1219,15 +1450,29 @@ export class AdminService {
       }),
       this.prisma.container.count({ where }),
     ]);
-    return { data: rows.map((row) => this.serializeAdminContainer(row)), meta: { page: query.page, limit: query.limit, total } };
+    return {
+      data: rows.map((row) => this.serializeAdminContainer(row)),
+      meta: { page: query.page, limit: query.limit, total },
+    };
   }
 
   async listWards(query: AdminWardListQueryInput = { include_inactive: true }) {
-    const rows = await this.prisma.$queryRaw<Array<{
-      id: string; code: string; name: string; district: string; city: string;
-      center_lat: number | null; center_lng: number | null; status: string; is_active: boolean;
-      merchant_count: number; container_count: number; collector_count: number;
-    }>>`
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        id: string;
+        code: string;
+        name: string;
+        district: string;
+        city: string;
+        center_lat: number | null;
+        center_lng: number | null;
+        status: string;
+        is_active: boolean;
+        merchant_count: number;
+        container_count: number;
+        collector_count: number;
+      }>
+    >`
       SELECT w."id", w."code", w."name", w."district", w."city",
         w."center_lat", w."center_lng", w."status"::text AS "status", w."is_active",
         (SELECT COUNT(*)::int FROM "merchants" m WHERE m."ward_id" = w."id" AND m."status" = 'ACTIVE' AND m."deleted_at" IS NULL) AS "merchant_count",
@@ -1257,7 +1502,11 @@ export class AdminService {
   async createWard(input: AdminWardCreateInput, actorUserId: string) {
     const existing = await this.prisma.ward.findUnique({ where: { code: input.code } });
     if (existing && existing.deletedAt === null) {
-      throw new ConflictException({ code: 'WARD_CODE_ALREADY_EXISTS', message: 'Mã phường đã tồn tại', details: { code: input.code } });
+      throw new ConflictException({
+        code: 'WARD_CODE_ALREADY_EXISTS',
+        message: 'Mã phường đã tồn tại',
+        details: { code: input.code },
+      });
     }
     const ward = await this.prisma.$transaction(async (tx) => {
       const created = await tx.ward.create({
@@ -1272,7 +1521,15 @@ export class AdminService {
           isActive: true,
         },
       });
-      await tx.auditLog.create({ data: { actorUserId, action: 'CREATE_WARD', entityType: 'Ward', entityId: created.id, details: { code: created.code } } });
+      await tx.auditLog.create({
+        data: {
+          actorUserId,
+          action: 'CREATE_WARD',
+          entityType: 'Ward',
+          entityId: created.id,
+          details: { code: created.code },
+        },
+      });
       return created;
     });
     return (await this.listWards({ include_inactive: true })).find((item) => item.id === ward.id);
@@ -1283,50 +1540,113 @@ export class AdminService {
     if (!existing || existing.deletedAt) throw new NotFoundException('Ward not found');
     const disabling = input.status === EntityStatus.INACTIVE || input.is_active === false;
     if (disabling) {
-      const activeMerchants = await this.prisma.merchant.count({ where: { wardId: id, status: EntityStatus.ACTIVE, deletedAt: null } });
+      const activeMerchants = await this.prisma.merchant.count({
+        where: { wardId: id, status: EntityStatus.ACTIVE, deletedAt: null },
+      });
       if (activeMerchants > 0) {
-        throw new ConflictException({ code: 'WARD_HAS_ACTIVE_MERCHANTS', message: 'Không thể tắt phường vì còn quán đang hoạt động', details: { active_merchants: activeMerchants } });
+        throw new ConflictException({
+          code: 'WARD_HAS_ACTIVE_MERCHANTS',
+          message: 'Không thể tắt phường vì còn quán đang hoạt động',
+          details: { active_merchants: activeMerchants },
+        });
       }
     }
     if (input.code && input.code !== existing.code) {
       const duplicate = await this.prisma.ward.findUnique({ where: { code: input.code } });
-      if (duplicate && duplicate.id !== id && duplicate.deletedAt === null) throw new ConflictException({ code: 'WARD_CODE_ALREADY_EXISTS', message: 'Mã phường đã tồn tại', details: { code: input.code } });
+      if (duplicate && duplicate.id !== id && duplicate.deletedAt === null)
+        throw new ConflictException({
+          code: 'WARD_CODE_ALREADY_EXISTS',
+          message: 'Mã phường đã tồn tại',
+          details: { code: input.code },
+        });
     }
     await this.prisma.$transaction(async (tx) => {
-      await tx.ward.update({ where: { id }, data: {
-        ...(input.code !== undefined ? { code: input.code } : {}),
-        ...(input.name !== undefined ? { name: input.name } : {}),
-        ...(input.district !== undefined ? { district: input.district } : {}),
-        ...(input.city !== undefined ? { city: input.city } : {}),
-        ...(input.center_lat !== undefined ? { centerLat: input.center_lat } : {}),
-        ...(input.center_lng !== undefined ? { centerLng: input.center_lng } : {}),
-        ...(input.status !== undefined ? { status: input.status, isActive: input.status === EntityStatus.ACTIVE, deletedAt: input.status === EntityStatus.INACTIVE ? new Date() : null } : {}),
-        ...(input.is_active !== undefined && input.status === undefined ? { isActive: input.is_active, status: input.is_active ? EntityStatus.ACTIVE : EntityStatus.INACTIVE, deletedAt: input.is_active ? null : new Date() } : {}),
-      } });
-      await tx.auditLog.create({ data: { actorUserId, action: 'UPDATE_WARD', entityType: 'Ward', entityId: id, details: input } });
+      await tx.ward.update({
+        where: { id },
+        data: {
+          ...(input.code !== undefined ? { code: input.code } : {}),
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          ...(input.district !== undefined ? { district: input.district } : {}),
+          ...(input.city !== undefined ? { city: input.city } : {}),
+          ...(input.center_lat !== undefined ? { centerLat: input.center_lat } : {}),
+          ...(input.center_lng !== undefined ? { centerLng: input.center_lng } : {}),
+          ...(input.status !== undefined
+            ? {
+                status: input.status,
+                isActive: input.status === EntityStatus.ACTIVE,
+                deletedAt: input.status === EntityStatus.INACTIVE ? new Date() : null,
+              }
+            : {}),
+          ...(input.is_active !== undefined && input.status === undefined
+            ? {
+                isActive: input.is_active,
+                status: input.is_active ? EntityStatus.ACTIVE : EntityStatus.INACTIVE,
+                deletedAt: input.is_active ? null : new Date(),
+              }
+            : {}),
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorUserId,
+          action: 'UPDATE_WARD',
+          entityType: 'Ward',
+          entityId: id,
+          details: input,
+        },
+      });
     });
     return (await this.listWards({ include_inactive: true })).find((item) => item.id === id);
   }
 
   async getContainer(id: string) {
-    const row = await this.prisma.container.findUnique({ where: { id }, include: { merchant: true } });
+    const row = await this.prisma.container.findUnique({
+      where: { id },
+      include: { merchant: true },
+    });
     if (!row) throw new NotFoundException('Container not found');
     return this.serializeAdminContainer(row);
   }
 
   async createContainer(input: AdminContainerCreateInput, actorUserId: string) {
     const ward = await this.findWard(input.ward_id, input.ward_code);
-    if (!ward) throw new NotFoundException({ code: 'WARD_NOT_FOUND', message: 'Không tìm thấy phường đã chọn', details: null });
-    const qrCode = input.qr_code ?? await this.nextAdminQrCode(ward.code);
+    if (!ward)
+      throw new NotFoundException({
+        code: 'WARD_NOT_FOUND',
+        message: 'Không tìm thấy phường đã chọn',
+        details: null,
+      });
+    const qrCode = input.qr_code ?? (await this.nextAdminQrCode(ward.code));
     const duplicate = await this.prisma.container.findUnique({ where: { qrCode } });
-    if (duplicate) throw new ConflictException({ code: 'QR_CODE_ALREADY_EXISTS', message: 'Mã QR đã tồn tại', details: { qr_code: qrCode } });
+    if (duplicate)
+      throw new ConflictException({
+        code: 'QR_CODE_ALREADY_EXISTS',
+        message: 'Mã QR đã tồn tại',
+        details: { qr_code: qrCode },
+      });
     const row = await this.prisma.$transaction(async (tx) => {
       const created = await tx.container.create({
-      data: { qrCode, capacityLiters: input.capacity_liters, state: 'AT_MERCHANT', merchantId: null, wardId: ward.id },
+        data: {
+          qrCode,
+          capacityLiters: input.capacity_liters,
+          state: 'AT_MERCHANT',
+          merchantId: null,
+          wardId: ward.id,
+        },
         include: { merchant: true },
       });
       await tx.auditLog.create({
-        data: { actorUserId, action: 'CREATE_CONTAINER', entityType: 'Container', entityId: created.id, details: { qr_code: qrCode, ward_code: ward.code, capacity_liters: input.capacity_liters } },
+        data: {
+          actorUserId,
+          action: 'CREATE_CONTAINER',
+          entityType: 'Container',
+          entityId: created.id,
+          details: {
+            qr_code: qrCode,
+            ward_code: ward.code,
+            capacity_liters: input.capacity_liters,
+          },
+        },
       });
       return created;
     });
@@ -1339,32 +1659,77 @@ export class AdminService {
       this.prisma.merchant.findUnique({ where: { id: input.merchant_id } }),
     ]);
     if (!container) throw new NotFoundException('Container not found');
-    if (!merchant || merchant.status === EntityStatus.INACTIVE) throw new NotFoundException('Merchant not found');
+    if (!merchant || merchant.status === EntityStatus.INACTIVE)
+      throw new NotFoundException('Merchant not found');
     if (container.merchantId && container.merchantId !== merchant.id) {
-      throw new ConflictException({ code: 'CONTAINER_ALREADY_ASSIGNED', message: 'Can đang thuộc quán khác', details: { merchant_id: container.merchantId } });
+      throw new ConflictException({
+        code: 'CONTAINER_ALREADY_ASSIGNED',
+        message: 'Can đang thuộc quán khác',
+        details: { merchant_id: container.merchantId },
+      });
     }
     const row = await this.prisma.$transaction(async (tx) => {
-      const updated = await tx.container.update({ where: { id }, data: { merchantId: merchant.id, state: 'AT_MERCHANT', status: 'ACTIVE', isActive: true, deletedAt: null }, include: { merchant: true } });
-      await tx.auditLog.create({ data: { actorUserId, action: 'ASSIGN_CONTAINER', entityType: 'Container', entityId: id, details: { merchant_id: merchant.id } } });
+      const updated = await tx.container.update({
+        where: { id },
+        data: {
+          merchantId: merchant.id,
+          state: 'AT_MERCHANT',
+          status: 'ACTIVE',
+          isActive: true,
+          deletedAt: null,
+        },
+        include: { merchant: true },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorUserId,
+          action: 'ASSIGN_CONTAINER',
+          entityType: 'Container',
+          entityId: id,
+          details: { merchant_id: merchant.id },
+        },
+      });
       return updated;
     });
     return this.serializeAdminContainer(row);
   }
 
   async unassignContainer(id: string, actorUserId: string) {
-    const container = await this.prisma.container.findUnique({ where: { id }, include: { merchant: true } });
+    const container = await this.prisma.container.findUnique({
+      where: { id },
+      include: { merchant: true },
+    });
     if (!container) throw new NotFoundException('Container not found');
     const row = await this.prisma.$transaction(async (tx) => {
-      const updated = await tx.container.update({ where: { id }, data: { merchantId: null, state: 'AT_MERCHANT' }, include: { merchant: true } });
-      await tx.auditLog.create({ data: { actorUserId, action: 'UNASSIGN_CONTAINER', entityType: 'Container', entityId: id, details: { previous_merchant_id: container.merchantId } } });
+      const updated = await tx.container.update({
+        where: { id },
+        data: { merchantId: null, state: 'AT_MERCHANT' },
+        include: { merchant: true },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorUserId,
+          action: 'UNASSIGN_CONTAINER',
+          entityType: 'Container',
+          entityId: id,
+          details: { previous_merchant_id: container.merchantId },
+        },
+      });
       return updated;
     });
     return this.serializeAdminContainer(row);
   }
 
-  async returnContainerToMerchant(id: string, input: AdminContainerReturnInput, actorUserId: string) {
+  async returnContainerToMerchant(
+    id: string,
+    input: AdminContainerReturnInput,
+    actorUserId: string,
+  ) {
     const row = await this.prisma.$transaction(async (tx) => {
-      const container = await tx.container.findUnique({ where: { id }, include: { merchant: true } });
+      const container = await tx.container.findUnique({
+        where: { id },
+        include: { merchant: true },
+      });
       if (!container) throw new NotFoundException('Container not found');
       if (container.state !== 'AT_STATION') {
         throw new BadRequestException({
@@ -1384,7 +1749,11 @@ export class AdminService {
       }
 
       const merchant = await tx.merchant.findUnique({ where: { id: merchantId } });
-      if (!merchant || merchant.approvalStatus !== MerchantApprovalStatus.APPROVED || merchant.status === EntityStatus.INACTIVE) {
+      if (
+        !merchant ||
+        merchant.approvalStatus !== MerchantApprovalStatus.APPROVED ||
+        merchant.status === EntityStatus.INACTIVE
+      ) {
         throw new BadRequestException({
           code: 'MERCHANT_NOT_APPROVED',
           message: 'Quán nhận can chưa được duyệt hoặc không còn hoạt động',
@@ -1413,9 +1782,16 @@ export class AdminService {
     return this.serializeAdminContainer(row);
   }
 
-  async cancelContainerTransit(id: string, input: AdminContainerCancelTransitInput, actorUserId: string) {
+  async cancelContainerTransit(
+    id: string,
+    input: AdminContainerCancelTransitInput,
+    actorUserId: string,
+  ) {
     const result = await this.prisma.$transaction(async (tx) => {
-      const container = await tx.container.findUnique({ where: { id }, include: { merchant: true } });
+      const container = await tx.container.findUnique({
+        where: { id },
+        include: { merchant: true },
+      });
       if (!container) throw new NotFoundException('Container not found');
       if (container.state !== 'IN_TRANSIT') {
         throw new BadRequestException({
@@ -1475,12 +1851,18 @@ export class AdminService {
       });
       return { updated, affectedTransactionIds };
     });
-    return { ...this.serializeAdminContainer(result.updated), affected_transaction_ids: result.affectedTransactionIds };
+    return {
+      ...this.serializeAdminContainer(result.updated),
+      affected_transaction_ids: result.affectedTransactionIds,
+    };
   }
 
   private async nextAdminQrCode(wardCode: string) {
     const prefix = containerQrPrefix(wardCode);
-    const rows = await this.prisma.container.findMany({ where: { qrCode: { startsWith: prefix } }, select: { qrCode: true } });
+    const rows = await this.prisma.container.findMany({
+      where: { qrCode: { startsWith: prefix } },
+      select: { qrCode: true },
+    });
     const max = rows.reduce((highest, row) => {
       const suffix = Number(row.qrCode.slice(prefix.length));
       return Number.isInteger(suffix) && suffix > highest ? suffix : highest;
@@ -1489,14 +1871,27 @@ export class AdminService {
   }
 
   private async findWard(wardId?: string, wardCode?: string) {
-    if (wardId) return this.prisma.ward.findFirst({ where: { id: wardId, deletedAt: null, status: EntityStatus.ACTIVE, isActive: true } });
+    if (wardId)
+      return this.prisma.ward.findFirst({
+        where: { id: wardId, deletedAt: null, status: EntityStatus.ACTIVE, isActive: true },
+      });
     if (!wardCode) return null;
     const normalized = normalizeWardCode(wardCode);
-    const wards = await this.prisma.ward.findMany({ where: { deletedAt: null, status: EntityStatus.ACTIVE, isActive: true } });
+    const wards = await this.prisma.ward.findMany({
+      where: { deletedAt: null, status: EntityStatus.ACTIVE, isActive: true },
+    });
     return wards.find((ward) => wardLookupKey(ward.code) === wardLookupKey(normalized)) ?? null;
   }
 
-  private serializeAdminContainer(row: { id: string; qrCode: string; state: string; status: string; capacityLiters: Prisma.Decimal | null; lastSeenAt: Date | null; merchant: { id: string; businessName: string; address: string | null } | null }) {
+  private serializeAdminContainer(row: {
+    id: string;
+    qrCode: string;
+    state: string;
+    status: string;
+    capacityLiters: Prisma.Decimal | null;
+    lastSeenAt: Date | null;
+    merchant: { id: string; businessName: string; address: string | null } | null;
+  }) {
     return {
       id: row.id,
       qr_code: row.qrCode,
@@ -1504,12 +1899,16 @@ export class AdminService {
       status: row.status,
       capacity_liters: row.capacityLiters === null ? null : Number(row.capacityLiters),
       last_seen_at: row.lastSeenAt,
-      merchant: row.merchant ? { id: row.merchant.id, name: row.merchant.businessName, address: row.merchant.address } : null,
+      merchant: row.merchant
+        ? { id: row.merchant.id, name: row.merchant.businessName, address: row.merchant.address }
+        : null,
     };
   }
 
   async createCollector(input: AdminCollectorCreateInput) {
-    const wards = await this.prisma.ward.findMany({ where: { id: { in: input.ward_ids }, deletedAt: null } });
+    const wards = await this.prisma.ward.findMany({
+      where: { id: { in: input.ward_ids }, deletedAt: null },
+    });
     if (wards.length !== input.ward_ids.length) throw new NotFoundException('Ward not found');
     const collectorId = randomUUID();
     const inviteCode = randomBytes(32).toString('base64url');
@@ -1520,6 +1919,11 @@ export class AdminService {
     const redis = this.requiredRedis();
     await redis.setOneTime(inviteKey, collectorId, COLLECTOR_INVITE_TTL_SECONDS);
     try {
+      await redis.setExpiring(
+        COLLECTOR_ACTIVE_INVITE_KEY_PREFIX + collectorId,
+        inviteCode,
+        COLLECTOR_INVITE_TTL_SECONDS,
+      );
       await this.prisma.collector.create({
         data: {
           id: collectorId,
@@ -1536,6 +1940,9 @@ export class AdminService {
       });
     } catch (error) {
       await redis.deleteOneTime(inviteKey).catch(() => undefined);
+      await redis
+        .deleteOneTime(COLLECTOR_ACTIVE_INVITE_KEY_PREFIX + collectorId)
+        .catch(() => undefined);
       throw error;
     }
     return {
@@ -1548,14 +1955,29 @@ export class AdminService {
   async regenerateCollectorInvite(id: string) {
     const existing = await this.prisma.collector.findUnique({
       where: { id },
-      select: { id: true, userId: true, linkStatus: true, status: true, isActive: true, inviteCodeHash: true },
+      select: {
+        id: true,
+        userId: true,
+        linkStatus: true,
+        status: true,
+        isActive: true,
+        inviteCodeHash: true,
+      },
     });
     if (!existing) throw new NotFoundException('Collector not found');
     if (existing.userId || existing.linkStatus === 'LINKED') {
-      throw new ConflictException({ code: 'COLLECTOR_ALREADY_LINKED', message: 'Người thu gom đã liên kết Zalo', details: null });
+      throw new ConflictException({
+        code: 'COLLECTOR_ALREADY_LINKED',
+        message: 'Người thu gom đã liên kết Zalo',
+        details: null,
+      });
     }
     if (!existing.isActive || existing.status !== EntityStatus.ACTIVE) {
-      throw new ForbiddenException({ code: 'COLLECTOR_LOCKED', message: 'Người thu gom đã bị khóa', details: null });
+      throw new ForbiddenException({
+        code: 'COLLECTOR_LOCKED',
+        message: 'Người thu gom đã bị khóa',
+        details: null,
+      });
     }
 
     const inviteCode = randomBytes(32).toString('base64url');
@@ -1566,16 +1988,24 @@ export class AdminService {
     const redis = this.requiredRedis();
     await redis.setOneTime(inviteKey, id, COLLECTOR_INVITE_TTL_SECONDS);
     try {
+      await redis.setExpiring(
+        COLLECTOR_ACTIVE_INVITE_KEY_PREFIX + id,
+        inviteCode,
+        COLLECTOR_INVITE_TTL_SECONDS,
+      );
       await this.prisma.collector.update({
         where: { id },
         data: { linkStatus: 'PENDING_LINK', inviteCodeHash, inviteExpiresAt },
       });
     } catch (error) {
       await redis.deleteOneTime(inviteKey).catch(() => undefined);
+      await redis.deleteOneTime(COLLECTOR_ACTIVE_INVITE_KEY_PREFIX + id).catch(() => undefined);
       throw error;
     }
     if (existing.inviteCodeHash) {
-      await redis.deleteOneTime(COLLECTOR_INVITE_KEY_PREFIX + existing.inviteCodeHash).catch(() => undefined);
+      await redis
+        .deleteOneTime(COLLECTOR_INVITE_KEY_PREFIX + existing.inviteCodeHash)
+        .catch(() => undefined);
     }
     return {
       collector: await this.collectorProfile(id),
@@ -1588,7 +2018,9 @@ export class AdminService {
     const collector = await this.prisma.collector.findUnique({ where: { id } });
     if (!collector) throw new NotFoundException('Collector not found');
     if (input.ward_ids) {
-      const wards = await this.prisma.ward.findMany({ where: { id: { in: input.ward_ids }, deletedAt: null } });
+      const wards = await this.prisma.ward.findMany({
+        where: { id: { in: input.ward_ids }, deletedAt: null },
+      });
       if (wards.length !== input.ward_ids.length) throw new NotFoundException('Ward not found');
     }
     await this.prisma.$transaction(async (tx) => {
@@ -1597,30 +2029,68 @@ export class AdminService {
         data: {
           ...(input.name !== undefined ? { displayName: input.name } : {}),
           ...(input.vehicle_type !== undefined ? { vehicleType: input.vehicle_type } : {}),
-          ...(input.max_capacity_l !== undefined ? { maxCapacityLiters: input.max_capacity_l } : {}),
+          ...(input.max_capacity_l !== undefined
+            ? { maxCapacityLiters: input.max_capacity_l }
+            : {}),
           ...(!collector.userId && input.phone !== undefined ? { contactPhone: input.phone } : {}),
-          ...(input.status !== undefined ? { status: input.status, isActive: input.status === EntityStatus.ACTIVE, deletedAt: input.status === EntityStatus.INACTIVE ? new Date() : null } : {}),
+          ...(input.status !== undefined
+            ? {
+                status: input.status,
+                isActive: input.status === EntityStatus.ACTIVE,
+                deletedAt: input.status === EntityStatus.INACTIVE ? new Date() : null,
+              }
+            : {}),
         },
       });
       if (collector.userId && (input.name !== undefined || input.phone !== undefined)) {
-        await tx.user.update({ where: { id: collector.userId }, data: { ...(input.name !== undefined ? { name: input.name } : {}), ...(input.phone !== undefined ? { phone: input.phone } : {}) } });
+        await tx.user.update({
+          where: { id: collector.userId },
+          data: {
+            ...(input.name !== undefined ? { name: input.name } : {}),
+            ...(input.phone !== undefined ? { phone: input.phone } : {}),
+          },
+        });
       }
       if (input.ward_ids) {
-        await tx.collectorWard.createMany({ data: input.ward_ids.map((wardId) => ({ collectorId: id, wardId })), skipDuplicates: true });
+        await tx.collectorWard.createMany({
+          data: input.ward_ids.map((wardId) => ({ collectorId: id, wardId })),
+          skipDuplicates: true,
+        });
       }
     });
     return this.collectorProfile(id);
   }
 
   private async merchantProfile(id: string) {
-    const row = await this.prisma.merchant.findUnique({ where: { id }, include: { user: true, ward: true } });
+    const row = await this.prisma.merchant.findUnique({
+      where: { id },
+      include: { user: true, ward: true },
+    });
     if (!row) throw new NotFoundException('Merchant not found');
     const point = await this.prisma.getGeographyPoint('merchants', id);
-    return { id: row.id, name: row.businessName, address: row.address, business_type: row.businessType, phone: row.user.phone, lat: point?.lat ?? null, lng: point?.lng ?? null, status: row.status, approval_status: row.approvalStatus, rejection_reason: row.rejectionReason, ward: { id: row.ward.id, code: row.ward.code, name: row.ward.name } };
+    return {
+      id: row.id,
+      name: row.businessName,
+      address: row.address,
+      business_type: row.businessType,
+      phone: row.user.phone,
+      lat: point?.lat ?? null,
+      lng: point?.lng ?? null,
+      status: row.status,
+      approval_status: row.approvalStatus,
+      rejection_reason: row.rejectionReason,
+      ward: { id: row.ward.id, code: row.ward.code, name: row.ward.name },
+    };
   }
 
   private async collectorProfile(id: string) {
-    const row = await this.prisma.collector.findUnique({ where: { id }, include: { user: true, collectorWards: { include: { ward: true }, orderBy: { createdAt: 'asc' } } } });
+    const row = await this.prisma.collector.findUnique({
+      where: { id },
+      include: {
+        user: true,
+        collectorWards: { include: { ward: true }, orderBy: { createdAt: 'asc' } },
+      },
+    });
     if (!row) throw new NotFoundException('Collector not found');
     return {
       id: row.id,
@@ -1630,13 +2100,20 @@ export class AdminService {
       status: row.status,
       is_active: row.isActive,
       link_status: row.linkStatus,
-      invite_status: row.linkStatus === 'PENDING_LINK'
-        ? row.inviteExpiresAt && row.inviteExpiresAt.getTime() > Date.now() ? 'PENDING' : 'EXPIRED'
-        : null,
+      invite_status:
+        row.linkStatus === 'PENDING_LINK'
+          ? row.inviteExpiresAt && row.inviteExpiresAt.getTime() > Date.now()
+            ? 'PENDING'
+            : 'EXPIRED'
+          : null,
       invite_expires_at: row.inviteExpiresAt?.toISOString() ?? null,
       last_seen_at: row.lastSeenAt,
       contact_phone: row.contactPhone,
-      wards: row.collectorWards.map((item) => ({ id: item.ward.id, code: item.ward.code, name: item.ward.name })),
+      wards: row.collectorWards.map((item) => ({
+        id: item.ward.id,
+        code: item.ward.code,
+        name: item.ward.name,
+      })),
       ward_ids: row.collectorWards.map((item) => item.wardId),
       user: row.user ? { id: row.user.id, name: row.user.name, phone: row.user.phone } : null,
     };
@@ -1647,14 +2124,23 @@ export class AdminService {
   }
 
   private requiredRedis(): RedisService {
-    if (!this.redis) throw new ServiceUnavailableException({ code: 'COLLECTOR_INVITE_UNAVAILABLE', message: 'Không tạo được lời mời người thu gom', details: null });
+    if (!this.redis)
+      throw new ServiceUnavailableException({
+        code: 'COLLECTOR_INVITE_UNAVAILABLE',
+        message: 'Không tạo được lời mời người thu gom',
+        details: null,
+      });
     return this.redis;
   }
 
   private collectorInviteUrl(code: string): string {
     const rawBaseUrl = this.config.get<string>('ZALO_OAUTH_SUCCESS_REDIRECT_URL')?.trim();
     if (!rawBaseUrl) {
-      throw new ServiceUnavailableException({ code: 'COLLECTOR_INVITE_URL_NOT_CONFIGURED', message: 'Chưa cấu hình địa chỉ Mini App cho lời mời', details: null });
+      throw new ServiceUnavailableException({
+        code: 'COLLECTOR_INVITE_URL_NOT_CONFIGURED',
+        message: 'Chưa cấu hình địa chỉ Mini App cho lời mời',
+        details: null,
+      });
     }
     try {
       const url = new URL(rawBaseUrl);
@@ -1662,7 +2148,11 @@ export class AdminService {
       url.searchParams.set('collector_invite', code);
       return url.toString();
     } catch {
-      throw new ServiceUnavailableException({ code: 'COLLECTOR_INVITE_URL_NOT_CONFIGURED', message: 'Địa chỉ Mini App cho lời mời không hợp lệ', details: null });
+      throw new ServiceUnavailableException({
+        code: 'COLLECTOR_INVITE_URL_NOT_CONFIGURED',
+        message: 'Địa chỉ Mini App cho lời mời không hợp lệ',
+        details: null,
+      });
     }
   }
 
@@ -1670,7 +2160,9 @@ export class AdminService {
     const now = new Date();
     const today = this.startOfDay(now);
     const from = fromInput ? this.startOfDay(fromInput) : new Date(today.getTime() - 29 * DAY_MS);
-    const to = toInput ? new Date(this.startOfDay(toInput).getTime() + DAY_MS) : new Date(today.getTime() + DAY_MS);
+    const to = toInput
+      ? new Date(this.startOfDay(toInput).getTime() + DAY_MS)
+      : new Date(today.getTime() + DAY_MS);
     return { from, to };
   }
 
@@ -1720,6 +2212,9 @@ export class AdminService {
         forecast_status: candidate.forecast_status,
         estimated_days_until_full: candidate.estimated_days_until_full,
         reason_codes: [...candidate.reason_codes],
+        trigger: candidate.trigger,
+        storage_age_days: candidate.storage_age_days,
+        max_storage_days: candidate.max_storage_days,
       },
       created_at: generatedAt,
       resolved_at: null,

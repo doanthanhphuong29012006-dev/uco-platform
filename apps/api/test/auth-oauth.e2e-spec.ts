@@ -10,6 +10,7 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { RedisService } from '../src/redis/redis.service';
 import { ZALO_OAUTH_HANDOFF_TTL_SECONDS } from '../src/modules/auth/auth.constants';
+import { createHash } from 'node:crypto';
 
 describe('Real Zalo OAuth callback (e2e)', () => {
   let app: INestApplication;
@@ -17,6 +18,7 @@ describe('Real Zalo OAuth callback (e2e)', () => {
   const refreshTokens: Record<string, unknown>[] = [];
   const handoffTtls = new Map<string, number>();
   let merchantForOauth: Record<string, unknown> | null = null;
+  let collectorInvite: Record<string, unknown> | null = null;
   const fakePrisma = {
     user: {
       findUnique: jest.fn(async ({ where }: { where: { id?: string; zaloId?: string } }) => {
@@ -24,28 +26,80 @@ describe('Real Zalo OAuth callback (e2e)', () => {
         if (where.zaloId) return users.get(where.zaloId) ?? null;
         return null;
       }),
-      upsert: jest.fn(async ({ where, create, update }: { where: { zaloId: string }; create: Record<string, unknown>; update: Record<string, unknown> }) => {
-        const current = users.get(where.zaloId);
-        const user = { ...(current ?? create), ...(current ? update : {}), id: current?.id ?? `user-${where.zaloId}` };
-        const result = {
-          ...user,
-          merchant: merchantForOauth,
-          collector: null,
-          station: null,
-        };
-        users.set(where.zaloId, result);
-        return result;
-      }),
+      upsert: jest.fn(
+        async ({
+          where,
+          create,
+          update,
+        }: {
+          where: { zaloId: string };
+          create: Record<string, unknown>;
+          update: Record<string, unknown>;
+        }) => {
+          const current = users.get(where.zaloId);
+          const user = {
+            ...(current ?? create),
+            ...(current ? update : {}),
+            id: current?.id ?? `user-${where.zaloId}`,
+          };
+          const result = {
+            ...user,
+            merchant: merchantForOauth,
+            collector: null,
+            station: null,
+          };
+          users.set(where.zaloId, result);
+          return result;
+        },
+      ),
     },
-    $transaction: jest.fn(async (callback: (transaction: unknown) => Promise<unknown>) => callback({
-      refreshToken: {
-        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-        create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => {
-          refreshTokens.push(data);
-          return data;
-        }),
-      },
-    })),
+    collector: {
+      findUnique: jest.fn(async () => collectorInvite),
+    },
+    $transaction: jest.fn(async (callback: (transaction: unknown) => Promise<unknown>) =>
+      callback({
+        user: {
+          findUnique: jest.fn(
+            async ({ where }: { where: { id: string } }) =>
+              [...users.values()].find((user) => user.id === where.id) ?? null,
+          ),
+          update: jest.fn(
+            async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+              const current = [...users.values()].find((user) => user.id === where.id);
+              if (!current) return null;
+              const updated: Record<string, unknown> = {
+                ...current,
+                ...data,
+                collector:
+                  data.role === 'COLLECTOR' ? { id: collectorInvite?.id } : current.collector,
+              };
+              users.set(String(updated.zaloId), updated);
+              return updated;
+            },
+          ),
+        },
+        collector: {
+          updateMany: jest.fn(async () => {
+            if (!collectorInvite || collectorInvite.userId) return { count: 0 };
+            collectorInvite = {
+              ...collectorInvite,
+              userId: 'user-' + zaloId,
+              linkStatus: 'LINKED',
+              inviteCodeHash: null,
+              inviteExpiresAt: null,
+            };
+            return { count: 1 };
+          }),
+        },
+        refreshToken: {
+          updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+          create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => {
+            refreshTokens.push(data);
+            return data;
+          }),
+        },
+      }),
+    ),
   };
   const handoffs = new Map<string, string>();
   const redis = {
@@ -57,6 +111,12 @@ describe('Real Zalo OAuth callback (e2e)', () => {
       const value = handoffs.get(key) ?? null;
       handoffs.delete(key);
       return value;
+    }),
+    deleteOneTime: jest.fn(async (key: string) => {
+      handoffs.delete(key);
+    }),
+    restoreOneTime: jest.fn(async (key: string, value: string) => {
+      handoffs.set(key, value);
     }),
   };
   const zaloId = `oauth-test-${Date.now()}`;
@@ -101,7 +161,9 @@ describe('Real Zalo OAuth callback (e2e)', () => {
     const location = new URL(response.headers.location);
     expect(location.origin + location.pathname).toBe('https://oauth.zaloapp.com/v4/permission');
     expect(location.searchParams.get('app_id')).toBe('123456789');
-    expect(location.searchParams.get('redirect_uri')).toBe('https://api.example.test/api/v1/auth/zalo/callback');
+    expect(location.searchParams.get('redirect_uri')).toBe(
+      'https://api.example.test/api/v1/auth/zalo/callback',
+    );
     expect(location.searchParams.get('state')).toBe(cookieFrom(response).split('=')[1]);
     expect(location.searchParams.get('code_challenge')).toMatch(/^[A-Za-z0-9_-]{43}$/);
   });
@@ -119,7 +181,11 @@ describe('Real Zalo OAuth callback (e2e)', () => {
     const response = await start();
     await request(app.getHttpServer())
       .get('/api/v1/auth/zalo/callback')
-      .query({ state: cookieFrom(response).split('=')[1], error: 'access_denied', error_description: 'User denied access' })
+      .query({
+        state: cookieFrom(response).split('=')[1],
+        error: 'access_denied',
+        error_description: 'User denied access',
+      })
       .set('Cookie', cookieFrom(response))
       .expect(401)
       .expect((result) => expect(result.body.code).toBe('ZALO_AUTHORIZATION_DENIED'));
@@ -128,9 +194,19 @@ describe('Real Zalo OAuth callback (e2e)', () => {
   it('exchanges the code, verifies /me, and hands the session to the frontend once', async () => {
     const fetchMock = jest.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       if (String(input) === 'https://oauth.zaloapp.com/v4/access_token') {
-        return new Response(JSON.stringify({ access_token: 'zalo-access', refresh_token: 'zalo-refresh', expires_in: '3600' }), { status: 200 });
+        return new Response(
+          JSON.stringify({
+            access_token: 'zalo-access',
+            refresh_token: 'zalo-refresh',
+            expires_in: '3600',
+          }),
+          { status: 200 },
+        );
       }
-      return new Response(JSON.stringify({ error: 0, message: 'Success', id: zaloId, name: 'OAuth Tester' }), { status: 200 });
+      return new Response(
+        JSON.stringify({ error: 0, message: 'Success', id: zaloId, name: 'OAuth Tester' }),
+        { status: 200 },
+      );
     });
     try {
       const handoffCodes: string[] = [];
@@ -168,13 +244,25 @@ describe('Real Zalo OAuth callback (e2e)', () => {
           .expect((result) => {
             expect(result.body.access_token).toEqual(expect.any(String));
             expect(result.body.refresh_token).toEqual(expect.any(String));
-            expect(result.body.user).toMatchObject({ id: 'user-' + zaloId, zalo_id: zaloId, role: 'MERCHANT', merchantId: null });
+            expect(result.body.user).toMatchObject({
+              id: 'user-' + zaloId,
+              zalo_id: zaloId,
+              role: 'MERCHANT',
+              merchantId: null,
+            });
           });
         await request(app.getHttpServer())
           .get('/api/v1/auth/me')
           .set('Authorization', `Bearer ${exchange.body.access_token}`)
           .expect(200)
-          .expect((result) => expect(result.body).toMatchObject({ id: 'user-' + zaloId, zalo_id: zaloId, role: 'MERCHANT', merchantId: null }));
+          .expect((result) =>
+            expect(result.body).toMatchObject({
+              id: 'user-' + zaloId,
+              zalo_id: zaloId,
+              role: 'MERCHANT',
+              merchantId: null,
+            }),
+          );
       }
       await request(app.getHttpServer())
         .post('/api/v1/auth/zalo/exchange')
@@ -195,28 +283,120 @@ describe('Real Zalo OAuth callback (e2e)', () => {
   });
 
   it('keeps the normalized session DTO when the existing user has a merchant', async () => {
-    merchantForOauth = { id: 'merchant-oauth-test', approvalStatus: 'APPROVED', rejectionReason: null };
+    merchantForOauth = {
+      id: 'merchant-oauth-test',
+      approvalStatus: 'APPROVED',
+      rejectionReason: null,
+    };
     const fetchMock = jest.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       if (String(input) === 'https://oauth.zaloapp.com/v4/access_token') {
-        return new Response(JSON.stringify({ access_token: 'zalo-access', refresh_token: 'zalo-refresh', expires_in: '3600' }), { status: 200 });
+        return new Response(
+          JSON.stringify({
+            access_token: 'zalo-access',
+            refresh_token: 'zalo-refresh',
+            expires_in: '3600',
+          }),
+          { status: 200 },
+        );
       }
-      return new Response(JSON.stringify({ error: 0, message: 'Success', id: zaloId, name: 'OAuth Tester' }), { status: 200 });
+      return new Response(
+        JSON.stringify({ error: 0, message: 'Success', id: zaloId, name: 'OAuth Tester' }),
+        { status: 200 },
+      );
     });
     try {
       const response = await start();
       const stateCookie = cookieFrom(response);
       const callback = await request(app.getHttpServer())
         .get('/api/v1/auth/zalo/callback')
-        .query({ code: 'oauth-code-with-merchant', state: stateCookie.slice(stateCookie.indexOf('=') + 1) })
+        .query({
+          code: 'oauth-code-with-merchant',
+          state: stateCookie.slice(stateCookie.indexOf('=') + 1),
+        })
         .set('Cookie', stateCookie)
         .expect(302);
       const code = new URL(callback.headers.location).searchParams.get('zalo_code');
-      const exchange = await request(app.getHttpServer()).post('/api/v1/auth/zalo/exchange').send({ code }).expect(201);
-      expect(exchange.body.user).toMatchObject({ id: 'user-' + zaloId, zalo_id: zaloId, role: 'MERCHANT', merchantId: 'merchant-oauth-test' });
-      const me = await request(app.getHttpServer()).get('/api/v1/auth/me').set('Authorization', `Bearer ${exchange.body.access_token}`).expect(200);
-      expect(me.body).toMatchObject({ id: 'user-' + zaloId, zalo_id: zaloId, role: 'MERCHANT', merchantId: 'merchant-oauth-test' });
+      const exchange = await request(app.getHttpServer())
+        .post('/api/v1/auth/zalo/exchange')
+        .send({ code })
+        .expect(201);
+      expect(exchange.body.user).toMatchObject({
+        id: 'user-' + zaloId,
+        zalo_id: zaloId,
+        role: 'MERCHANT',
+        merchantId: 'merchant-oauth-test',
+      });
+      const me = await request(app.getHttpServer())
+        .get('/api/v1/auth/me')
+        .set('Authorization', `Bearer ${exchange.body.access_token}`)
+        .expect(200);
+      expect(me.body).toMatchObject({
+        id: 'user-' + zaloId,
+        zalo_id: zaloId,
+        role: 'MERCHANT',
+        merchantId: 'merchant-oauth-test',
+      });
     } finally {
       merchantForOauth = null;
+      fetchMock.mockRestore();
+    }
+  });
+
+  it('keeps a collector invite inside encrypted state and accepts it without the original browser cookie', async () => {
+    const invite = 'collector-oauth-cross-context';
+    const inviteHash = createHash('sha256').update(invite).digest('hex');
+    collectorInvite = {
+      id: 'collector-oauth-test',
+      userId: null,
+      linkStatus: 'PENDING_LINK',
+      inviteCodeHash: inviteHash,
+      inviteExpiresAt: new Date(Date.now() + 60_000),
+      status: 'ACTIVE',
+      isActive: true,
+    };
+    handoffs.set(`auth:collector:invite:${inviteHash}`, 'collector-oauth-test');
+    const fetchMock = jest.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      if (String(input) === 'https://oauth.zaloapp.com/v4/access_token')
+        return new Response(
+          JSON.stringify({
+            access_token: 'zalo-access',
+            refresh_token: 'zalo-refresh',
+            expires_in: '3600',
+          }),
+          { status: 200 },
+        );
+      return new Response(
+        JSON.stringify({ error: 0, message: 'Success', id: zaloId, name: 'OAuth Collector' }),
+        { status: 200 },
+      );
+    });
+    try {
+      const response = await request(app.getHttpServer())
+        .get('/api/v1/auth/zalo/start')
+        .query({ collector_invite: invite })
+        .expect(302);
+      const state = new URL(response.headers.location).searchParams.get('state');
+      const callback = await request(app.getHttpServer())
+        .get('/api/v1/auth/zalo/callback')
+        .query({ code: 'oauth-collector-code', state })
+        .expect(302);
+      const handoffCode = new URL(callback.headers.location).searchParams.get('zalo_code');
+      const exchange = await request(app.getHttpServer())
+        .post('/api/v1/auth/zalo/exchange')
+        .send({ code: handoffCode })
+        .expect(201);
+      expect(exchange.body.user).toMatchObject({
+        role: 'COLLECTOR',
+        collectorId: 'collector-oauth-test',
+        merchantId: null,
+      });
+      expect(collectorInvite).toMatchObject({
+        userId: 'user-' + zaloId,
+        linkStatus: 'LINKED',
+        inviteCodeHash: null,
+      });
+    } finally {
+      collectorInvite = null;
       fetchMock.mockRestore();
     }
   });

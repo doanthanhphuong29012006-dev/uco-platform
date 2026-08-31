@@ -9,11 +9,13 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
   constructor(@Inject(ConfigService) config: ConfigService) {
     const redisUrl = config.get<string>('REDIS_URL')?.trim();
-    this.client = redisUrl ? new Redis(redisUrl, {
-      lazyConnect: true,
-      maxRetriesPerRequest: 1,
-      enableOfflineQueue: false,
-    }) : null;
+    this.client = redisUrl
+      ? new Redis(redisUrl, {
+          lazyConnect: true,
+          maxRetriesPerRequest: 1,
+          enableOfflineQueue: false,
+        })
+      : null;
     this.client?.on('error', () => undefined);
   }
 
@@ -29,6 +31,16 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     if (!this.client) throw new Error('Redis is not configured');
     const result = await this.client.set(key, value, 'EX', ttlSeconds, 'NX');
     if (result !== 'OK') throw new Error('Redis one-time key was not created');
+  }
+
+  async setExpiring(key: string, value: string, ttlSeconds: number): Promise<void> {
+    if (!this.client) throw new Error('Redis is not configured');
+    await this.client.set(key, value, 'EX', ttlSeconds);
+  }
+
+  async getValue(key: string): Promise<string | null> {
+    if (!this.client) throw new Error('Redis is not configured');
+    return this.client.get(key);
   }
 
   async consumeOneTime(key: string): Promise<string | null> {

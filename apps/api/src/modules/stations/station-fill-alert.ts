@@ -6,7 +6,10 @@ import type {
 
 export type StationFillAlertSeverity = 'HIGH' | 'MEDIUM';
 
-export type StationFillAlertStatus = Extract<StationFillForecastStatus, 'FULL' | 'CRITICAL' | 'WATCH'>;
+export type StationFillAlertStatus = Extract<
+  StationFillForecastStatus,
+  'FULL' | 'CRITICAL' | 'WATCH'
+>;
 
 export type StationFillAlertCandidate = {
   station_id: string;
@@ -16,6 +19,9 @@ export type StationFillAlertCandidate = {
   estimated_days_until_full: number | null;
   reason_codes: StationFillForecastReasonCode[];
   message: string;
+  trigger: 'CAPACITY' | 'STORAGE_AGE';
+  storage_age_days: number | null;
+  max_storage_days: number;
 };
 
 export type StationFillAlertStation = {
@@ -43,9 +49,21 @@ export function buildStationFillAlertCandidate(
   station: StationFillAlertStation,
   forecast?: StationFillForecastResult | null,
 ): StationFillAlertCandidate | null {
-  if (!forecast || !['FULL', 'CRITICAL', 'WATCH'].includes(forecast.status)) return null;
+  if (!forecast) return null;
+  const capacityNeedsAction = ['FULL', 'CRITICAL', 'WATCH'].includes(forecast.status);
+  const ageNeedsAction = ['WATCH', 'CRITICAL', 'OVERDUE'].includes(forecast.storageAgeStatus);
+  if (!capacityNeedsAction && !ageNeedsAction) return null;
 
-  const forecastStatus = forecast.status as StationFillAlertStatus;
+  const trigger = capacityNeedsAction ? 'CAPACITY' : 'STORAGE_AGE';
+  const forecastStatus = capacityNeedsAction
+    ? (forecast.status as StationFillAlertStatus)
+    : forecast.storageAgeStatus === 'WATCH'
+      ? 'WATCH'
+      : 'CRITICAL';
+  const ageMessage =
+    forecast.storageAgeStatus === 'OVERDUE'
+      ? `Trạm ${station.name} có mẻ dầu đã lưu ${forecast.storageAgeDays} ngày, vượt giới hạn ${forecast.maxStorageDays} ngày.`
+      : `Trạm ${station.name} có mẻ dầu đã lưu ${forecast.storageAgeDays} ngày, cần xử lý trước giới hạn ${forecast.maxStorageDays} ngày.`;
   return {
     station_id: station.id,
     station_name: station.name,
@@ -53,6 +71,12 @@ export function buildStationFillAlertCandidate(
     forecast_status: forecastStatus,
     estimated_days_until_full: forecast.estimatedDaysUntilFull,
     reason_codes: [...forecast.reasonCodes],
-    message: alertMessage(station.name, forecastStatus, forecast.estimatedDaysUntilFull),
+    message:
+      trigger === 'CAPACITY'
+        ? alertMessage(station.name, forecastStatus, forecast.estimatedDaysUntilFull)
+        : ageMessage,
+    trigger,
+    storage_age_days: forecast.storageAgeDays,
+    max_storage_days: forecast.maxStorageDays,
   };
 }

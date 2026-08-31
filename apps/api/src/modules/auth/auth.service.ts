@@ -1,13 +1,36 @@
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Inject,
+  Injectable,
+  NotFoundException,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Role } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
-import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import type { AdminLoginInput, RealZaloAuthInput, SeedZaloAuthInput, ZaloAuthInput, ZaloLocationInput } from '@eco-oil/validation';
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+  randomUUID,
+  timingSafeEqual,
+} from 'node:crypto';
+import type {
+  AdminLoginInput,
+  RealZaloAuthInput,
+  SeedZaloAuthInput,
+  ZaloAuthInput,
+  ZaloLocationInput,
+} from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   ACCESS_TOKEN_TTL_SECONDS,
+  COLLECTOR_ACTIVE_INVITE_KEY_PREFIX,
   COLLECTOR_INVITE_KEY_PREFIX,
   COLLECTOR_INVITE_TTL_SECONDS,
   REFRESH_TOKEN_TTL_SECONDS,
@@ -106,7 +129,11 @@ export class AuthService {
     let user = await this.prisma.user.findUnique({ where: { zaloId } });
 
     if (user?.role === Role.ADMIN) {
-      throw new ForbiddenException({ code: 'ADMIN_LOGIN_REQUIRES_PASSWORD', message: 'Tài khoản quản trị phải đăng nhập bằng mật khẩu', details: null });
+      throw new ForbiddenException({
+        code: 'ADMIN_LOGIN_REQUIRES_PASSWORD',
+        message: 'Tài khoản quản trị phải đăng nhập bằng mật khẩu',
+        details: null,
+      });
     }
 
     user = await this.upsertZaloUser(zaloId, phone, requestedName);
@@ -114,8 +141,18 @@ export class AuthService {
     return this.issueTokens(user.id);
   }
 
-  async startZaloOAuth(): Promise<{ authorizationUrl: string; state: string }> {
+  async startZaloOAuth(
+    collectorInvite?: string,
+  ): Promise<{ authorizationUrl: string; state: string }> {
     this.requireRealOAuthMode();
+    const normalizedInvite = collectorInvite?.trim();
+    if (normalizedInvite && normalizedInvite.length > 256) {
+      throw new BadRequestException({
+        code: 'COLLECTOR_INVITE_INVALID',
+        message: 'Lời mời người thu gom không hợp lệ',
+        details: null,
+      });
+    }
     const appId = this.requiredConfig('ZALO_APP_ID');
     const callbackUrl = this.requiredAbsoluteUrl('ZALO_OAUTH_CALLBACK_URL');
     const codeVerifier = randomBytes(32).toString('base64url');
@@ -123,6 +160,7 @@ export class AuthService {
       nonce: randomBytes(24).toString('base64url'),
       code_verifier: codeVerifier,
       issued_at: Date.now(),
+      ...(normalizedInvite ? { collector_invite: normalizedInvite } : {}),
     });
     const codeChallenge = createHash('sha256').update(codeVerifier, 'ascii').digest('base64url');
     const authorization = new URL('https://oauth.zaloapp.com/v4/permission');
@@ -149,8 +187,12 @@ export class AuthService {
     errorDescription?: string;
   }) {
     this.requireRealOAuthMode();
-    if (!input.state || !input.cookieState || !this.equalSecrets(input.state, input.cookieState)) {
-      throw new UnauthorizedException({ code: 'INVALID_ZALO_OAUTH_STATE', message: 'OAuth state không hợp lệ hoặc đã hết hạn', details: null });
+    if (!input.state || (input.cookieState && !this.equalSecrets(input.state, input.cookieState))) {
+      throw new UnauthorizedException({
+        code: 'INVALID_ZALO_OAUTH_STATE',
+        message: 'OAuth state không hợp lệ hoặc đã hết hạn',
+        details: null,
+      });
     }
     const sealed = this.openOAuthState(input.state);
     if (!input.code) {
@@ -164,34 +206,64 @@ export class AuthService {
     const verified = await this.zaloProvider.verify(token.accessToken);
     const existing = await this.prisma.user.findUnique({ where: { zaloId: verified.zaloId } });
     if (existing?.role === Role.ADMIN) {
-      throw new ForbiddenException({ code: 'ADMIN_LOGIN_REQUIRES_PASSWORD', message: 'Tài khoản quản trị phải đăng nhập bằng mật khẩu', details: null });
+      throw new ForbiddenException({
+        code: 'ADMIN_LOGIN_REQUIRES_PASSWORD',
+        message: 'Tài khoản quản trị phải đăng nhập bằng mật khẩu',
+        details: null,
+      });
     }
     const user = await this.upsertZaloUser(verified.zaloId, verified.phone, verified.name);
+    if (sealed.collector_invite) {
+      await this.linkCollectorInvite({ sub: user.id, role: user.role }, sealed.collector_invite);
+    }
     return this.createOAuthHandoff(user.id);
   }
 
   async exchangeZaloOAuthCode(code: string) {
     const normalizedCode = code.trim();
     if (!normalizedCode || normalizedCode.length > 256) {
-      throw new UnauthorizedException({ code: 'ZALO_OAUTH_HANDOFF_INVALID', message: 'Mã bàn giao đăng nhập không hợp lệ hoặc đã hết hạn', details: null });
+      throw new UnauthorizedException({
+        code: 'ZALO_OAUTH_HANDOFF_INVALID',
+        message: 'Mã bàn giao đăng nhập không hợp lệ hoặc đã hết hạn',
+        details: null,
+      });
     }
 
     let userId: string | null;
     try {
-      userId = await this.redis.consumeOneTime(`${ZALO_OAUTH_HANDOFF_KEY_PREFIX}${this.hashToken(normalizedCode)}`);
+      userId = await this.redis.consumeOneTime(
+        `${ZALO_OAUTH_HANDOFF_KEY_PREFIX}${this.hashToken(normalizedCode)}`,
+      );
     } catch {
-      throw new ServiceUnavailableException({ code: 'ZALO_OAUTH_HANDOFF_UNAVAILABLE', message: 'Không hoàn tất được phiên đăng nhập Zalo', details: null });
+      throw new ServiceUnavailableException({
+        code: 'ZALO_OAUTH_HANDOFF_UNAVAILABLE',
+        message: 'Không hoàn tất được phiên đăng nhập Zalo',
+        details: null,
+      });
     }
     if (!userId) {
-      throw new UnauthorizedException({ code: 'ZALO_OAUTH_HANDOFF_INVALID', message: 'Mã bàn giao đăng nhập không hợp lệ hoặc đã hết hạn', details: null });
+      throw new UnauthorizedException({
+        code: 'ZALO_OAUTH_HANDOFF_INVALID',
+        message: 'Mã bàn giao đăng nhập không hợp lệ hoặc đã hết hạn',
+        details: null,
+      });
     }
     return this.issueTokens(userId);
   }
 
   async acceptCollectorInvite(user: AccessTokenPayload, code: string) {
+    await this.linkCollectorInvite(user, code);
+    return this.issueTokens(user.sub);
+  }
+
+  private async linkCollectorInvite(user: AccessTokenPayload, code: string): Promise<void> {
     const normalizedCode = code.trim();
     if (!normalizedCode || normalizedCode.length > 256) {
-      throw new UnauthorizedException({ code: 'COLLECTOR_INVITE_INVALID', message: 'Lời mời người thu gom không hợp lệ hoặc đã hết hạn', details: null });
+      throw new UnauthorizedException({
+        code: 'COLLECTOR_INVITE_INVALID',
+        message: 'Lời mời người thu gom không hợp lệ hoặc đã hết hạn',
+        details: null,
+      });
     }
     const inviteCodeHash = this.hashToken(normalizedCode);
     const inviteKey = COLLECTOR_INVITE_KEY_PREFIX + inviteCodeHash;
@@ -199,10 +271,18 @@ export class AuthService {
     try {
       collectorId = await this.redis.consumeOneTime(inviteKey);
     } catch {
-      throw new ServiceUnavailableException({ code: 'COLLECTOR_INVITE_UNAVAILABLE', message: 'Không hoàn tất được lời mời người thu gom', details: null });
+      throw new ServiceUnavailableException({
+        code: 'COLLECTOR_INVITE_UNAVAILABLE',
+        message: 'Không hoàn tất được lời mời người thu gom',
+        details: null,
+      });
     }
     if (!collectorId) {
-      throw new UnauthorizedException({ code: 'COLLECTOR_INVITE_INVALID', message: 'Lời mời người thu gom không hợp lệ hoặc đã hết hạn', details: null });
+      throw new UnauthorizedException({
+        code: 'COLLECTOR_INVITE_INVALID',
+        message: 'Lời mời người thu gom không hợp lệ hoặc đã hết hạn',
+        details: null,
+      });
     }
 
     let restoreTtl = 0;
@@ -210,21 +290,36 @@ export class AuthService {
     try {
       const invitation = await this.prisma.collector.findUnique({
         where: { id: collectorId },
-        select: { id: true, userId: true, linkStatus: true, inviteCodeHash: true, inviteExpiresAt: true, status: true, isActive: true },
+        select: {
+          id: true,
+          userId: true,
+          linkStatus: true,
+          inviteCodeHash: true,
+          inviteExpiresAt: true,
+          status: true,
+          isActive: true,
+        },
       });
       if (
-        !invitation
-        || invitation.userId
-        || invitation.linkStatus !== 'PENDING_LINK'
-        || invitation.inviteCodeHash !== inviteCodeHash
-        || !invitation.inviteExpiresAt
-        || invitation.inviteExpiresAt.getTime() <= Date.now()
-        || invitation.status !== 'ACTIVE'
-        || !invitation.isActive
+        !invitation ||
+        invitation.userId ||
+        invitation.linkStatus !== 'PENDING_LINK' ||
+        invitation.inviteCodeHash !== inviteCodeHash ||
+        !invitation.inviteExpiresAt ||
+        invitation.inviteExpiresAt.getTime() <= Date.now() ||
+        invitation.status !== 'ACTIVE' ||
+        !invitation.isActive
       ) {
-        throw new UnauthorizedException({ code: 'COLLECTOR_INVITE_INVALID', message: 'Lời mời người thu gom không hợp lệ hoặc đã hết hạn', details: null });
+        throw new UnauthorizedException({
+          code: 'COLLECTOR_INVITE_INVALID',
+          message: 'Lời mời người thu gom không hợp lệ hoặc đã hết hạn',
+          details: null,
+        });
       }
-      restoreTtl = Math.max(1, Math.ceil((invitation.inviteExpiresAt.getTime() - Date.now()) / 1000));
+      restoreTtl = Math.max(
+        1,
+        Math.ceil((invitation.inviteExpiresAt.getTime() - Date.now()) / 1000),
+      );
 
       await this.prisma.$transaction(async (transaction) => {
         const currentUser = await transaction.user.findUnique({
@@ -235,13 +330,25 @@ export class AuthService {
           throw new UnauthorizedException('Invalid or expired access token');
         }
         if (currentUser.collector) {
-          throw new ConflictException({ code: 'USER_ALREADY_LINKED_COLLECTOR', message: 'Tài khoản đã liên kết người thu gom khác', details: null });
+          throw new ConflictException({
+            code: 'USER_ALREADY_LINKED_COLLECTOR',
+            message: 'Tài khoản đã liên kết người thu gom khác',
+            details: null,
+          });
         }
         if (currentUser.merchant) {
-          throw new ConflictException({ code: 'COLLECTOR_INVITE_ROLE_CONFLICT', message: 'Tài khoản đã có hồ sơ quán và không thể dùng lời mời người thu gom', details: null });
+          throw new ConflictException({
+            code: 'COLLECTOR_INVITE_ROLE_CONFLICT',
+            message: 'Tài khoản đã có hồ sơ quán và không thể dùng lời mời người thu gom',
+            details: null,
+          });
         }
         if (currentUser.role !== Role.MERCHANT && currentUser.role !== Role.COLLECTOR) {
-          throw new ForbiddenException({ code: 'COLLECTOR_INVITE_ROLE_CONFLICT', message: 'Tài khoản không thể liên kết người thu gom', details: null });
+          throw new ForbiddenException({
+            code: 'COLLECTOR_INVITE_ROLE_CONFLICT',
+            message: 'Tài khoản không thể liên kết người thu gom',
+            details: null,
+          });
         }
 
         const linked = await transaction.collector.updateMany({
@@ -254,18 +361,38 @@ export class AuthService {
             status: 'ACTIVE',
             isActive: true,
           },
-          data: { userId: currentUser.id, linkStatus: 'LINKED', inviteCodeHash: null, inviteExpiresAt: null },
+          data: {
+            userId: currentUser.id,
+            linkStatus: 'LINKED',
+            inviteCodeHash: null,
+            inviteExpiresAt: null,
+          },
         });
         if (linked.count !== 1) {
-          throw new ConflictException({ code: 'COLLECTOR_INVITE_ALREADY_USED', message: 'Lời mời người thu gom đã được sử dụng', details: null });
+          throw new ConflictException({
+            code: 'COLLECTOR_INVITE_ALREADY_USED',
+            message: 'Lời mời người thu gom đã được sử dụng',
+            details: null,
+          });
         }
-        await transaction.user.update({ where: { id: currentUser.id }, data: { role: Role.COLLECTOR } });
+        await transaction.user.update({
+          where: { id: currentUser.id },
+          data: { role: Role.COLLECTOR },
+        });
       });
       linkedSuccessfully = true;
-      return this.issueTokens(user.sub);
+      await this.redis
+        .deleteOneTime(COLLECTOR_ACTIVE_INVITE_KEY_PREFIX + collectorId)
+        .catch(() => undefined);
     } catch (error) {
       if (!linkedSuccessfully && restoreTtl > 0) {
-        await this.redis.restoreOneTime(inviteKey, collectorId, Math.min(restoreTtl, COLLECTOR_INVITE_TTL_SECONDS)).catch(() => undefined);
+        await this.redis
+          .restoreOneTime(
+            inviteKey,
+            collectorId,
+            Math.min(restoreTtl, COLLECTOR_INVITE_TTL_SECONDS),
+          )
+          .catch(() => undefined);
       }
       throw error;
     }
@@ -274,14 +401,26 @@ export class AuthService {
   async adminLogin(input: AdminLoginInput) {
     const configuredPassword = this.config.get<string>('ADMIN_PASSWORD')?.trim();
     if (!configuredPassword) {
-      throw new UnauthorizedException({ code: 'ADMIN_PASSWORD_NOT_CONFIGURED', message: 'ADMIN_PASSWORD chưa được cấu hình', details: null });
+      throw new UnauthorizedException({
+        code: 'ADMIN_PASSWORD_NOT_CONFIGURED',
+        message: 'ADMIN_PASSWORD chưa được cấu hình',
+        details: null,
+      });
     }
     if (input.password !== configuredPassword) {
-      throw new UnauthorizedException({ code: 'INVALID_ADMIN_CREDENTIALS', message: 'Sai tài khoản hoặc mật khẩu quản trị', details: null });
+      throw new UnauthorizedException({
+        code: 'INVALID_ADMIN_CREDENTIALS',
+        message: 'Sai tài khoản hoặc mật khẩu quản trị',
+        details: null,
+      });
     }
     const user = await this.prisma.user.findUnique({ where: { zaloId: input.zalo_id } });
     if (!user || user.role !== Role.ADMIN || user.deletedAt || user.phone !== input.phone) {
-      throw new UnauthorizedException({ code: 'INVALID_ADMIN_CREDENTIALS', message: 'Sai tài khoản hoặc mật khẩu quản trị', details: null });
+      throw new UnauthorizedException({
+        code: 'INVALID_ADMIN_CREDENTIALS',
+        message: 'Sai tài khoản hoặc mật khẩu quản trị',
+        details: null,
+      });
     }
     return this.issueTokens(user.id);
   }
@@ -294,27 +433,60 @@ export class AuthService {
       where: { deletedAt: null },
       orderBy: [{ role: 'asc' }, { name: 'asc' }, { zaloId: 'asc' }],
       include: {
-        merchant: { include: { ward: { select: { code: true, name: true, district: true, city: true } } } },
-        collector: { include: { collectorWards: { include: { ward: { select: { code: true, name: true, district: true, city: true } } } } } },
-        station: { include: { ward: { select: { code: true, name: true, district: true, city: true } } } },
+        merchant: {
+          include: { ward: { select: { code: true, name: true, district: true, city: true } } },
+        },
+        collector: {
+          include: {
+            collectorWards: {
+              include: { ward: { select: { code: true, name: true, district: true, city: true } } },
+            },
+          },
+        },
+        station: {
+          include: { ward: { select: { code: true, name: true, district: true, city: true } } },
+        },
       },
     });
-    return users.filter((user) => {
-      if (!user.zaloId || user.zaloId.includes(':')) return false;
-      if (this.isDemoMode() && user.role !== Role.MERCHANT && user.role !== Role.COLLECTOR) return false;
-      if (user.merchant) return user.merchant.status === 'ACTIVE' && user.merchant.isActive && user.merchant.deletedAt === null;
-      if (user.collector) return user.collector.status === 'ACTIVE' && user.collector.isActive && user.collector.deletedAt === null;
-      if (user.station) return user.station.status === 'ACTIVE' && user.station.isActive && user.station.deletedAt === null;
-      return true;
-    }).map((user) => ({
-      id: user.id,
-      zalo_id: user.zaloId ?? '',
-      phone: user.phone,
-      name: user.collector?.displayName ?? user.name,
-      role: user.role,
-      wards: user.collector?.collectorWards.map((item) => item.ward)
-        ?? (user.merchant?.ward ? [user.merchant.ward] : user.station?.ward ? [user.station.ward] : []),
-    }));
+    return users
+      .filter((user) => {
+        if (!user.zaloId || user.zaloId.includes(':')) return false;
+        if (this.isDemoMode() && user.role !== Role.MERCHANT && user.role !== Role.COLLECTOR)
+          return false;
+        if (user.merchant)
+          return (
+            user.merchant.status === 'ACTIVE' &&
+            user.merchant.isActive &&
+            user.merchant.deletedAt === null
+          );
+        if (user.collector)
+          return (
+            user.collector.status === 'ACTIVE' &&
+            user.collector.isActive &&
+            user.collector.deletedAt === null
+          );
+        if (user.station)
+          return (
+            user.station.status === 'ACTIVE' &&
+            user.station.isActive &&
+            user.station.deletedAt === null
+          );
+        return true;
+      })
+      .map((user) => ({
+        id: user.id,
+        zalo_id: user.zaloId ?? '',
+        phone: user.phone,
+        name: user.collector?.displayName ?? user.name,
+        role: user.role,
+        wards:
+          user.collector?.collectorWards.map((item) => item.ward) ??
+          (user.merchant?.ward
+            ? [user.merchant.ward]
+            : user.station?.ward
+              ? [user.station.ward]
+              : []),
+      }));
   }
 
   async refresh(rawRefreshToken: string): Promise<{
@@ -338,7 +510,10 @@ export class AuthService {
 
   async logout(userId: string, rawRefreshToken?: string): Promise<{ success: true }> {
     if (!rawRefreshToken) {
-      await this.prisma.refreshToken.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } });
+      await this.prisma.refreshToken.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
       return { success: true };
     }
     const result = await this.prisma.refreshToken.updateMany({
@@ -363,7 +538,10 @@ export class AuthService {
     return this.serializeUser(user);
   }
 
-  private async issueTokens(userId: string, replacedTokenId?: string): Promise<{
+  private async issueTokens(
+    userId: string,
+    replacedTokenId?: string,
+  ): Promise<{
     access_token: string;
     refresh_token: string;
     user: AuthUserResponse;
@@ -456,7 +634,11 @@ export class AuthService {
         ZALO_OAUTH_HANDOFF_TTL_SECONDS,
       );
     } catch {
-      throw new ServiceUnavailableException({ code: 'ZALO_OAUTH_HANDOFF_UNAVAILABLE', message: 'Không tạo được phiên bàn giao đăng nhập Zalo', details: null });
+      throw new ServiceUnavailableException({
+        code: 'ZALO_OAUTH_HANDOFF_UNAVAILABLE',
+        message: 'Không tạo được phiên bàn giao đăng nhập Zalo',
+        details: null,
+      });
     }
     return { code };
   }
@@ -476,21 +658,33 @@ export class AuthService {
 
   private assertAuthModeAllowed(): void {
     if (!this.isDevelopmentOrTest() && this.isMockMode()) {
-      throw new ServiceUnavailableException({ code: 'MOCK_AUTH_DISABLED', message: 'Mock Zalo login is disabled outside development/test', details: null });
+      throw new ServiceUnavailableException({
+        code: 'MOCK_AUTH_DISABLED',
+        message: 'Mock Zalo login is disabled outside development/test',
+        details: null,
+      });
     }
   }
 
   private requireRealOAuthMode(): void {
     this.assertAuthModeAllowed();
     if (this.isMockMode()) {
-      throw new ServiceUnavailableException({ code: 'REAL_ZALO_AUTH_REQUIRED', message: 'Real Zalo OAuth is not enabled', details: null });
+      throw new ServiceUnavailableException({
+        code: 'REAL_ZALO_AUTH_REQUIRED',
+        message: 'Real Zalo OAuth is not enabled',
+        details: null,
+      });
     }
   }
 
   private requiredConfig(name: string): string {
     const value = this.config.get<string>(name)?.trim();
     if (!value) {
-      throw new ServiceUnavailableException({ code: 'ZALO_CONFIG_MISSING', message: `${name} chưa được cấu hình`, details: { variable: name } });
+      throw new ServiceUnavailableException({
+        code: 'ZALO_CONFIG_MISSING',
+        message: `${name} chưa được cấu hình`,
+        details: { variable: name },
+      });
     }
     return value;
   }
@@ -502,11 +696,19 @@ export class AuthService {
       if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Unsupported protocol');
       return parsed.toString();
     } catch {
-      throw new ServiceUnavailableException({ code: 'ZALO_CONFIG_INVALID', message: `${name} phải là callback URL hợp lệ`, details: { variable: name } });
+      throw new ServiceUnavailableException({
+        code: 'ZALO_CONFIG_INVALID',
+        message: `${name} phải là callback URL hợp lệ`,
+        details: { variable: name },
+      });
     }
   }
 
-  private async upsertZaloUser(zaloId: string, phone: string | null, name?: string): Promise<UserWithProfiles> {
+  private async upsertZaloUser(
+    zaloId: string,
+    phone: string | null,
+    name?: string,
+  ): Promise<UserWithProfiles> {
     return this.prisma.user.upsert({
       where: { zaloId },
       create: { zaloId, phone, name: name ?? null, role: Role.MERCHANT },
@@ -519,28 +721,75 @@ export class AuthService {
     });
   }
 
-  private sealOAuthState(payload: { nonce: string; code_verifier: string; issued_at: number }): string {
+  private sealOAuthState(payload: {
+    nonce: string;
+    code_verifier: string;
+    issued_at: number;
+    collector_invite?: string;
+  }): string {
     const key = createHash('sha256').update(this.config.getOrThrow<string>('JWT_SECRET')).digest();
     const iv = randomBytes(12);
     const cipher = createCipheriv('aes-256-gcm', key, iv);
-    const encrypted = Buffer.concat([cipher.update(JSON.stringify(payload), 'utf8'), cipher.final()]);
-    return [iv.toString('base64url'), cipher.getAuthTag().toString('base64url'), encrypted.toString('base64url')].join('.');
+    const encrypted = Buffer.concat([
+      cipher.update(JSON.stringify(payload), 'utf8'),
+      cipher.final(),
+    ]);
+    return [
+      iv.toString('base64url'),
+      cipher.getAuthTag().toString('base64url'),
+      encrypted.toString('base64url'),
+    ].join('.');
   }
 
-  private openOAuthState(state: string): { nonce: string; code_verifier: string; issued_at: number } {
+  private openOAuthState(state: string): {
+    nonce: string;
+    code_verifier: string;
+    issued_at: number;
+    collector_invite?: string;
+  } {
     try {
       const [ivPart, tagPart, encryptedPart] = state.split('.');
       if (!ivPart || !tagPart || !encryptedPart) throw new Error('Malformed state');
-      const key = createHash('sha256').update(this.config.getOrThrow<string>('JWT_SECRET')).digest();
+      const key = createHash('sha256')
+        .update(this.config.getOrThrow<string>('JWT_SECRET'))
+        .digest();
       const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(ivPart, 'base64url'));
       decipher.setAuthTag(Buffer.from(tagPart, 'base64url'));
-      const raw = Buffer.concat([decipher.update(Buffer.from(encryptedPart, 'base64url')), decipher.final()]).toString('utf8');
-      const payload = JSON.parse(raw) as Partial<{ nonce: string; code_verifier: string; issued_at: number }>;
+      const raw = Buffer.concat([
+        decipher.update(Buffer.from(encryptedPart, 'base64url')),
+        decipher.final(),
+      ]).toString('utf8');
+      const payload = JSON.parse(raw) as Partial<{
+        nonce: string;
+        code_verifier: string;
+        issued_at: number;
+        collector_invite: string;
+      }>;
       const issuedAt = payload.issued_at;
-      if (!payload.nonce || !payload.code_verifier || payload.code_verifier.length !== 43 || typeof issuedAt !== 'number' || !Number.isFinite(issuedAt) || Date.now() - issuedAt > ZALO_OAUTH_STATE_TTL_SECONDS * 1000 || issuedAt > Date.now() + 30_000) throw new Error('Expired state');
-      return { nonce: payload.nonce, code_verifier: payload.code_verifier, issued_at: issuedAt };
+      if (
+        !payload.nonce ||
+        !payload.code_verifier ||
+        payload.code_verifier.length !== 43 ||
+        typeof issuedAt !== 'number' ||
+        !Number.isFinite(issuedAt) ||
+        Date.now() - issuedAt > ZALO_OAUTH_STATE_TTL_SECONDS * 1000 ||
+        issuedAt > Date.now() + 30_000
+      )
+        throw new Error('Expired state');
+      if (payload.collector_invite && payload.collector_invite.length > 256)
+        throw new Error('Malformed invite');
+      return {
+        nonce: payload.nonce,
+        code_verifier: payload.code_verifier,
+        issued_at: issuedAt,
+        ...(payload.collector_invite ? { collector_invite: payload.collector_invite } : {}),
+      };
     } catch {
-      throw new UnauthorizedException({ code: 'INVALID_ZALO_OAUTH_STATE', message: 'OAuth state không hợp lệ hoặc đã hết hạn', details: null });
+      throw new UnauthorizedException({
+        code: 'INVALID_ZALO_OAUTH_STATE',
+        message: 'OAuth state không hợp lệ hoặc đã hết hạn',
+        details: null,
+      });
     }
   }
 

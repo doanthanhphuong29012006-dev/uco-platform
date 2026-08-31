@@ -1,7 +1,13 @@
-import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { DeliveryStatus, EntityStatus, Role } from '@prisma/client';
-import type { EntityStatusInput, PersonListQueryInput, StationCreateInput, StationPatchInput, StationRecommendInput } from '@eco-oil/validation';
+import type {
+  EntityStatusInput,
+  PersonListQueryInput,
+  StationCreateInput,
+  StationPatchInput,
+  StationRecommendInput,
+} from '@eco-oil/validation';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   buildStationFillAlertCandidate,
@@ -16,35 +22,58 @@ export class StationsService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async create(input: StationCreateInput) {
-    await this.requireUser(input.user_id);
     await this.requireWard(input.ward_id);
-    const existing = await this.prisma.station.findUnique({ where: { userId: input.user_id } });
-    if (existing) {
-      throw new ConflictException('Station profile already exists');
-    }
-    const row = await this.prisma.station.create({
-      data: { userId: input.user_id, wardId: input.ward_id, name: input.name, address: input.address },
-      include: { user: true, ward: true },
+    const row = await this.prisma.$transaction(async (transaction) => {
+      const stationUser = await transaction.user.create({
+        data: { name: input.name, role: Role.STATION },
+      });
+      return transaction.station.create({
+        data: {
+          userId: stationUser.id,
+          wardId: input.ward_id,
+          name: input.name,
+          address: input.address,
+          capacityLiters: input.capacity_liters,
+          status: input.status,
+          isActive: input.status === EntityStatus.ACTIVE,
+          deletedAt: input.status === EntityStatus.INACTIVE ? new Date() : null,
+        },
+        include: { user: true, ward: true },
+      });
     });
     await this.prisma.setGeographyPoint('stations', row.id, input.lat, input.lng);
     return this.findOne(row.id);
   }
 
   async update(id: string, input: StationPatchInput) {
-    await this.getRequired(id);
-    if (input.user_id) {
-      await this.requireUser(input.user_id);
-    }
+    const existing = await this.getRequired(id);
     if (input.ward_id) {
       await this.requireWard(input.ward_id);
+    }
+    if (
+      input.capacity_liters !== undefined &&
+      input.capacity_liters < Number(existing.currentVolumeLiters)
+    ) {
+      throw new BadRequestException({
+        code: 'STATION_CAPACITY_BELOW_CURRENT_VOLUME',
+        message: 'Dung tích không được nhỏ hơn lượng dầu hiện có',
+        details: null,
+      });
     }
     const row = await this.prisma.station.update({
       where: { id },
       data: {
-        ...(input.user_id ? { userId: input.user_id } : {}),
         ...(input.ward_id ? { wardId: input.ward_id } : {}),
         ...(input.name ? { name: input.name } : {}),
         ...(input.address ? { address: input.address } : {}),
+        ...(input.capacity_liters !== undefined ? { capacityLiters: input.capacity_liters } : {}),
+        ...(input.status
+          ? {
+              status: input.status,
+              isActive: input.status === EntityStatus.ACTIVE,
+              deletedAt: input.status === EntityStatus.INACTIVE ? new Date() : null,
+            }
+          : {}),
       },
     });
     if (input.lat !== undefined && input.lng !== undefined) {
@@ -57,7 +86,11 @@ export class StationsService {
     await this.getRequired(id);
     await this.prisma.station.update({
       where: { id },
-      data: { status: input.status, isActive: input.status === EntityStatus.ACTIVE, deletedAt: input.status === EntityStatus.INACTIVE ? new Date() : null },
+      data: {
+        status: input.status,
+        isActive: input.status === EntityStatus.ACTIVE,
+        deletedAt: input.status === EntityStatus.INACTIVE ? new Date() : null,
+      },
     });
     return this.findOne(id);
   }
@@ -65,7 +98,11 @@ export class StationsService {
   async list(query: PersonListQueryInput) {
     const where: Prisma.StationWhereInput = {
       ...(query.ward_id ? { wardId: query.ward_id } : {}),
-      ...(query.status ? { status: query.status } : query.include_inactive ? {} : { status: EntityStatus.ACTIVE }),
+      ...(query.status
+        ? { status: query.status }
+        : query.include_inactive
+          ? {}
+          : { status: EntityStatus.ACTIVE }),
     };
     const [rows, total] = await Promise.all([
       this.prisma.station.findMany({
@@ -78,29 +115,39 @@ export class StationsService {
       this.prisma.station.count({ where }),
     ]);
     const stationIds = rows.map((row) => row.id);
-    const [points, dailyIncomingByStation] = await Promise.all([
+    const [points, dailyIncomingByStation, oldestStoredByStation] = await Promise.all([
       this.prisma.getGeographyPoints('stations', stationIds),
       this.dailyIncomingByStation(stationIds),
+      this.oldestStoredByStation(stationIds),
     ]);
     const pointMap = new Map(points.map((point) => [point.id, point]));
     return {
-      data: rows.map((row) => this.serialize(row, pointMap.get(row.id), dailyIncomingByStation.get(row.id) ?? [])),
+      data: rows.map((row) =>
+        this.serialize(
+          row,
+          pointMap.get(row.id),
+          dailyIncomingByStation.get(row.id) ?? [],
+          oldestStoredByStation.get(row.id),
+        ),
+      ),
       meta: { page: query.page, limit: query.limit, total },
     };
   }
 
   async recommend(query: StationRecommendInput) {
-    const rows = await this.prisma.$queryRaw<Array<{
-      id: string;
-      name: string;
-      address: string | null;
-      capacity_l: number;
-      current_volume_l: number;
-      remaining_capacity_l: number;
-      distance_m: number;
-      lat: number;
-      lng: number;
-    }>>`
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        id: string;
+        name: string;
+        address: string | null;
+        capacity_l: number;
+        current_volume_l: number;
+        remaining_capacity_l: number;
+        distance_m: number;
+        lat: number;
+        lng: number;
+      }>
+    >`
       SELECT s."id", s."name", s."address",
         s."capacity_l"::float8 AS "capacity_l",
         s."current_volume_l"::float8 AS "current_volume_l",
@@ -133,11 +180,17 @@ export class StationsService {
 
   async findOne(id: string) {
     const row = await this.getRequired(id);
-    const [point, dailyIncomingByStation] = await Promise.all([
+    const [point, dailyIncomingByStation, oldestStoredByStation] = await Promise.all([
       this.prisma.getGeographyPoint('stations', id),
       this.dailyIncomingByStation([id]),
+      this.oldestStoredByStation([id]),
     ]);
-    return this.serialize(row, point ?? undefined, dailyIncomingByStation.get(id) ?? []);
+    return this.serialize(
+      row,
+      point ?? undefined,
+      dailyIncomingByStation.get(id) ?? [],
+      oldestStoredByStation.get(id),
+    );
   }
 
   async listFillAlertCandidates(now = new Date()): Promise<StationFillAlertCandidate[]> {
@@ -146,20 +199,30 @@ export class StationsService {
       select: { id: true, name: true, capacityLiters: true, currentVolumeLiters: true },
       orderBy: { createdAt: 'asc' },
     });
-    const dailyIncomingByStation = await this.dailyIncomingByStation(stations.map((station) => station.id), now);
+    const stationIds = stations.map((station) => station.id);
+    const [dailyIncomingByStation, oldestStoredByStation] = await Promise.all([
+      this.dailyIncomingByStation(stationIds, now),
+      this.oldestStoredByStation(stationIds),
+    ]);
 
     return stations.flatMap((station) => {
       const forecast = forecastStationFill({
         capacityLiters: Number(station.capacityLiters),
         currentVolumeLiters: Number(station.currentVolumeLiters),
         dailyIncomingLiters: dailyIncomingByStation.get(station.id) ?? [],
+        oldestStoredAt: oldestStoredByStation.get(station.id),
+        now,
+        maxStorageDays: this.maxStorageDays(),
       });
       const candidate = buildStationFillAlertCandidate(station, forecast);
       return candidate ? [candidate] : [];
     });
   }
 
-  private async dailyIncomingByStation(stationIds: string[], now = new Date()): Promise<Map<string, number[]>> {
+  private async dailyIncomingByStation(
+    stationIds: string[],
+    now = new Date(),
+  ): Promise<Map<string, number[]>> {
     const result = new Map<string, number[]>();
     if (stationIds.length === 0) return result;
 
@@ -174,7 +237,13 @@ export class StationsService {
         deletedAt: null,
         deliveredAt: { gte: historyStart, lte: now },
       },
-      select: { stationId: true, actualLiters: true, deliveredAt: true, status: true, deletedAt: true },
+      select: {
+        stationId: true,
+        actualLiters: true,
+        deliveredAt: true,
+        status: true,
+        deletedAt: true,
+      },
       orderBy: [{ stationId: 'asc' }, { deliveredAt: 'asc' }],
     });
     const completedStatusSet = new Set<DeliveryStatus>(completedStatuses);
@@ -216,11 +285,28 @@ export class StationsService {
     return result;
   }
 
-  private async requireUser(id: string): Promise<void> {
-    const user = await this.prisma.user.findUnique({ where: { id } });
-    if (!user || user.role !== Role.STATION || user.deletedAt) {
-      throw new NotFoundException('Station user not found');
+  private async oldestStoredByStation(stationIds: string[]): Promise<Map<string, Date>> {
+    const result = new Map<string, Date>();
+    if (stationIds.length === 0) return result;
+    const deliveries = await this.prisma.stationDelivery.findMany({
+      where: {
+        stationId: { in: stationIds },
+        processedAt: null,
+        deletedAt: null,
+        status: { in: [DeliveryStatus.OK, DeliveryStatus.FLAGGED] },
+      },
+      select: { stationId: true, deliveredAt: true },
+      orderBy: [{ stationId: 'asc' }, { deliveredAt: 'asc' }],
+    });
+    for (const delivery of deliveries) {
+      if (!result.has(delivery.stationId)) result.set(delivery.stationId, delivery.deliveredAt);
     }
+    return result;
+  }
+
+  private maxStorageDays(): number {
+    const configured = Number(process.env.STATION_MAX_STORAGE_DAYS ?? 14);
+    return Number.isFinite(configured) && configured > 0 ? configured : 14;
   }
 
   private async requireWard(id: string): Promise<void> {
@@ -231,7 +317,10 @@ export class StationsService {
   }
 
   private async getRequired(id: string) {
-    const row = await this.prisma.station.findUnique({ where: { id }, include: { user: true, ward: true } });
+    const row = await this.prisma.station.findUnique({
+      where: { id },
+      include: { user: true, ward: true },
+    });
     if (!row) {
       throw new NotFoundException('Station not found');
     }
@@ -242,11 +331,14 @@ export class StationsService {
     row: Awaited<ReturnType<StationsService['getRequired']>>,
     point?: { lat: number; lng: number },
     dailyIncomingLiters: number[] = [],
+    oldestStoredAt?: Date,
   ) {
     const fillForecast = forecastStationFill({
       capacityLiters: Number(row.capacityLiters),
       currentVolumeLiters: Number(row.currentVolumeLiters),
       dailyIncomingLiters,
+      oldestStoredAt,
+      maxStorageDays: this.maxStorageDays(),
     });
     return {
       id: row.id,
@@ -278,6 +370,11 @@ export class StationsService {
       status: forecast.status,
       history_size: forecast.historySize,
       reason_codes: forecast.reasonCodes,
+      storage_age_days: forecast.storageAgeDays,
+      days_until_storage_limit: forecast.daysUntilStorageLimit,
+      max_storage_days: forecast.maxStorageDays,
+      storage_age_status: forecast.storageAgeStatus,
+      effective_handling_days: forecast.effectiveHandlingDays,
       explanation: {
         summary: forecast.explanation.summary,
         used_daily_incoming_liters: forecast.explanation.usedDailyIncomingLiters,

@@ -1,6 +1,7 @@
 import { DeliveryStatus, EntityStatus, Role } from '@prisma/client';
 import type { PrismaService } from '../../prisma/prisma.service';
 import { StationsService } from './stations.service';
+import { EntityStatus as SharedEntityStatus } from '@eco-oil/shared-types';
 
 const now = new Date('2026-08-20T12:00:00.000Z');
 
@@ -38,21 +39,32 @@ function delivery(
   };
 }
 
-function createService(stations: ReturnType<typeof station>[], deliveries: ReturnType<typeof delivery>[]) {
+function createService(
+  stations: ReturnType<typeof station>[],
+  deliveries: ReturnType<typeof delivery>[],
+) {
   const stationDeliveryFindMany = jest.fn().mockResolvedValue(deliveries);
   const prisma = {
     station: {
       findMany: jest.fn().mockResolvedValue(stations),
       count: jest.fn().mockResolvedValue(stations.length),
-      findUnique: jest.fn().mockImplementation(({ where }: { where: { id: string } }) =>
-        Promise.resolve(stations.find((item) => item.id === where.id) ?? null),
-      ),
+      findUnique: jest
+        .fn()
+        .mockImplementation(({ where }: { where: { id: string } }) =>
+          Promise.resolve(stations.find((item) => item.id === where.id) ?? null),
+        ),
     },
     stationDelivery: { findMany: stationDeliveryFindMany },
-    getGeographyPoints: jest.fn().mockResolvedValue(stations.map((item) => ({ id: item.id, lat: 10.7, lng: 106.7 }))),
-    getGeographyPoint: jest.fn().mockImplementation((_table: string, id: string) =>
-      Promise.resolve(stations.some((item) => item.id === id) ? { id, lat: 10.7, lng: 106.7 } : null),
-    ),
+    getGeographyPoints: jest
+      .fn()
+      .mockResolvedValue(stations.map((item) => ({ id: item.id, lat: 10.7, lng: 106.7 }))),
+    getGeographyPoint: jest
+      .fn()
+      .mockImplementation((_table: string, id: string) =>
+        Promise.resolve(
+          stations.some((item) => item.id === id) ? { id, lat: 10.7, lng: 106.7 } : null,
+        ),
+      ),
   } as unknown as PrismaService;
   return { service: new StationsService(prisma), stationDeliveryFindMany };
 }
@@ -103,7 +115,9 @@ describe('StationsService fill forecast integration', () => {
       [
         delivery(firstStation.id, 4, '2026-08-17T01:00:00.000Z'),
         delivery(firstStation.id, 6, '2026-08-17T23:30:00.000Z'),
-        delivery(firstStation.id, 20, '2026-08-19T08:00:00.000Z', { status: DeliveryStatus.FLAGGED }),
+        delivery(firstStation.id, 20, '2026-08-19T08:00:00.000Z', {
+          status: DeliveryStatus.FLAGGED,
+        }),
         delivery(firstStation.id, 30, '2026-08-20T09:00:00.000Z'),
       ],
     );
@@ -129,10 +143,14 @@ describe('StationsService fill forecast integration', () => {
     const result = await service.list({ page: 1, limit: 20, include_inactive: false });
 
     expect(result.data).toHaveLength(2);
-    expect(result.data.every((item) => item.fill_forecast.status === 'INSUFFICIENT_DATA')).toBe(true);
-    expect(stationDeliveryFindMany).toHaveBeenCalledTimes(1);
+    expect(result.data.every((item) => item.fill_forecast.status === 'INSUFFICIENT_DATA')).toBe(
+      true,
+    );
+    expect(stationDeliveryFindMany).toHaveBeenCalledTimes(2);
     expect(stationDeliveryFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({ stationId: { in: ['station-1', 'station-2'] } }) }),
+      expect.objectContaining({
+        where: expect.objectContaining({ stationId: { in: ['station-1', 'station-2'] } }),
+      }),
     );
   });
 
@@ -145,7 +163,9 @@ describe('StationsService fill forecast integration', () => {
         delivery(firstStation.id, 10, '2026-08-19T08:00:00.000Z'),
         delivery(firstStation.id, 10, '2026-08-20T08:00:00.000Z'),
         delivery(firstStation.id, 500, '2026-08-21T08:00:00.000Z'),
-        delivery(firstStation.id, 500, '2026-08-19T10:00:00.000Z', { deletedAt: new Date('2026-08-19T11:00:00.000Z') }),
+        delivery(firstStation.id, 500, '2026-08-19T10:00:00.000Z', {
+          deletedAt: new Date('2026-08-19T11:00:00.000Z'),
+        }),
       ],
     );
 
@@ -166,5 +186,48 @@ describe('StationsService fill forecast integration', () => {
         }),
       }),
     );
+  });
+});
+
+describe('StationsService Admin CRUD', () => {
+  it('creates the internal Station user automatically and saves capacity without a fake Zalo ID', async () => {
+    const created = { ...station('station-created'), capacityLiters: 1_500 };
+    const userCreate = jest.fn().mockResolvedValue({ id: created.userId });
+    const stationCreate = jest.fn().mockResolvedValue(created);
+    const prisma = {
+      ward: { findUnique: jest.fn().mockResolvedValue({ id: created.wardId, deletedAt: null }) },
+      $transaction: jest.fn(async (callback: (transaction: unknown) => Promise<unknown>) =>
+        callback({
+          user: { create: userCreate },
+          station: { create: stationCreate },
+        }),
+      ),
+      station: { findUnique: jest.fn().mockResolvedValue(created) },
+      stationDelivery: { findMany: jest.fn().mockResolvedValue([]) },
+      setGeographyPoint: jest.fn().mockResolvedValue(undefined),
+      getGeographyPoint: jest.fn().mockResolvedValue({ id: created.id, lat: 21.03, lng: 105.85 }),
+    } as unknown as PrismaService;
+    const service = new StationsService(prisma);
+
+    const result = await service.create({
+      name: 'Trạm ECollect mới',
+      address: '1 Hàng Bạc, Hà Nội',
+      ward_id: created.wardId,
+      capacity_liters: 1_500,
+      lat: 21.03,
+      lng: 105.85,
+      status: SharedEntityStatus.ACTIVE,
+    });
+
+    expect(userCreate).toHaveBeenCalledWith({
+      data: { name: 'Trạm ECollect mới', role: Role.STATION },
+    });
+    expect(userCreate.mock.calls[0]![0].data).not.toHaveProperty('zaloId');
+    expect(stationCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ capacityLiters: 1_500, userId: created.userId }),
+      }),
+    );
+    expect(result.capacity_l).toBe(1_500);
   });
 });

@@ -1,13 +1,27 @@
 import { Body, Controller, Get, Inject, Post, Query, Req, Res } from '@nestjs/common';
 import { Role } from '@prisma/client';
-import { adminLoginSchema, collectorInviteAcceptSchema, refreshTokenSchema, zaloAuthSchema, zaloLocationSchema, zaloOAuthExchangeSchema } from '@eco-oil/validation';
+import {
+  adminLoginSchema,
+  collectorInviteAcceptSchema,
+  refreshTokenSchema,
+  zaloAuthSchema,
+  zaloLocationSchema,
+  zaloOAuthExchangeSchema,
+} from '@eco-oil/validation';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { Public } from './decorators/public.decorator';
 import { Roles } from './decorators/roles.decorator';
 import type { AccessTokenPayload } from './auth.types';
-import { ACCESS_TOKEN_TTL_SECONDS, REFRESH_TOKEN_TTL_SECONDS, ZALO_ACCESS_COOKIE, ZALO_OAUTH_STATE_COOKIE, ZALO_OAUTH_STATE_TTL_SECONDS, ZALO_REFRESH_COOKIE } from './auth.constants';
+import {
+  ACCESS_TOKEN_TTL_SECONDS,
+  REFRESH_TOKEN_TTL_SECONDS,
+  ZALO_ACCESS_COOKIE,
+  ZALO_OAUTH_STATE_COOKIE,
+  ZALO_OAUTH_STATE_TTL_SECONDS,
+  ZALO_REFRESH_COOKIE,
+} from './auth.constants';
 
 @Controller('auth')
 export class AuthController {
@@ -21,15 +35,30 @@ export class AuthController {
 
   @Public()
   @Get('zalo/start')
-  async startZaloOAuth(@Res({ passthrough: true }) response: Response) {
-    const result = await this.authService.startZaloOAuth();
-    response.setHeader('Set-Cookie', this.cookie(ZALO_OAUTH_STATE_COOKIE, result.state, ZALO_OAUTH_STATE_TTL_SECONDS, '/api/v1/auth/zalo'));
+  async startZaloOAuth(
+    @Query('collector_invite') collectorInvite: unknown,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const result = await this.authService.startZaloOAuth(this.optionalStringQuery(collectorInvite));
+    response.setHeader(
+      'Set-Cookie',
+      this.cookie(
+        ZALO_OAUTH_STATE_COOKIE,
+        result.state,
+        ZALO_OAUTH_STATE_TTL_SECONDS,
+        '/api/v1/auth/zalo',
+      ),
+    );
     response.redirect(result.authorizationUrl);
   }
 
   @Public()
   @Get('zalo/callback')
-  async completeZaloOAuth(@Req() request: Request, @Query() query: Record<string, unknown>, @Res() response: Response) {
+  async completeZaloOAuth(
+    @Req() request: Request,
+    @Query() query: Record<string, unknown>,
+    @Res() response: Response,
+  ) {
     const result = await this.authService.completeZaloOAuth({
       state: this.stringQuery(query.state),
       cookieState: this.cookieValue(request.headers.cookie, ZALO_OAUTH_STATE_COOKIE),
@@ -54,7 +83,10 @@ export class AuthController {
   @Roles(Role.MERCHANT, Role.COLLECTOR)
   @Post('collector-invites/accept')
   acceptCollectorInvite(@CurrentUser() user: AccessTokenPayload, @Body() body: unknown) {
-    return this.authService.acceptCollectorInvite(user, collectorInviteAcceptSchema.parse(body).code);
+    return this.authService.acceptCollectorInvite(
+      user,
+      collectorInviteAcceptSchema.parse(body).code,
+    );
   }
 
   @Public()
@@ -71,9 +103,22 @@ export class AuthController {
 
   @Public()
   @Post('refresh')
-  refresh(@Req() request: Request, @Body() body: unknown, @Res({ passthrough: true }) response: Response) {
-    const bodyToken = typeof body === 'object' && body !== null && 'refresh_token' in body && typeof body.refresh_token === 'string' ? body.refresh_token : null;
-    const refreshToken = bodyToken || this.cookieValue(request.headers.cookie, ZALO_REFRESH_COOKIE) || refreshTokenSchema.parse(body).refresh_token;
+  refresh(
+    @Req() request: Request,
+    @Body() body: unknown,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const bodyToken =
+      typeof body === 'object' &&
+      body !== null &&
+      'refresh_token' in body &&
+      typeof body.refresh_token === 'string'
+        ? body.refresh_token
+        : null;
+    const refreshToken =
+      bodyToken ||
+      this.cookieValue(request.headers.cookie, ZALO_REFRESH_COOKIE) ||
+      refreshTokenSchema.parse(body).refresh_token;
     return this.authService.refresh(refreshToken).then((result) => {
       response.setHeader('Set-Cookie', [
         this.cookie(ZALO_ACCESS_COOKIE, result.access_token, ACCESS_TOKEN_TTL_SECONDS, '/'),
@@ -85,9 +130,21 @@ export class AuthController {
 
   @Roles(Role.MERCHANT, Role.COLLECTOR, Role.STATION, Role.ADMIN)
   @Post('logout')
-  logout(@CurrentUser() user: AccessTokenPayload, @Req() request: Request, @Body() body: unknown, @Res({ passthrough: true }) response: Response) {
-    const bodyToken = typeof body === 'object' && body !== null && 'refresh_token' in body && typeof body.refresh_token === 'string' ? body.refresh_token : null;
-    const refreshToken = bodyToken || this.cookieValue(request.headers.cookie, ZALO_REFRESH_COOKIE) || undefined;
+  logout(
+    @CurrentUser() user: AccessTokenPayload,
+    @Req() request: Request,
+    @Body() body: unknown,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const bodyToken =
+      typeof body === 'object' &&
+      body !== null &&
+      'refresh_token' in body &&
+      typeof body.refresh_token === 'string'
+        ? body.refresh_token
+        : null;
+    const refreshToken =
+      bodyToken || this.cookieValue(request.headers.cookie, ZALO_REFRESH_COOKIE) || undefined;
     response.setHeader('Set-Cookie', [
       this.cookie(ZALO_ACCESS_COOKIE, '', 0, '/'),
       this.cookie(ZALO_REFRESH_COOKIE, '', 0, '/'),
@@ -124,7 +181,10 @@ export class AuthController {
 
   private cookieValue(header: string | undefined, name: string): string | null {
     const prefix = `${name}=`;
-    const value = header?.split(';').map((part) => part.trim()).find((part) => part.startsWith(prefix));
+    const value = header
+      ?.split(';')
+      .map((part) => part.trim())
+      .find((part) => part.startsWith(prefix));
     return value ? decodeURIComponent(value.slice(prefix.length)) : null;
   }
 

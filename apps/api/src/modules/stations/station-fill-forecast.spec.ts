@@ -28,7 +28,9 @@ describe('forecastStationFill', () => {
     expect(result.status).toBe('FULL');
     expect(result.remainingCapacityLiters).toBe(0);
     expect(result.estimatedDaysUntilFull).toBe(0);
-    expect(result.projectedVolumes.every((projection) => projection.volumeLiters === 100)).toBe(true);
+    expect(result.projectedVolumes.every((projection) => projection.volumeLiters === 100)).toBe(
+      true,
+    );
   });
 
   it('returns null days until full when there is no incoming oil', () => {
@@ -89,11 +91,19 @@ describe('forecastStationFill', () => {
       code: 'INVALID_CAPACITY',
     },
     {
-      input: { capacityLiters: 100, currentVolumeLiters: Number.POSITIVE_INFINITY, dailyIncomingLiters: [] },
+      input: {
+        capacityLiters: 100,
+        currentVolumeLiters: Number.POSITIVE_INFINITY,
+        dailyIncomingLiters: [],
+      },
       code: 'INVALID_CURRENT_VOLUME',
     },
     {
-      input: { capacityLiters: 100, currentVolumeLiters: 0, dailyIncomingLiters: [10, Number.NaN, 12] },
+      input: {
+        capacityLiters: 100,
+        currentVolumeLiters: 0,
+        dailyIncomingLiters: [10, Number.NaN, 12],
+      },
       code: 'INVALID_DAILY_INCOMING',
     },
   ])('rejects invalid input with code $code', ({ input, code }) => {
@@ -117,7 +127,52 @@ describe('forecastStationFill', () => {
     expect(result.averageDailyIncomingLiters).toBe(10);
     expect(result.reasonCodes).toContain('HISTORY_TRUNCATED_TO_7_DAYS');
     expect(result.projectedVolumes).toHaveLength(7);
-    expect(result.projectedVolumes.map((projection) => projection.volumeLiters)).toEqual([60, 70, 80, 90, 100, 100, 100]);
-    expect(result.projectedVolumes.every((projection) => projection.volumeLiters <= 100)).toBe(true);
+    expect(result.projectedVolumes.map((projection) => projection.volumeLiters)).toEqual([
+      60, 70, 80, 90, 100, 100, 100,
+    ]);
+    expect(result.projectedVolumes.every((projection) => projection.volumeLiters <= 100)).toBe(
+      true,
+    );
+  });
+
+  it('keeps capacity forecast separate from the seven-day oil-age warning', () => {
+    const result = forecastStationFill({
+      capacityLiters: 1_000,
+      currentVolumeLiters: 100,
+      dailyIncomingLiters: [10, 10, 10],
+      oldestStoredAt: new Date('2026-08-24T00:00:00.000Z'),
+      now: new Date('2026-08-31T00:00:00.000Z'),
+      maxStorageDays: 14,
+    });
+    expect(result.estimatedDaysUntilFull).toBe(90);
+    expect(result.storageAgeDays).toBe(7);
+    expect(result.storageAgeStatus).toBe('WATCH');
+    expect(result.effectiveHandlingDays).toBe(7);
+  });
+
+  it('marks the oldest unprocessed batch overdue at the configured limit', () => {
+    const result = forecastStationFill({
+      capacityLiters: 1_000,
+      currentVolumeLiters: 100,
+      dailyIncomingLiters: [],
+      oldestStoredAt: new Date('2026-08-17T00:00:00.000Z'),
+      now: new Date('2026-08-31T00:00:00.000Z'),
+      maxStorageDays: 14,
+    });
+    expect(result.storageAgeStatus).toBe('OVERDUE');
+    expect(result.daysUntilStorageLimit).toBe(0);
+    expect(result.effectiveHandlingDays).toBe(0);
+  });
+
+  it('states that age data is insufficient when only capacity history is available', () => {
+    const result = forecastStationFill({
+      capacityLiters: 100,
+      currentVolumeLiters: 50,
+      dailyIncomingLiters: [7, 7, 7],
+    });
+    expect(result.storageAgeStatus).toBe('INSUFFICIENT_DATA');
+    expect(result.storageAgeDays).toBeNull();
+    expect(result.explanation.summary).toContain('chỉ dựa trên sức chứa');
+    expect(result.estimatedDaysUntilFull).toBe(7.1);
   });
 });

@@ -8,6 +8,7 @@ export const ZALO_OAUTH_STATE_TTL_SECONDS = 10 * 60;
 export const ZALO_OAUTH_HANDOFF_TTL_SECONDS = 60;
 export const ZALO_OAUTH_HANDOFF_KEY_PREFIX = 'auth:zalo:oauth-handoff:';
 export const COLLECTOR_INVITE_KEY_PREFIX = 'auth:collector:invite:';
+export const COLLECTOR_ACTIVE_INVITE_KEY_PREFIX = 'auth:collector:active-invite:';
 export const COLLECTOR_INVITE_TTL_SECONDS = 48 * 60 * 60;
 
 export const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;

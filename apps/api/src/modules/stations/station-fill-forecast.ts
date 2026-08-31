@@ -1,4 +1,5 @@
-export type StationFillForecastStatus = 'INSUFFICIENT_DATA' | 'FULL' | 'CRITICAL' | 'WATCH' | 'STABLE';
+export type StationFillForecastStatus =
+  'INSUFFICIENT_DATA' | 'FULL' | 'CRITICAL' | 'WATCH' | 'STABLE';
 
 export type StationFillForecastReasonCode =
   | 'HISTORY_BELOW_MINIMUM'
@@ -7,13 +8,22 @@ export type StationFillForecastReasonCode =
   | 'NO_INCOMING_FLOW'
   | 'FULL_WITHIN_3_DAYS'
   | 'FULL_WITHIN_7_DAYS'
-  | 'CAPACITY_AVAILABLE_BEYOND_7_DAYS';
+  | 'CAPACITY_AVAILABLE_BEYOND_7_DAYS'
+  | 'STORAGE_AGE_WATCH'
+  | 'STORAGE_AGE_CRITICAL'
+  | 'STORAGE_AGE_OVERDUE';
 
 export type StationFillForecastInput = {
   capacityLiters: number;
   currentVolumeLiters: number;
   dailyIncomingLiters: readonly number[];
+  oldestStoredAt?: Date | null;
+  now?: Date;
+  maxStorageDays?: number;
 };
+
+export type StationStorageAgeStatus =
+  'INSUFFICIENT_DATA' | 'STABLE' | 'WATCH' | 'CRITICAL' | 'OVERDUE';
 
 export type StationFillForecastResult = {
   averageDailyIncomingLiters: number;
@@ -23,6 +33,11 @@ export type StationFillForecastResult = {
   status: StationFillForecastStatus;
   historySize: number;
   reasonCodes: StationFillForecastReasonCode[];
+  storageAgeDays: number | null;
+  daysUntilStorageLimit: number | null;
+  maxStorageDays: number;
+  storageAgeStatus: StationStorageAgeStatus;
+  effectiveHandlingDays: number | null;
   explanation: {
     summary: string;
     usedDailyIncomingLiters: number[];
@@ -32,9 +47,7 @@ export type StationFillForecastResult = {
 };
 
 export type StationFillForecastInputErrorCode =
-  | 'INVALID_CAPACITY'
-  | 'INVALID_CURRENT_VOLUME'
-  | 'INVALID_DAILY_INCOMING';
+  'INVALID_CAPACITY' | 'INVALID_CURRENT_VOLUME' | 'INVALID_DAILY_INCOMING';
 
 export class StationFillForecastInputError extends RangeError {
   constructor(
@@ -97,24 +110,61 @@ export function forecastStationFill(input: StationFillForecastInput): StationFil
   const recentHistory = input.dailyIncomingLiters.slice(-MAX_HISTORY_DAYS);
   const historySize = recentHistory.length;
   const averageDailyIncomingLiters =
-    historySize === 0 ? 0 : round(recentHistory.reduce((total, value) => total + value, 0) / historySize);
+    historySize === 0
+      ? 0
+      : round(recentHistory.reduce((total, value) => total + value, 0) / historySize);
   const boundedCurrentVolume = Math.min(input.currentVolumeLiters, input.capacityLiters);
   const remainingCapacityLiters = round(Math.max(0, input.capacityLiters - boundedCurrentVolume));
   const alreadyFull = input.currentVolumeLiters >= input.capacityLiters;
   const estimatedDaysUntilFull = alreadyFull
     ? 0
     : averageDailyIncomingLiters > 0
-      ? round(remainingCapacityLiters / averageDailyIncomingLiters)
+      ? round(remainingCapacityLiters / averageDailyIncomingLiters, 1)
       : null;
+  const maxStorageDays =
+    Number.isFinite(input.maxStorageDays) && (input.maxStorageDays ?? 0) > 0
+      ? (input.maxStorageDays as number)
+      : 14;
+  const now = input.now ?? new Date();
+  const hasReliableAge =
+    input.currentVolumeLiters > 0 &&
+    input.oldestStoredAt instanceof Date &&
+    Number.isFinite(input.oldestStoredAt.getTime()) &&
+    input.oldestStoredAt.getTime() <= now.getTime();
+  const storageAgeDays = hasReliableAge
+    ? round((now.getTime() - (input.oldestStoredAt as Date).getTime()) / 86_400_000, 1)
+    : null;
+  const daysUntilStorageLimit =
+    storageAgeDays === null ? null : round(Math.max(0, maxStorageDays - storageAgeDays), 1);
+  const storageAgeStatus: StationStorageAgeStatus =
+    storageAgeDays === null
+      ? 'INSUFFICIENT_DATA'
+      : storageAgeDays >= maxStorageDays
+        ? 'OVERDUE'
+        : storageAgeDays >= maxStorageDays - 2
+          ? 'CRITICAL'
+          : storageAgeDays >= 7
+            ? 'WATCH'
+            : 'STABLE';
+  const effectiveHandlingDays =
+    estimatedDaysUntilFull === null
+      ? daysUntilStorageLimit
+      : daysUntilStorageLimit === null
+        ? estimatedDaysUntilFull
+        : Math.min(estimatedDaysUntilFull, daysUntilStorageLimit);
   const projectedVolumes = Array.from({ length: PROJECTION_DAYS }, (_, index) => ({
     day: index + 1,
     volumeLiters: round(
-      Math.min(input.capacityLiters, Math.max(0, boundedCurrentVolume + averageDailyIncomingLiters * (index + 1))),
+      Math.min(
+        input.capacityLiters,
+        Math.max(0, boundedCurrentVolume + averageDailyIncomingLiters * (index + 1)),
+      ),
     ),
   }));
 
   const reasonCodes: StationFillForecastReasonCode[] = [];
-  if (input.dailyIncomingLiters.length > MAX_HISTORY_DAYS) reasonCodes.push('HISTORY_TRUNCATED_TO_7_DAYS');
+  if (input.dailyIncomingLiters.length > MAX_HISTORY_DAYS)
+    reasonCodes.push('HISTORY_TRUNCATED_TO_7_DAYS');
 
   let status: StationFillForecastStatus;
   if (alreadyFull) {
@@ -137,6 +187,9 @@ export function forecastStationFill(input: StationFillForecastInput): StationFil
     status = 'STABLE';
     reasonCodes.push('CAPACITY_AVAILABLE_BEYOND_7_DAYS');
   }
+  if (storageAgeStatus === 'WATCH') reasonCodes.push('STORAGE_AGE_WATCH');
+  if (storageAgeStatus === 'CRITICAL') reasonCodes.push('STORAGE_AGE_CRITICAL');
+  if (storageAgeStatus === 'OVERDUE') reasonCodes.push('STORAGE_AGE_OVERDUE');
 
   return {
     averageDailyIncomingLiters,
@@ -146,8 +199,13 @@ export function forecastStationFill(input: StationFillForecastInput): StationFil
     status,
     historySize,
     reasonCodes,
+    storageAgeDays,
+    daysUntilStorageLimit,
+    maxStorageDays,
+    storageAgeStatus,
+    effectiveHandlingDays,
     explanation: {
-      summary: summaryFor(status),
+      summary: `${summaryFor(status)} ${storageAgeDays === null ? 'Dự báo hiện chỉ dựa trên sức chứa; chưa đủ dữ liệu tuổi dầu.' : `Mẻ dầu lâu nhất đã lưu khoảng ${storageAgeDays} ngày (giới hạn ${maxStorageDays} ngày).`}`,
       usedDailyIncomingLiters: [...recentHistory],
       calculationWindowDays: historySize,
       formula: 'Số ngày đến khi đầy = sức chứa còn lại / lượng dầu nhập trung bình mỗi ngày.',
