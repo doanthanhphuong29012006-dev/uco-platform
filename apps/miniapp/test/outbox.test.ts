@@ -164,6 +164,38 @@ test('network failure keeps the original payload and retries later', async () =>
   assert.deepEqual(saved?.payload, source.payload);
 });
 
+test('HTTP 401, 409 and 500 keep collection rows pending with their payload intact', async () => {
+  for (const status of [401, 409, 500]) {
+    const source = record(`http-${status}-${crypto.randomUUID()}`);
+    const store = new MemoryOutboxStore([source]);
+    await syncOutbox({
+      store,
+      client: { syncBatch: async () => { throw new Error(`HTTP ${status}`); } },
+    });
+    const saved = await store.get(source.client_uuid);
+    assert.equal(saved?.status, 'pending');
+    assert.deepEqual(saved?.payload, source.payload);
+    assert.match(saved?.last_error ?? '', new RegExp(String(status)));
+  }
+});
+
+test('a response missing the matching client_uuid never marks the row synced', async () => {
+  const source = record(crypto.randomUUID());
+  const store = new MemoryOutboxStore([source]);
+  await syncOutbox({
+    store,
+    client: {
+      syncBatch: async () => ({
+        results: [{ client_uuid: '', status: 'created', id: 'wrong-result' }],
+        summary: { created: 1, duplicate: 0, failed: 0 },
+      }),
+    },
+  });
+  const saved = await store.get(source.client_uuid);
+  assert.equal(saved?.status, 'pending');
+  assert.match(saved?.last_error ?? '', /Không nhận được kết quả/);
+});
+
 test('station delivery rows use the delivery endpoint and retain the server receipt', async () => {
   const clientUuid = crypto.randomUUID();
   const payload: StationDeliveryCreateRequest = {
@@ -209,6 +241,47 @@ test('station delivery rows use the delivery endpoint and retain the server rece
   assert.equal(saved?.status, 'synced');
   assert.equal(saved?.server_id, 'delivery-1');
   assert.deepEqual(saved?.server_response, serverResponse);
+});
+
+test('station delivery response with another client_uuid stays pending', async () => {
+  const clientUuid = crypto.randomUUID();
+  const payload: StationDeliveryCreateRequest = {
+    client_uuid: clientUuid,
+    station_id: 'station-1',
+    transaction_ids: ['transaction-1'],
+    actual_liters: 10,
+    photos: [],
+  };
+  const source: OutboxRecord = {
+    client_uuid: clientUuid,
+    type: 'station_delivery',
+    payload,
+    status: 'pending',
+    attempts: 0,
+    last_error: null,
+    next_attempt_at: null,
+    created_at: new Date().toISOString(),
+    synced_at: null,
+  };
+  const store = new MemoryOutboxStore([source]);
+  await syncOutbox({
+    store,
+    client: {
+      syncBatch: async () => response([]),
+      createStationDelivery: async () => ({
+        ...payload,
+        client_uuid: 'another-client-uuid',
+        id: 'delivery-wrong',
+        collector_id: 'collector-1',
+        expected_liters: 10,
+        variance_l: 0,
+        variance_pct: 0,
+        status: 'OK',
+        created_at: new Date().toISOString(),
+      }),
+    },
+  });
+  assert.equal((await store.get(clientUuid))?.status, 'pending');
 });
 
 test('stale syncing rows are recovered to pending before the worker sends them', async () => {

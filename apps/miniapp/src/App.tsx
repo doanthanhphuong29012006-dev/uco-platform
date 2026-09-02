@@ -24,9 +24,9 @@ type Tab = 'home' | 'history' | 'orders' | 'payments';
 function BrandHeader({ title, action }: { title: string; action?: ReactNode }) {
   return (
     <header className="brand-header">
-      <img src="/logo.svg" alt="ECollect" />
+      <img src="/logo.svg" alt="ECOllect" />
       <div className="brand-header-copy">
-        <strong>ECollect</strong>
+        <strong>ECOllect</strong>
         <span>{title}</span>
       </div>
       {action}
@@ -105,7 +105,7 @@ export function App() {
     return (
       <div className="app-loading">
         <img src="/logo.svg" alt="" />
-        <strong>ECollect</strong>
+        <strong>ECOllect</strong>
         <span>Đang chuẩn bị ứng dụng…</span>
       </div>
     );

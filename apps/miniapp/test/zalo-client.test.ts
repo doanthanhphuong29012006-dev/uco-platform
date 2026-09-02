@@ -37,7 +37,7 @@ function setBrowserGeolocation(getCurrentPosition: (...args: unknown[]) => void)
   });
 }
 
-test('mock getLocation returns the real browser geolocation', async () => {
+test('browser production uses BrowserZaloClient and returns real browser geolocation', async () => {
   Object.defineProperty(globalThis, 'window', {
     configurable: true,
     value: {},
@@ -47,7 +47,7 @@ test('mock getLocation returns the real browser geolocation', async () => {
   assert.equal(isZaloEnvironment(), false);
 
   const client = createZaloClient(false);
-  assert.equal(client.mode, 'mock');
+  assert.equal(client.mode, 'browser');
   assert.deepEqual(await client.getLocation({ lat: 10, lng: 106 }), { lat: 21.0333, lng: 105.85 });
 });
 
@@ -66,39 +66,63 @@ test('browser-like Zalo globals do not activate the native runtime', async () =>
   assert.equal(isZaloEnvironment(), false);
 });
 
-test('mock getLocation falls back to the supplied ward center without a hardcoded Saigon coordinate', async () => {
-  setBrowserGeolocation((_success, failure) => failure(new Error('permission denied')));
+test('browser location reports permission denial instead of disguising a ward center as GPS', async () => {
+  setBrowserGeolocation((_success, failure) =>
+    failure({ code: 1, PERMISSION_DENIED: 1, TIMEOUT: 3 }),
+  );
   const { createZaloClient } = await import('../src/lib/zalo-client');
   const client = createZaloClient(false);
-  const fallback = { lat: 21.0333, lng: 105.85 };
-  assert.deepEqual(await client.getLocation(fallback), fallback);
-  assert.notDeepEqual(await client.getLocation(fallback), { lat: 10.7769, lng: 106.7009 });
+  await assert.rejects(
+    () => client.getLocation({ lat: 21.0333, lng: 105.85 }),
+    /Quyền vị trí đã bị từ chối/,
+  );
 });
 
-test('browser outside Zalo uses the mock client for the full SDK surface', async () => {
-  let navigated = false;
-  Object.defineProperty(globalThis, 'window', {
-    configurable: true,
-    value: { open: () => { navigated = true; } },
-  });
-  setBrowserGeolocation((_success, failure) => failure(new Error('unsupported')));
-  const { createZaloClient } = await import('../src/lib/zalo-client');
-  const client = createZaloClient(false);
+test('browser client opens tel and Google Maps and delegates QR/camera/gallery capabilities', async () => {
+  const opened: string[] = [];
+  const browserWindow = {
+    location: { href: 'https://example.test' },
+    open: (url?: string | URL) => {
+      opened.push(String(url));
+      return {} as Window;
+    },
+  };
+  const picked: string[] = [];
+  const { BrowserZaloClient } = await import('../src/lib/zalo-client');
+  const client = new BrowserZaloClient(
+    async () => ({ lat: 21.0333, lng: 105.85 }),
+    async () => '{"container_code":"ECO-QR-BROWSER"}',
+    async (source) => {
+      picked.push(source);
+      return { url: `data:${source}`, width: 10, height: 10 };
+    },
+    browserWindow as never,
+    null,
+  );
 
-  client.setSeedAccount({ zaloId: 'zalo_collector_01', phone: '0910000001' });
-  assert.deepEqual(await client.login(), { zaloId: 'zalo_collector_01', phone: '0910000001' });
-  assert.equal(await client.getAccessToken(), 'mock-access-token:zalo_collector_01');
-  assert.equal(await client.getLocation(), null);
-  assert.equal(await client.scanQRCode(), '');
-  await assert.rejects(() => client.chooseImage(), /media picker is unavailable in mock mode/);
-  await client.openPhone('0900000001');
+  await client.openPhone('0901 000 001');
+  assert.equal(browserWindow.location.href, 'tel:0901000001');
   await client.openDirections({ lat: 21.0333, lng: 105.85 });
-  assert.equal(navigated, false);
+  assert.match(opened[0], /^https:\/\/www\.google\.com\/maps\/dir/);
+  assert.equal(await client.scanQRCode(), 'ECO-QR-BROWSER');
+  await client.chooseImage('camera');
+  await client.chooseImage('album');
+  assert.deepEqual(picked, ['camera', 'album']);
+});
 
-  client.setStorage('zalo-client-test', 'mock-value');
-  assert.equal(client.getStorage('zalo-client-test'), 'mock-value');
-  client.removeStorage('zalo-client-test');
-  assert.equal(client.getStorage('zalo-client-test'), null);
+test('documented ZMP capabilities identify a real Zalo runtime without private globals', async () => {
+  const { isZaloEnvironment } = await import('../src/lib/zalo-client');
+  const runtime = {
+    navigator: { userAgent: 'Mozilla/5.0' },
+    ZaloMiniAppSDK: { getLocation() {}, scanQRCode() {}, openPhone() {} },
+  };
+  assert.equal(isZaloEnvironment(runtime as never), true);
+});
+
+test('browser GPS maps timeout separately from permission denial', async () => {
+  setBrowserGeolocation((_success, failure) => failure({ code: 3, PERMISSION_DENIED: 1, TIMEOUT: 3 }));
+  const { browserLocation } = await import('../src/lib/zalo-client');
+  await assert.rejects(() => browserLocation(10), /không phản hồi trong thời gian/);
 });
 
 test('real client calls native openPhone with the trimmed phone number', async () => {
@@ -297,19 +321,23 @@ test('empty filePaths from the official success callback is treated as cancel', 
   await assert.rejects(() => client.chooseImage('album'), MediaPickerCancelledError);
 });
 
-test('returning from a hidden picker settles an unresolved SDK promise as cancel', async () => {
+test('temporary focus loss does not falsely cancel a native image picker', async () => {
   const documentHub = new EventHub();
   const windowHub = new EventHub();
-  const { RealZaloClient, MediaPickerCancelledError } = await import('../src/lib/zalo-client');
+  let callback: ((result: { filePaths: string[] }) => void) | undefined;
+  const { RealZaloClient } = await import('../src/lib/zalo-client');
   const client = new RealZaloClient(
     undefined,
     undefined,
     undefined,
     async () => ({
       scanQRCode: async () => ({ content: '' }),
-      chooseImage: async () => new Promise(() => undefined),
+      chooseImage: async ({ success }) => {
+        callback = success;
+        return new Promise(() => undefined);
+      },
     }),
-    undefined,
+    async (filePath) => ({ url: filePath, width: 10, height: 10 }),
     () => ({ document: documentHub, window: windowHub }),
   );
 
@@ -320,11 +348,12 @@ test('returning from a hidden picker settles an unresolved SDK promise as cancel
   documentHub.visibilityState = 'visible';
   documentHub.emit('visibilitychange');
 
-  await assert.rejects(pending, MediaPickerCancelledError);
+  callback?.({ filePaths: ['zalo://after-focus.jpg'] });
+  assert.deepEqual(await pending, { url: 'zalo://after-focus.jpg', width: 10, height: 10 });
   assert.equal(documentHub.listenerCount() + windowHub.listenerCount(), 0);
 });
 
-test('success during the return grace period wins over lifecycle cancel', async () => {
+test('late native success after returning from picker is accepted', async () => {
   const documentHub = new EventHub();
   const windowHub = new EventHub();
   let callback: ((result: { filePaths: string[] }) => void) | undefined;
@@ -356,11 +385,11 @@ test('success during the return grace period wins over lifecycle cancel', async 
   assert.equal(documentHub.listenerCount() + windowHub.listenerCount(), 0);
 });
 
-test('a lifecycle cancel releases the client so the picker can be opened again', async () => {
+test('native picker timeout releases the client so it can be opened again', async () => {
   const documentHub = new EventHub();
   const windowHub = new EventHub();
   let calls = 0;
-  const { RealZaloClient, MediaPickerCancelledError } = await import('../src/lib/zalo-client');
+  const { RealZaloClient } = await import('../src/lib/zalo-client');
   const client = new RealZaloClient(
     undefined,
     undefined,
@@ -375,15 +404,11 @@ test('a lifecycle cancel releases the client so the picker can be opened again',
     }),
     async (filePath) => ({ url: filePath, width: 10, height: 10 }),
     () => ({ document: documentHub, window: windowHub }),
+    10,
   );
 
   const first = client.chooseImage('camera');
-  await wait(0);
-  documentHub.visibilityState = 'hidden';
-  documentHub.emit('visibilitychange');
-  documentHub.visibilityState = 'visible';
-  documentHub.emit('visibilitychange');
-  await assert.rejects(first, MediaPickerCancelledError);
+  await assert.rejects(first, /không phản hồi/);
 
   assert.deepEqual(await client.chooseImage('camera'), { url: 'zalo://second.jpg', width: 10, height: 10 });
   assert.equal(calls, 2);
@@ -459,4 +484,20 @@ test('permission helper recognizes only Zalo denial code -201', async () => {
   assert.equal(isZaloPermissionDenied({ code: '-201' }), true);
   assert.equal(isZaloPermissionDenied({ code: -1401 }), false);
   assert.equal(isZaloPermissionDenied(new Error('camera failed')), false);
+});
+
+test('browser QR scanner returns an actionable unsupported-camera error', async () => {
+  const { BrowserQrScannerError, scanBrowserQrCode } = await import('../src/lib/browser-qr-scanner');
+  await assert.rejects(
+    scanBrowserQrCode({ document: null, mediaDevices: null }),
+    (error: unknown) => error instanceof BrowserQrScannerError
+      && error.code === 'CAMERA_UNSUPPORTED'
+      && /chọn ảnh QR|nhập mã/i.test(error.message),
+  );
+});
+
+test('mock device client is enabled only by an explicit mode', async () => {
+  const { createZaloClient } = await import('../src/lib/zalo-client');
+  assert.equal(createZaloClient('mock').mode, 'mock');
+  assert.equal(createZaloClient(false).mode, 'browser');
 });

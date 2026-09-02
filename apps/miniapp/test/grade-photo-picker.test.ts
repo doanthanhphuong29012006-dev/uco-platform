@@ -20,6 +20,16 @@ function findElement(node: unknown, type: string): { props: { onChange?: (event:
   return null;
 }
 
+function findElements(node: unknown, type: string, found: Array<{ props: Record<string, unknown> }> = []): Array<{ props: Record<string, unknown> }> {
+  if (!node || typeof node !== 'object') return found;
+  const element = node as { type?: string; props?: { children?: unknown } };
+  if (element.type === type) found.push(element as { props: Record<string, unknown> });
+  const children = element.props?.children;
+  if (Array.isArray(children)) children.forEach((child) => findElements(child, type, found));
+  else findElements(children, type, found);
+  return found;
+}
+
 function findElementByClass(node: unknown, className: string): { props: { disabled?: boolean } } | null {
   if (!node || typeof node !== 'object') return null;
   const element = node as { props?: { className?: string; children?: unknown } };
@@ -77,4 +87,21 @@ test('a selected grade C photo renders a preview and an enabled remove action', 
 
   assert.ok(previewList);
   assert.equal(removeButton?.props.disabled, false);
+});
+
+test('browser photo picker exposes separate accessible camera and gallery inputs', () => {
+  const view = GradePhotoPicker({
+    photos: [],
+    busy: false,
+    disabled: false,
+    onTakePhoto: () => undefined,
+    onChooseFile: () => undefined,
+    onRemovePhoto: () => undefined,
+  });
+  const inputs = findElements(view, 'input');
+  assert.equal(inputs.length, 2);
+  assert.equal(inputs[0]?.props.accept, 'image/*');
+  assert.equal(inputs[0]?.props.capture, 'environment');
+  assert.equal(inputs[1]?.props.accept, 'image/*');
+  assert.equal(inputs[1]?.props.capture, undefined);
 });

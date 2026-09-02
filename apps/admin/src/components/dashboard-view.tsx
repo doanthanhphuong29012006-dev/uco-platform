@@ -62,7 +62,7 @@ export function DashboardView() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-sm font-semibold text-emerald-700">Tổng quan hôm nay</p>
-          <h2 className="mt-1 text-3xl font-bold">Vận hành ECollect</h2>
+          <h2 className="mt-1 text-3xl font-bold">Vận hành ECOllect</h2>
         </div>
         <p className="text-sm text-slate-500">Cập nhật tự động mỗi 30 giây</p>
       </div>

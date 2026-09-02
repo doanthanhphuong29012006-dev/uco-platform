@@ -2,6 +2,23 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { useAuthStore } from '../src/stores/auth-store';
 import { tokenStorage } from '../src/lib/storage';
+import { fetchWithTimeout } from '../src/lib/api';
+
+test('API requests time out instead of leaving authentication hydration pending forever', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Promise<Response>(() => undefined);
+  try {
+    await assert.rejects(
+      fetchWithTimeout('https://api.example.test/auth/me', {}, 10),
+      (error: unknown) => {
+        const candidate = error as { code?: string; status?: number };
+        return candidate.code === 'REQUEST_TIMEOUT' && candidate.status === 0;
+      },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 test('OAuth exchange then /me bootstraps the authenticated store without a third-party cookie', async () => {
   const originalFetch = globalThis.fetch;

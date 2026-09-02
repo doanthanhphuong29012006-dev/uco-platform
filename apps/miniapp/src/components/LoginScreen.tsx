@@ -19,6 +19,7 @@ export function LoginScreen() {
   const error = useAuthStore((state) => state.error);
   const loginSeed = useAuthStore((state) => state.loginSeed);
   const loginWithZalo = useAuthStore((state) => state.loginWithZalo);
+  const hydrate = useAuthStore((state) => state.hydrate);
   const [registering, setRegistering] = useState(false);
   const [registerError, setRegisterError] = useState<string | null>(null);
   const [registerForm, setRegisterForm] = useState({
@@ -35,7 +36,7 @@ export function LoginScreen() {
   const [wardLoadError, setWardLoadError] = useState<string | null>(null);
   const collectorInvite = getStoredCollectorInvite();
   const zaloOAuthStartUrl = `${API_BASE_URL}/auth/zalo/start${collectorInvite ? `?${COLLECTOR_INVITE_PARAM}=${encodeURIComponent(collectorInvite)}` : ''}`;
-  const useNativeZaloLogin = isZaloEnvironment() && zaloClient.mode === 'real';
+  const useNativeZaloLogin = isZaloEnvironment() && zaloClient.mode === 'native';
 
   useEffect(() => {
     let active = true;
@@ -131,8 +132,8 @@ export function LoginScreen() {
 
   return (
     <main className="login-page">
-      <img className="login-logo" src="/logo.svg" alt="ECollect" />
-      <p className="eyebrow">ECOLLECT</p>
+      <img className="login-logo" src="/logo.svg" alt="ECOllect" />
+      <p className="eyebrow">ECOllect</p>
       <h1>Thu gom dầu minh bạch, thuận tiện</h1>
       <p className="lead">
         Đăng nhập để quản lý thu gom, theo dõi giao dịch và thanh toán của bạn.
@@ -206,7 +207,14 @@ export function LoginScreen() {
           </button>
         </section>
       ) : null}
-      {error ? <p className="error-text">{error}</p> : null}
+      {error ? (
+        <div className="error-panel" role="alert">
+          <p>{error}</p>
+          <button className="secondary-button" onClick={() => { void hydrate(); }} disabled={busy}>
+            Thử lại
+          </button>
+        </div>
+      ) : null}
       {demoModeEnabled ? (
         <button className="text-button" onClick={() => setRegistering(!registering)}>
           {registering ? 'Quay lại đăng nhập' : 'Đăng ký quán mới'}

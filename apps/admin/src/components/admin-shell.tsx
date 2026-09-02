@@ -46,8 +46,8 @@ export function AdminShell({ children }: { children: ReactNode }) {
     <div className="min-h-screen bg-sand text-ink md:flex">
       <aside className="w-full border-b border-slate-200 bg-ink p-4 text-white md:min-h-screen md:w-64 md:border-b-0 md:p-5">
         <div className="mb-6">
-          <img src="/logo.svg" alt="ECollect" className="mb-3 h-12 w-12" />
-          <p className="text-xs uppercase tracking-[0.25em] text-emerald-300">ECollect</p>
+          <img src="/logo.svg" alt="ECOllect" className="mb-3 h-12 w-12" />
+          <p className="text-xs uppercase tracking-[0.25em] text-emerald-300">ECOllect</p>
           <h1 className="mt-1 text-xl font-bold">Vận hành</h1>
         </div>
         <nav className="grid grid-cols-2 gap-2 md:block md:space-y-1">

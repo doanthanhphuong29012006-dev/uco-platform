@@ -42,6 +42,23 @@ test('failed callback clears the consumed code so a fresh login can retry', asyn
   assert.equal(called, true);
 });
 
+test('temporary network failure preserves the OAuth code for a safe retry', async () => {
+  const location = browserUrl('/?return=home&zalo_code=retryable-code');
+  const replaced: string[] = [];
+
+  await assert.rejects(
+    consumeZaloOAuthCode(
+      async () => { throw new TypeError('fetch failed'); },
+      location,
+      { replaceState: (_state, _title, next) => replaced.push(String(next)) },
+    ),
+    /fetch failed/,
+  );
+
+  assert.deepEqual(replaced, []);
+  assert.equal(readZaloOAuthCode(location), 'retryable-code');
+});
+
 test('callback exchange works without relying on a third-party cookie', async () => {
   const location = browserUrl('/?zalo_code=cookie-independent-code');
   const session = await consumeZaloOAuthCode(async (code) => {

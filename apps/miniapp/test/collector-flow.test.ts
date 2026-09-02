@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { OilGrade, Quality } from '@eco-oil/shared-types';
+import {
+  getCollectionSubmitBlockReasons,
+  parseLocalizedDecimal,
+} from '../src/lib/collection-entry-validation';
 import { resolve } from 'node:path';
 import { createServer } from 'vite';
 import { isValidGeoPoint } from '../src/lib/zalo-client';
@@ -159,7 +164,7 @@ test('pickup priority display does not reorder stops and accepts insufficient da
   );
   assert.equal(succeeded, false);
   assert.deepEqual(busy, [true, false]);
-  assert.deepEqual(errors, [null, 'Không thể mở chỉ đường. Vui lòng thử lại.']);
+  assert.deepEqual(errors, [null, 'SDK failed']);
 });
 
 test('image grading display translates suggestion, confidence and bounded reasons', async () => {
@@ -453,6 +458,72 @@ test('route refresh runner is single-flight and can retry after an error', async
   rejectRequest?.(new Error('offline again'));
   await retry;
   assert.equal(states.at(-1)?.busy, false);
+});
+
+test('collector quantity parser accepts Vietnamese comma and decimal point', () => {
+  assert.equal(parseLocalizedDecimal('24,6'), 24.6);
+  assert.equal(parseLocalizedDecimal('24.6'), 24.6);
+  assert.equal(parseLocalizedDecimal(''), null);
+  assert.equal(Number.isNaN(parseLocalizedDecimal('24,6,1')), true);
+});
+
+test('grade A PASS can submit without a photo while B/C require one', () => {
+  const base = {
+    quality: Quality.PASS,
+    photoCount: 0,
+    suspectedAdulteration: false,
+    hasLiters: true,
+    hasKilograms: false,
+    invalidMass: false,
+    invalidLitersMessage: '',
+    highDeviationNeedsAcknowledgement: false,
+    imageGradeDecisionBlocked: false,
+  };
+  assert.deepEqual(getCollectionSubmitBlockReasons({ ...base, grade: OilGrade.A }), []);
+  assert.match(
+    getCollectionSubmitBlockReasons({ ...base, grade: OilGrade.B }).join(' '),
+    /ít nhất một ảnh/,
+  );
+  assert.deepEqual(
+    getCollectionSubmitBlockReasons({ ...base, grade: OilGrade.C, photoCount: 1 }),
+    [],
+  );
+});
+
+test('offline or failed remote completion never clears the active route', async () => {
+  const { completeCollectorShiftSafely } = await loadPickupPriorityHelpers();
+  let cleared = 0;
+  let completed = 0;
+  assert.equal(
+    await completeCollectorShiftSafely({
+      persisted: true,
+      online: false,
+      completeRemote: async () => {
+        completed += 1;
+      },
+      clearLocal: () => {
+        cleared += 1;
+      },
+    }),
+    false,
+  );
+  assert.equal(completed, 0);
+  assert.equal(cleared, 0);
+
+  await assert.rejects(
+    completeCollectorShiftSafely({
+      persisted: true,
+      online: true,
+      completeRemote: async () => {
+        throw new Error('server failed');
+      },
+      clearLocal: () => {
+        cleared += 1;
+      },
+    }),
+    /server failed/,
+  );
+  assert.equal(cleared, 0);
 });
 
 test('pickup volume forecast maps confidence, formats liters and limits reason chips', async () => {

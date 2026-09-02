@@ -2,10 +2,38 @@ import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { CollectionCreateRequest } from '@eco-oil/shared-types';
-import { EcoOilDatabase, ecoOilDb, enqueueCollection, persistOutboxForTest, type OutboxRecord, type OutboxStats, type OutboxStore } from '../src/lib/outbox-db';
+import {
+  EcoOilDatabase,
+  claimLegacyOutboxRecords,
+  dexieOutboxStore,
+  ecoOilDb,
+  enqueueCollection,
+  persistOutboxForTest,
+  setOutboxOwner,
+  type OutboxRecord,
+  type OutboxStats,
+  type OutboxStore,
+} from '../src/lib/outbox-db';
+
+test('legacy unowned outbox rows are claimed without deletion and stay isolated by collector', async () => {
+  await ecoOilDb.outbox.clear();
+  const legacy = persistenceRecord('legacy-owner-client-uuid');
+  await ecoOilDb.outbox.put(legacy);
+
+  assert.equal(await claimLegacyOutboxRecords('collector-owner-a'), 1);
+  setOutboxOwner('collector-owner-a');
+  assert.equal((await ecoOilDb.outbox.get(legacy.client_uuid))?.owner_id, 'collector-owner-a');
+  assert.equal((await dexieOutboxStore.list()).length, 1);
+
+  setOutboxOwner('collector-owner-b');
+  assert.equal((await dexieOutboxStore.list()).length, 0);
+  assert.ok(await ecoOilDb.outbox.get(legacy.client_uuid));
+  setOutboxOwner(null);
+});
 
 test('pending outbox payload survives a database close and reopen', async () => {
   await ecoOilDb.outbox.clear();
+  setOutboxOwner('collector-persistence');
   const payload: CollectionCreateRequest = {
     client_uuid: '00000000-0000-4000-8000-000000000099',
     order_id: '00000000-0000-4000-8000-000000000001',
@@ -28,6 +56,7 @@ test('pending outbox payload survives a database close and reopen', async () => 
   assert.deepEqual(restored?.payload, payload);
 
   await reopened.delete();
+  setOutboxOwner(null);
 });
 
 class RetryableStore implements OutboxStore {

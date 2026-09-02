@@ -30,7 +30,7 @@ export function MerchantApprovalView({ user }: { user: AuthUser }) {
       if (!point) throw new Error('Không lấy được vị trí GPS. Vui lòng bật quyền vị trí rồi thử lại.');
       await api.updateMerchant(user.merchantId, { ...form, lat: point.lat, lng: point.lng, ward_id: WARD_ID });
       setEditing(false);
-      setMessage('Đã gửi lại hồ sơ. ECollect sẽ xem xét trong thời gian sớm nhất.');
+      setMessage('Đã gửi lại hồ sơ. ECOllect sẽ xem xét trong thời gian sớm nhất.');
     } catch (error) {
       setMessage(error instanceof ApiError ? error.message : 'Không thể gửi lại hồ sơ. Vui lòng thử lại.');
     } finally {
@@ -68,10 +68,10 @@ export function MerchantApprovalView({ user }: { user: AuthUser }) {
   if (!user.merchantId || editing) {
     return (
       <main className="approval-page">
-        <img className="approval-logo" src="/logo.svg" alt="ECollect" />
+        <img className="approval-logo" src="/logo.svg" alt="ECOllect" />
         <p className="eyebrow">HỒ SƠ QUÁN</p>
         <h1>{user.merchantId ? 'Cập nhật hồ sơ quán' : 'Hoàn tất hồ sơ quán'}</h1>
-        <p>{user.merchantId ? 'Vui lòng chỉnh lại thông tin rồi gửi lại để ECollect xét duyệt.' : 'Bổ sung thông tin quán để gửi hồ sơ xét duyệt.'}</p>
+        <p>{user.merchantId ? 'Vui lòng chỉnh lại thông tin rồi gửi lại để ECOllect xét duyệt.' : 'Bổ sung thông tin quán để gửi hồ sơ xét duyệt.'}</p>
         {fields}
         {message ? <p className="notice-text" role="status">{message}</p> : null}
         <button className="text-button" onClick={() => { void signOut(); }}>Đăng xuất</button>
@@ -82,10 +82,10 @@ export function MerchantApprovalView({ user }: { user: AuthUser }) {
   const rejected = user.merchantApprovalStatus === 'REJECTED';
   return (
     <main className="approval-page">
-      <img className="approval-logo" src="/logo.svg" alt="ECollect" />
+      <img className="approval-logo" src="/logo.svg" alt="ECOllect" />
       <div className={`status-label ${rejected ? 'status-label-danger' : ''}`}>{rejected ? 'Cần cập nhật' : 'Đang xét duyệt'}</div>
       <h1>{rejected ? 'Hồ sơ cần bổ sung' : 'Hồ sơ đang chờ duyệt'}</h1>
-      <p>{rejected ? `Lý do: ${user.merchantRejectionReason ?? 'Vui lòng cập nhật lại thông tin.'}` : 'ECollect đang xem xét thông tin quán của bạn. Khi được duyệt, bạn sẽ có thể báo sẵn sàng thu gom.'}</p>
+      <p>{rejected ? `Lý do: ${user.merchantRejectionReason ?? 'Vui lòng cập nhật lại thông tin.'}` : 'ECOllect đang xem xét thông tin quán của bạn. Khi được duyệt, bạn sẽ có thể báo sẵn sàng thu gom.'}</p>
       <p className="hotline">Hotline hỗ trợ: 1900 0000</p>
       {rejected ? <button className="primary-button" onClick={() => setEditing(true)}>Sửa hồ sơ và gửi lại</button> : null}
       <button className="secondary-button" onClick={() => { void signOut(); }}>Đăng xuất</button>

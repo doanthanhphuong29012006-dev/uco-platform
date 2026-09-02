@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title description">
-  <title id="title">ECollect</title>
-  <desc id="description">Monogram EC của ECollect</desc>
+  <title id="title">ECOllect</title>
+  <desc id="description">Monogram EC của ECOllect</desc>
   <rect width="64" height="64" rx="16" fill="#075e54" />
   <path d="M17 17h21v7H25v5h12v7H25v5h13v7H17V17Z" fill="#ffffff" />
   <path d="M47 25a9 9 0 1 0 0 14v-8h-7v-6h7Z" fill="#8ee0c4" />

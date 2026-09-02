@@ -1,4 +1,5 @@
 import type { GeoPoint } from '@eco-oil/shared-types';
+import { scanBrowserQrCode } from './browser-qr-scanner';
 
 export interface PhotoAsset {
   url: string;
@@ -15,7 +16,7 @@ export interface SeedAccount {
 }
 
 export interface IZaloClient {
-  readonly mode: 'real' | 'mock';
+  readonly mode: 'native' | 'browser' | 'mock';
   login(): Promise<SeedAccount>;
   setSeedAccount(account: SeedAccount): void;
   getAccessToken(): Promise<string>;
@@ -24,7 +25,7 @@ export interface IZaloClient {
   chooseImage(source?: ImageSource): Promise<PhotoAsset>;
   cancelMediaPicker?(): void;
   openPhone(phoneNumber: string): Promise<void>;
-  openDirections(destination: GeoPoint): Promise<void>;
+  openDirections(destination: GeoPoint, address?: string | null): Promise<void>;
   getStorage(key: string): string | null;
   setStorage(key: string, value: string): void;
   removeStorage(key: string): void;
@@ -37,50 +38,115 @@ interface NativeStorage {
 }
 
 type WindowWithZaloRuntime = Window & {
-  zmp?: unknown;
-  __zmp?: unknown;
-  zmpSdk?: unknown;
-  ZaloMiniApp?: unknown;
+  APP_ID?: string;
+  zAppID?: string;
   ZaloMiniAppSDK?: {
     nativeStorage?: {
       getItem(key: string): string | null;
       setItem(key: string, value: string): void;
       removeItem(key: string): void;
     };
+    getLocation?: unknown;
+    scanQRCode?: unknown;
+    chooseImage?: unknown;
+    openPhone?: unknown;
+    openWebview?: unknown;
+    getAccessToken?: unknown;
   };
-  ZaloJavaScriptInterface?: unknown;
 };
 
-export function isZaloEnvironment(): boolean {
-  if (typeof window === 'undefined') {
+export function isZaloEnvironment(runtimeWindow: Window | undefined = typeof window === 'undefined' ? undefined : window): boolean {
+  if (!runtimeWindow) {
     return false;
   }
-  const runtime = window as WindowWithZaloRuntime;
-  const nativeStorage = runtime.ZaloMiniAppSDK?.nativeStorage;
-  return Boolean(
-    runtime.ZaloJavaScriptInterface
-      && nativeStorage
-      && typeof nativeStorage.getItem === 'function'
-      && typeof nativeStorage.setItem === 'function'
-      && typeof nativeStorage.removeItem === 'function',
-  );
+  const runtime = runtimeWindow as WindowWithZaloRuntime;
+  const sdk = runtime.ZaloMiniAppSDK;
+  const supportedNativeFunctions = [
+    sdk?.getAccessToken,
+    sdk?.getLocation,
+    sdk?.scanQRCode,
+    sdk?.chooseImage,
+    sdk?.openPhone,
+    sdk?.openWebview,
+  ].filter((candidate) => typeof candidate === 'function').length;
+  const userAgent = runtimeWindow.navigator?.userAgent ?? '';
+  const hasAppIdentity = Boolean(runtime.APP_ID?.trim() || runtime.zAppID?.trim());
+
+  // A real ZMP runtime exposes several documented SDK capabilities. Older
+  // clients are also recognized from the Zalo UA plus an injected app id.
+  return supportedNativeFunctions >= 2 || (hasAppIdentity && /\bZalo\b/i.test(userAgent));
 }
 
-async function browserLocation(): Promise<GeoPoint> {
+export class DeviceIntegrationError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'DeviceIntegrationError';
+  }
+}
+
+export async function browserLocation(timeoutMs = 10_000): Promise<GeoPoint> {
   if (typeof navigator === 'undefined' || !navigator.geolocation) {
-    throw new Error('GPS is not available');
+    throw new DeviceIntegrationError('GEOLOCATION_UNSUPPORTED', 'Thiết bị hoặc trình duyệt không hỗ trợ GPS.');
   }
   return new Promise<GeoPoint>((resolve, reject) => {
     navigator.geolocation.getCurrentPosition(
       (position) => resolve({ lat: position.coords.latitude, lng: position.coords.longitude }),
-      () => reject(new Error('Location permission denied')),
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 8_000 },
+      (error) => {
+        if (error.code === error.PERMISSION_DENIED) {
+          reject(new DeviceIntegrationError('GEOLOCATION_PERMISSION_DENIED', 'Quyền vị trí đã bị từ chối. Hãy bật Location cho Safari/Chrome rồi thử lại.'));
+        } else if (error.code === error.TIMEOUT) {
+          reject(new DeviceIntegrationError('GEOLOCATION_TIMEOUT', 'GPS không phản hồi trong thời gian cho phép. Hãy thử lại ở nơi thoáng hơn.'));
+        } else {
+          reject(new DeviceIntegrationError('GEOLOCATION_UNAVAILABLE', 'Không xác định được vị trí GPS hiện tại.'));
+        }
+      },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: timeoutMs },
     );
   });
 }
 
-export async function compressImageBlob(blob: Blob): Promise<PhotoAsset> {
-  const source = await createImageBitmap(blob);
+function loadImageFromDataUrl(url: string, timeoutMs = 15_000): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const timer = globalThis.setTimeout(
+      () => reject(new DeviceIntegrationError('IMAGE_TIMEOUT', 'Đọc ảnh quá thời gian chờ.')),
+      timeoutMs,
+    );
+    image.onload = () => {
+      globalThis.clearTimeout(timer);
+      resolve(image);
+    };
+    image.onerror = () => {
+      globalThis.clearTimeout(timer);
+      reject(new DeviceIntegrationError('IMAGE_INVALID', 'Không đọc được ảnh đã chọn.'));
+    };
+    image.src = url;
+  });
+}
+
+function blobAsDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.onerror = () => reject(new DeviceIntegrationError('IMAGE_INVALID', 'Không đọc được ảnh đã chọn.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function imageSourceFromBlob(blob: Blob): Promise<CanvasImageSource & { width: number; height: number; close?: () => void }> {
+  if (typeof createImageBitmap === 'function') {
+    return createImageBitmap(blob);
+  }
+  const image = await loadImageFromDataUrl(await blobAsDataUrl(blob));
+  return Object.assign(image, { width: image.naturalWidth, height: image.naturalHeight });
+}
+
+async function compressCanvasSource(
+  source: CanvasImageSource & { width: number; height: number; close?: () => void },
+): Promise<PhotoAsset> {
   const scale = Math.min(1, 1280 / Math.max(source.width, source.height));
   const width = Math.max(1, Math.round(source.width * scale));
   const height = Math.max(1, Math.round(source.height * scale));
@@ -92,8 +158,12 @@ export async function compressImageBlob(blob: Blob): Promise<PhotoAsset> {
     throw new Error('Image compression is unavailable');
   }
   context.drawImage(source, 0, 0, width, height);
-  source.close();
+  source.close?.();
   return { url: canvas.toDataURL('image/jpeg', 0.7), width, height };
+}
+
+export async function compressImageBlob(blob: Blob): Promise<PhotoAsset> {
+  return compressCanvasSource(await imageSourceFromBlob(blob));
 }
 
 export interface ZaloNavigationSdk {
@@ -146,7 +216,6 @@ export function isMediaPickerCancelled(error: unknown): boolean {
 }
 
 const MEDIA_PICKER_WATCHDOG_MS = 90_000;
-const MEDIA_PICKER_CANCEL_GRACE_MS = 400;
 
 type MediaPickerEventTarget = {
   addEventListener: (type: string, listener: () => void) => void;
@@ -172,23 +241,18 @@ function settleMediaPicker(
   args: Omit<ZaloMediaPickerArgs, 'success' | 'fail'>,
   lifecycle: MediaPickerLifecycle,
   registerCancel?: (cancel: (() => void) | null) => void,
+  timeoutMs = MEDIA_PICKER_WATCHDOG_MS,
 ): Promise<ZaloMediaPickerResult> {
+  // Focus/visibility changes are not cancellation signals: iOS and Zalo both
+  // leave the page while their native picker is open.
+  void lifecycle;
   return new Promise<ZaloMediaPickerResult>((resolve, reject) => {
     let settled = false;
-    let leftForeground = false;
     let watchdog: ReturnType<typeof setTimeout> | null = null;
-    let graceTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const clearGrace = () => {
-      if (graceTimer) clearTimeout(graceTimer);
-      graceTimer = null;
-    };
 
     const cleanup = () => {
       if (watchdog) clearTimeout(watchdog);
-      clearGrace();
       registerCancel?.(null);
-      for (const [target, type, listener] of listeners) target?.removeEventListener(type, listener);
     };
 
     const finish = (outcome: { result: ZaloMediaPickerResult } | { error: unknown }) => {
@@ -199,34 +263,6 @@ function settleMediaPicker(
       else reject(outcome.error);
     };
 
-    const markLeftForeground = () => {
-      if (!settled) {
-        leftForeground = true;
-        clearGrace();
-      }
-    };
-
-    const settleCancelAfterReturn = () => {
-      if (settled || !leftForeground || graceTimer) return;
-      graceTimer = setTimeout(() => finish({ error: new MediaPickerCancelledError() }), MEDIA_PICKER_CANCEL_GRACE_MS);
-    };
-
-    const onVisibilityChange = () => {
-      if (lifecycle.document?.visibilityState === 'hidden') markLeftForeground();
-      else settleCancelAfterReturn();
-    };
-    const onBlur = () => markLeftForeground();
-    const onFocus = () => settleCancelAfterReturn();
-    const onPageShow = () => settleCancelAfterReturn();
-    const listeners: Array<[MediaPickerEventTarget | null, string, () => void]> = [
-      [lifecycle.document, 'visibilitychange', onVisibilityChange],
-      [lifecycle.document, 'pageshow', onPageShow],
-      [lifecycle.window, 'blur', onBlur],
-      [lifecycle.window, 'focus', onFocus],
-      [lifecycle.window, 'pageshow', onPageShow],
-    ];
-    for (const [target, type, listener] of listeners) target?.addEventListener(type, listener);
-
     const success = (result: ZaloMediaPickerResult) => {
       if (result?.filePaths?.length) finish({ result });
       else finish({ error: new MediaPickerCancelledError() });
@@ -234,7 +270,10 @@ function settleMediaPicker(
     const fail = (error: ZaloMediaPickerError) => finish({ error });
 
     registerCancel?.(() => finish({ error: new MediaPickerCancelledError() }));
-    watchdog = setTimeout(() => finish({ error: new MediaPickerCancelledError() }), MEDIA_PICKER_WATCHDOG_MS);
+    watchdog = setTimeout(
+      () => finish({ error: new DeviceIntegrationError('MEDIA_PICKER_TIMEOUT', 'Trình chọn ảnh không phản hồi. Hãy thử lại.') }),
+      timeoutMs,
+    );
     try {
       const operation = sdk.chooseImage({ ...args, success, fail });
       if (operation && typeof operation.then === 'function') {
@@ -250,7 +289,27 @@ export function isZaloPermissionDenied(error: unknown): boolean {
   if (!error || typeof error !== 'object' || !('code' in error)) {
     return false;
   }
-  return Number((error as { code?: unknown }).code) === -201;
+  const code = (error as { code?: unknown }).code;
+  return Number(code) === -201 || code === 'GEOLOCATION_PERMISSION_DENIED' || code === 'CAMERA_PERMISSION_DENIED';
+}
+
+function withDeviceTimeout<T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = globalThis.setTimeout(
+      () => reject(new DeviceIntegrationError('DEVICE_TIMEOUT', message)),
+      timeoutMs,
+    );
+    operation.then(
+      (value) => {
+        globalThis.clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        globalThis.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 export function parseContainerCodeFromQr(content: string): string {
@@ -297,13 +356,23 @@ export function buildGoogleMapsDirectionsUrl(destination: GeoPoint): string {
   return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${destination.lat},${destination.lng}`)}`;
 }
 
+export function normalizeVietnamesePhone(phoneNumber: string): string {
+  const normalized = phoneNumber.trim().replace(/[\s().-]/g, '');
+  if (!/^(?:\+84|84|0)\d{8,10}$/.test(normalized)) {
+    throw new DeviceIntegrationError('PHONE_INVALID', 'Số điện thoại quán không hợp lệ.');
+  }
+  return normalized.startsWith('84') ? `+${normalized}` : normalized;
+}
+
 async function compressImage(filePath: string): Promise<PhotoAsset> {
-  const response = await fetch(filePath);
-  return compressImageBlob(await response.blob());
+  const image = await loadImageFromDataUrl(filePath);
+  return compressCanvasSource(
+    Object.assign(image, { width: image.naturalWidth, height: image.naturalHeight }),
+  );
 }
 
 export class RealZaloClient implements IZaloClient {
-  readonly mode = 'real' as const;
+  readonly mode = 'native' as const;
   private seedAccount: SeedAccount = { zaloId: '', phone: '' };
   private cancelActiveMediaPicker: (() => void) | null = null;
   private mediaPickerCancelRequested = false;
@@ -318,6 +387,7 @@ export class RealZaloClient implements IZaloClient {
     private readonly loadMediaSdk: () => Promise<ZaloMediaSdk> = () => import('zmp-sdk'),
     private readonly resolveImage: (filePath: string) => Promise<PhotoAsset> = compressImage,
     private readonly mediaPickerLifecycle: () => MediaPickerLifecycle = getMediaPickerLifecycle,
+    private readonly mediaPickerTimeoutMs = MEDIA_PICKER_WATCHDOG_MS,
   ) {}
 
   async login(): Promise<SeedAccount> {
@@ -335,18 +405,32 @@ export class RealZaloClient implements IZaloClient {
 
   async getLocation(): Promise<GeoPoint | null> {
     const sdk = await this.loadLocationSdk();
-    const accessToken = (await sdk.getAccessToken()).trim();
-    const { token } = await sdk.getLocation();
+    const accessToken = (
+      await withDeviceTimeout(sdk.getAccessToken(), 15_000, 'Zalo không trả access token.')
+    ).trim();
+    const { token } = await withDeviceTimeout(
+      sdk.getLocation(),
+      20_000,
+      'Zalo không phản hồi yêu cầu vị trí.',
+    );
     const locationToken = token?.trim();
     if (!accessToken || !locationToken) {
       throw new Error('Không lấy được token vị trí Zalo');
     }
-    return this.resolveLocation(accessToken, locationToken);
+    return withDeviceTimeout(
+      this.resolveLocation(accessToken, locationToken),
+      20_000,
+      'Máy chủ không đổi được token vị trí trong thời gian cho phép.',
+    );
   }
 
   async scanQRCode(): Promise<string> {
     const { scanQRCode } = await this.loadMediaSdk();
-    const result = await scanQRCode();
+    const result = await withDeviceTimeout(
+      scanQRCode(),
+      45_000,
+      'Trình quét QR Zalo không phản hồi.',
+    );
     return parseContainerCodeFromQr(result.content);
   }
 
@@ -358,7 +442,7 @@ export class RealZaloClient implements IZaloClient {
       count: 1,
       sourceType: [source],
       ...(source === 'camera' ? { cameraType: 'back' as const } : {}),
-    }, this.mediaPickerLifecycle(), (cancel) => { this.cancelActiveMediaPicker = cancel; });
+    }, this.mediaPickerLifecycle(), (cancel) => { this.cancelActiveMediaPicker = cancel; }, this.mediaPickerTimeoutMs);
     const filePath = result.filePaths?.[0];
     if (!filePath) {
       throw new MediaPickerCancelledError();
@@ -372,10 +456,7 @@ export class RealZaloClient implements IZaloClient {
   }
 
   async openPhone(phoneNumber: string): Promise<void> {
-    const trimmedPhone = phoneNumber.trim();
-    if (!trimmedPhone) {
-      throw new Error('Số điện thoại quán không hợp lệ');
-    }
+    const trimmedPhone = normalizeVietnamesePhone(phoneNumber);
     const { openPhone } = await this.loadSdk();
     await openPhone({ phoneNumber: trimmedPhone });
   }
@@ -412,7 +493,188 @@ export class RealZaloClient implements IZaloClient {
   }
 }
 
-class MockZaloClient implements IZaloClient {
+type BrowserWindow = Pick<Window, 'location' | 'open'>;
+type BrowserNavigator = Pick<Navigator, 'clipboard'>;
+
+function getBrowserStorage(): Storage | null {
+  try {
+    return typeof localStorage === 'undefined' ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
+
+async function copyText(value: string, browserNavigator: BrowserNavigator | null): Promise<boolean> {
+  try {
+    if (!browserNavigator?.clipboard?.writeText) return false;
+    await browserNavigator.clipboard.writeText(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function pickBrowserImage(source: ImageSource): Promise<PhotoAsset> {
+  if (typeof document === 'undefined') {
+    return Promise.reject(
+      new DeviceIntegrationError('IMAGE_PICKER_UNSUPPORTED', 'Trình duyệt không hỗ trợ chọn ảnh.'),
+    );
+  }
+
+  return new Promise((resolve, reject) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    if (source === 'camera') input.setAttribute('capture', 'environment');
+    input.className = 'accessible-file-input';
+    input.style.position = 'fixed';
+    input.style.left = '-10000px';
+    document.body.append(input);
+
+    let settled = false;
+    const finish = (result: PhotoAsset | Error) => {
+      if (settled) return;
+      settled = true;
+      globalThis.clearTimeout(timeout);
+      input.remove();
+      if (result instanceof Error) reject(result);
+      else resolve(result);
+    };
+    const timeout = globalThis.setTimeout(
+      () =>
+        finish(
+          new DeviceIntegrationError(
+            'MEDIA_PICKER_TIMEOUT',
+            'Trình chọn ảnh không phản hồi. Hãy thử lại.',
+          ),
+        ),
+      MEDIA_PICKER_WATCHDOG_MS,
+    );
+    input.addEventListener('change', () => {
+      const file = input.files?.[0];
+      input.value = '';
+      if (!file) {
+        finish(new MediaPickerCancelledError());
+        return;
+      }
+      void compressImageBlob(file).then(
+        (photo) => finish(photo),
+        (error) => finish(error instanceof Error ? error : new Error('Không đọc được ảnh.')),
+      );
+    });
+    // Keep this synchronous so Safari sees the original user gesture.
+    input.click();
+  });
+}
+
+export class BrowserZaloClient implements IZaloClient {
+  readonly mode = 'browser' as const;
+  private seedAccount: SeedAccount = { zaloId: '', phone: '' };
+  private readonly memoryStorage = new Map<string, string>();
+
+  constructor(
+    private readonly getBrowserLocation: () => Promise<GeoPoint> = () => browserLocation(),
+    private readonly scanBrowserQr: () => Promise<string> = () => scanBrowserQrCode(),
+    private readonly chooseBrowserImage: (source: ImageSource) => Promise<PhotoAsset> = pickBrowserImage,
+    private readonly browserWindow: BrowserWindow | null =
+      typeof window === 'undefined' ? null : window,
+    private readonly browserNavigator: BrowserNavigator | null =
+      typeof navigator === 'undefined' ? null : navigator,
+  ) {}
+
+  async login(): Promise<SeedAccount> {
+    return this.seedAccount;
+  }
+
+  setSeedAccount(account: SeedAccount): void {
+    this.seedAccount = account;
+  }
+
+  async getAccessToken(): Promise<string> {
+    throw new DeviceIntegrationError(
+      'ZALO_NATIVE_UNAVAILABLE',
+      'Hãy dùng nút đăng nhập Zalo trên web.',
+    );
+  }
+
+  getLocation(): Promise<GeoPoint> {
+    return this.getBrowserLocation();
+  }
+
+  async scanQRCode(): Promise<string> {
+    return parseContainerCodeFromQr(await this.scanBrowserQr());
+  }
+
+  chooseImage(source: ImageSource = 'camera'): Promise<PhotoAsset> {
+    return this.chooseBrowserImage(source);
+  }
+
+  async openPhone(phoneNumber: string): Promise<void> {
+    const normalized = normalizeVietnamesePhone(phoneNumber);
+    if (!this.browserWindow) {
+      throw new DeviceIntegrationError('PHONE_UNSUPPORTED', 'Thiết bị không hỗ trợ mở cuộc gọi.');
+    }
+    try {
+      this.browserWindow.location.href = `tel:${normalized}`;
+    } catch {
+      const copied = await copyText(normalized, this.browserNavigator);
+      throw new DeviceIntegrationError(
+        'PHONE_OPEN_BLOCKED',
+        copied
+          ? 'WebView chặn cuộc gọi; số điện thoại đã được sao chép.'
+          : `WebView chặn cuộc gọi. Số quán: ${normalized}`,
+      );
+    }
+  }
+
+  async openDirections(destination: GeoPoint, address?: string | null): Promise<void> {
+    if (!isValidGeoPoint(destination)) {
+      throw new DeviceIntegrationError('DIRECTIONS_INVALID', 'Tọa độ chỉ đường không hợp lệ.');
+    }
+    if (!this.browserWindow) {
+      throw new DeviceIntegrationError('DIRECTIONS_UNSUPPORTED', 'Thiết bị không hỗ trợ mở bản đồ.');
+    }
+    const opened = this.browserWindow.open(
+      buildGoogleMapsDirectionsUrl(destination),
+      '_blank',
+      'noopener,noreferrer',
+    );
+    if (opened) return;
+
+    const fallback = address?.trim() || `${destination.lat}, ${destination.lng}`;
+    const copied = await copyText(fallback, this.browserNavigator);
+    throw new DeviceIntegrationError(
+      'DIRECTIONS_OPEN_BLOCKED',
+      copied
+        ? 'WebView chặn Google Maps; địa chỉ đã được sao chép.'
+        : `WebView chặn Google Maps. Địa chỉ: ${fallback}`,
+    );
+  }
+
+  getStorage(key: string): string | null {
+    return getBrowserStorage()?.getItem(key) ?? this.memoryStorage.get(key) ?? null;
+  }
+
+  setStorage(key: string, value: string): void {
+    try {
+      const storage = getBrowserStorage();
+      if (storage) storage.setItem(key, value);
+      else this.memoryStorage.set(key, value);
+    } catch {
+      this.memoryStorage.set(key, value);
+    }
+  }
+
+  removeStorage(key: string): void {
+    try {
+      getBrowserStorage()?.removeItem(key);
+    } finally {
+      this.memoryStorage.delete(key);
+    }
+  }
+}
+
+export class MockZaloClient implements IZaloClient {
   readonly mode = 'mock' as const;
   private seedAccount: SeedAccount = { zaloId: 'zalo_merchant_01', phone: '0900000001' };
   private qrCode = '';
@@ -504,12 +766,39 @@ class MockZaloClient implements IZaloClient {
   }
 }
 
-export function createZaloClient(inZaloEnvironment = isZaloEnvironment()): IZaloClient {
-  return inZaloEnvironment ? new RealZaloClient() : new MockZaloClient();
+export type DeviceClientMode = 'native' | 'browser' | 'mock';
+
+export function createZaloClient(mode?: DeviceClientMode | boolean): IZaloClient {
+  const resolvedMode =
+    typeof mode === 'boolean'
+      ? mode
+        ? 'native'
+        : 'browser'
+      : mode ?? (isZaloEnvironment() ? 'native' : 'browser');
+  if (resolvedMode === 'native') return new RealZaloClient();
+  if (resolvedMode === 'mock') return new MockZaloClient();
+  return new BrowserZaloClient();
 }
 
-export const zaloClient = createZaloClient();
+const viteEnvironment = (
+  import.meta as ImportMeta & {
+    env?: Record<string, string | undefined>;
+  }
+).env;
 
-if (zaloClient.mode === 'mock') {
-  console.warn('[zalo] Chạy ở chế độ MOCK — SDK thật không khả dụng.');
+const configuredMode: DeviceClientMode | undefined =
+  viteEnvironment?.VITE_DEMO_MODE === 'true' && viteEnvironment.VITE_DEVICE_CLIENT_MODE === 'mock'
+    ? 'mock'
+    : undefined;
+
+export const zaloClient = createZaloClient(configuredMode);
+
+if (viteEnvironment?.MODE !== 'test' && typeof window !== 'undefined') {
+  console.info('[device] capabilities', {
+    mode: zaloClient.mode,
+    geolocation: typeof navigator !== 'undefined' && Boolean(navigator.geolocation),
+    camera:
+      typeof navigator !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia),
+    barcodeDetector: typeof (globalThis as { BarcodeDetector?: unknown }).BarcodeDetector === 'function',
+  });
 }

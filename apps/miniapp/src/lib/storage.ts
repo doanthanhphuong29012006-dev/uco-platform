@@ -1,8 +1,9 @@
-import type { CurrentRouteResponse, RouteStop, StationRecommendation } from '@eco-oil/shared-types';
+import type { AuthUser, CurrentRouteResponse, RouteStop, StationRecommendation } from '@eco-oil/shared-types';
 import type { nativeStorage as ZaloNativeStorage } from 'zmp-sdk';
 
 const ACCESS_TOKEN_KEY = 'eco_oil.access_token';
 const REFRESH_TOKEN_KEY = 'eco_oil.refresh_token';
+const AUTH_USER_KEY = 'eco_oil.auth_user';
 const PENDING_STATION_DELIVERY_KEY_PREFIX = 'eco_oil.pending_station_delivery.';
 
 type NativeStorageApi = typeof ZaloNativeStorage;
@@ -132,6 +133,25 @@ class PersistentTokenStorage implements TokenStorage {
 
 const persistentStorage = new PersistentTokenStorage();
 export const tokenStorage: TokenStorage = persistentStorage;
+
+export const authUserStorage = {
+  load(): AuthUser | null {
+    const value = persistentStorage.read(AUTH_USER_KEY);
+    if (!value) return null;
+    try {
+      const user = JSON.parse(value) as AuthUser;
+      return user && typeof user.id === 'string' && typeof user.role === 'string' ? user : null;
+    } catch {
+      return null;
+    }
+  },
+  save(user: AuthUser): void {
+    persistentStorage.write(AUTH_USER_KEY, JSON.stringify(user));
+  },
+  clear(): void {
+    persistentStorage.remove(AUTH_USER_KEY);
+  },
+};
 
 export interface PendingStationDeliveryStop {
   liters: number;

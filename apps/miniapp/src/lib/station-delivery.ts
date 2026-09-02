@@ -46,7 +46,7 @@ export interface StationSearchLocationResult {
   error: string | null;
 }
 
-export const STATION_LOCATION_TIMEOUT_MS = 2_500;
+export const STATION_LOCATION_TIMEOUT_MS = 12_000;
 
 export async function resolveStationSearchLocation(
   getLocation: () => Promise<GeoPoint | null>,

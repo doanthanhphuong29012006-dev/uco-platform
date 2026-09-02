@@ -1,5 +1,5 @@
 import { OilGrade } from '@eco-oil/shared-types';
-import type { PhotoAsset } from '../lib/zalo-client';
+import { zaloClient, type PhotoAsset } from '../lib/zalo-client';
 
 export function isGradePhotoMissing(grade: OilGrade | null, suspectedAdulteration: boolean, photoCount: number): boolean {
   const required = grade === OilGrade.B || grade === OilGrade.C || suspectedAdulteration;
@@ -18,6 +18,22 @@ interface GradePhotoPickerProps {
 }
 
 export function GradePhotoPicker({ photos, busy, disabled, message, onTakePhoto, onChooseAlbum, onChooseFile, onRemovePhoto }: GradePhotoPickerProps) {
+  const browserInputs = zaloClient.mode !== 'native';
+  const fileInput = (capture: boolean) => (
+    <input
+      className="accessible-file-input"
+      type="file"
+      accept="image/*"
+      {...(capture ? { capture: 'environment' as const } : {})}
+      onChange={(event) => {
+        const file = event.target.files?.[0];
+        event.target.value = '';
+        if (file) onChooseFile(file);
+      }}
+      disabled={busy || disabled}
+    />
+  );
+
   return (
     <section className="photo-card grade-photo-card">
       <div>
@@ -26,28 +42,29 @@ export function GradePhotoPicker({ photos, busy, disabled, message, onTakePhoto,
       </div>
       {message ? <p role="status">{message}</p> : null}
       <div className="photo-actions">
-        <button type="button" className="secondary-button" onClick={onTakePhoto} disabled={busy || disabled}>
-          {busy ? 'Đang xử lý…' : photos.length > 0 ? 'Chụp lại ảnh' : 'Chụp ảnh'}
-        </button>
-        {onChooseAlbum ? (
-          <button type="button" className="secondary-button" onClick={onChooseAlbum} disabled={busy || disabled}>
-            Chọn từ thư viện Zalo
-          </button>
-        ) : null}
-        <label className="secondary-button file-picker-button">
-          Tải file dự phòng
-          <input
-            className="sr-only"
-            type="file"
-            accept="image/*"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              event.target.value = '';
-              if (file) onChooseFile(file);
-            }}
-            disabled={busy || disabled}
-          />
-        </label>
+        {browserInputs ? (
+          <>
+            <label className="secondary-button file-picker-button">
+              {busy ? 'Đang xử lý…' : photos.length > 0 ? 'Chụp lại ảnh' : 'Chụp ảnh'}
+              {fileInput(true)}
+            </label>
+            <label className="secondary-button file-picker-button">
+              Chọn từ thư viện
+              {fileInput(false)}
+            </label>
+          </>
+        ) : (
+          <>
+            <button type="button" className="secondary-button" onClick={onTakePhoto} disabled={busy || disabled}>
+              {busy ? 'Đang xử lý…' : photos.length > 0 ? 'Chụp lại ảnh' : 'Chụp ảnh'}
+            </button>
+            {onChooseAlbum ? (
+              <button type="button" className="secondary-button" onClick={onChooseAlbum} disabled={busy || disabled}>
+                Chọn từ thư viện
+              </button>
+            ) : null}
+          </>
+        )}
       </div>
       {photos.length > 0 ? (
         <div className="photo-preview-list">

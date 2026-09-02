@@ -315,6 +315,12 @@ label { color: var(--text-primary); }
 .submit-collection-button { margin-top: 18px; }
 .submit-block-reason { padding: 0 2px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.accessible-file-input { position: absolute; width: 1px; height: 1px; opacity: .01; pointer-events: none; }
+.browser-qr-overlay { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 18px; background: rgba(3, 20, 17, .88); }
+.browser-qr-panel { width: min(100%, 520px); display: grid; gap: 12px; padding: 18px; border-radius: var(--radius-md); background: var(--surface); color: var(--text-primary); }
+.browser-qr-panel video { width: 100%; max-height: 62vh; border-radius: 12px; background: #000; object-fit: cover; }
+.browser-qr-panel p { margin: 0; color: var(--text-secondary); }
+.browser-qr-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 .success-screen { display: grid; place-content: center; min-height: 80vh; padding: 30px; text-align: center; }
 .success-screen h1 { font-size: 1.7rem; }

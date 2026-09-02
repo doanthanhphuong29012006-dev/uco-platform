@@ -22,7 +22,11 @@ import { pickZaloPhoto } from '../lib/media-picker';
 import { analyzeOilImages, type OilImageAnalysis } from '../lib/oil-image-analyzer';
 import { StatusView } from '../components/StatusView';
 import { OilGradeSelector } from '../components/OilGradeSelector';
-import { GradePhotoPicker, isGradePhotoMissing } from '../components/GradePhotoPicker';
+import { GradePhotoPicker } from '../components/GradePhotoPicker';
+import {
+  getCollectionSubmitBlockReasons,
+  parseLocalizedDecimal,
+} from '../lib/collection-entry-validation';
 import { useAuthStore } from '../stores/auth-store';
 import { StationDeliveryFlow } from './StationDeliveryFlow';
 
@@ -515,7 +519,7 @@ export interface CollectionLocationResult {
   usedFallback: boolean;
 }
 
-export const COLLECTION_LOCATION_TIMEOUT_MS = 2_500;
+export const COLLECTION_LOCATION_TIMEOUT_MS = 12_000;
 
 export async function resolveCollectionLocation(
   getLocation: () => Promise<GeoPoint | null>,
@@ -677,12 +681,24 @@ export async function runCollectorAction(
   try {
     await action();
     return true;
-  } catch {
-    setError(errorMessage);
+  } catch (error) {
+    setError(error instanceof Error ? error.message : errorMessage);
     return false;
   } finally {
     setBusy(false);
   }
+}
+
+export async function completeCollectorShiftSafely(options: {
+  persisted: boolean;
+  online: boolean;
+  completeRemote: () => Promise<void>;
+  clearLocal: () => void;
+}): Promise<boolean> {
+  if (options.persisted && !options.online) return false;
+  if (options.persisted) await options.completeRemote();
+  options.clearLocal();
+  return true;
 }
 
 export function CollectorFlow() {
@@ -912,19 +928,26 @@ export function CollectorFlow() {
 
   async function finishShift(): Promise<boolean> {
     if (finishing) return false;
+    if (route.data?.route.persisted && !online) {
+      setShiftError('Đang ngoại tuyến. Ca và tuyến vẫn được giữ trên máy; hãy kết nối mạng để kết ca.');
+      return false;
+    }
     setFinishing(true);
     setShiftError(null);
     try {
-      if (route.data?.route.persisted && online) {
-        await api.completeCurrentRoute();
-      }
+      const completedSafely = await completeCollectorShiftSafely({
+        persisted: Boolean(route.data?.route.persisted),
+        online,
+        completeRemote: () => api.completeCurrentRoute().then(() => undefined),
+        clearLocal: clearPersistedShift,
+      });
+      if (!completedSafely) return false;
     } catch (error) {
       setShiftError(error instanceof ApiError ? error.message : 'Không thể kết ca. Vui lòng thử lại.');
       return false;
     } finally {
       setFinishing(false);
     }
-    clearPersistedShift();
     setCompleted({});
     setInitialStopCount(route.data?.route.stops.length ?? 0);
     setShiftStarted(false);
@@ -1039,7 +1062,7 @@ function CollectorRouteScreen({ stops, route, location, locationDenied, complete
         <div><p className="eyebrow">CA HÔM NAY</p><h1>Tuyến thu gom</h1></div>
         <div className="collector-header-actions">
           <OutboxBadge stats={outboxStats} onClick={onOpenOutbox} />
-          <button type="button" className={`round-action ${refreshing ? 'round-action-loading' : ''}`} onClick={onRefresh} disabled={refreshing} aria-busy={refreshing ? 'true' : 'false'}>{refreshing ? 'Đang tải' : 'Tải lại'}</button>
+          <button type="button" className={`round-action ${refreshing ? 'round-action-loading' : ''}`} onClick={onRefresh} disabled={refreshing} aria-busy={refreshing ? 'true' : 'false'}>{refreshing ? 'Đang tải' : locationDenied ? 'Lấy lại GPS' : 'Tải lại'}</button>
         </div>
       </header>
       {refreshNotice ? <div className={`route-refresh-notice route-refresh-notice-${refreshNotice.kind}`} role={refreshNotice.kind === 'error' ? 'alert' : 'status'}>{refreshNotice.message}</div> : null}
@@ -1085,7 +1108,7 @@ function CollectorRouteScreen({ stops, route, location, locationDenied, complete
 
 function OutboxBadge({ stats, onClick }: { stats: ReturnType<typeof useOutboxStats>; onClick: () => void }) {
   const waiting = stats.pending + stats.syncing + stats.failed;
-  const label = waiting > 0 ? `${waiting} giao dịch chưa đồng bộ` : 'Đã đồng bộ hết';
+  const label = waiting > 0 ? `${waiting} giao dịch chưa đồng bộ` : 'Hàng chờ: 0';
   return <button className={`outbox-badge ${stats.failed > 0 ? 'outbox-badge-failed' : ''}`} onClick={onClick}>{label}</button>;
 }
 
@@ -1125,7 +1148,7 @@ function CollectorStopCard({ stop, outboxRow, onOpenQr }: { stop: RouteStop; out
   function openDirections(): void {
     if (!canOpenDirections || actionBusy) return;
     void runCollectorAction(
-      () => zaloClient.openDirections({ lat: stop.merchant.lat, lng: stop.merchant.lng }),
+      () => zaloClient.openDirections({ lat: stop.merchant.lat, lng: stop.merchant.lng }, stop.merchant.address),
       'Không thể mở chỉ đường. Vui lòng thử lại.',
       (busy) => setActionBusy(busy ? 'directions' : null),
       setActionError,
@@ -1207,10 +1230,12 @@ function CollectorQrScreen({ stop, onBack, onContinue }: { stop: RouteStop; onBa
           return;
         }
         await lookup(scannedCode);
-      } catch (scanError) {
-        setError(isZaloPermissionDenied(scanError)
-          ? 'Zalo chưa có quyền dùng camera để quét QR. Hãy bật quyền Camera trong Zalo hoặc nhập tay mã can.'
-          : 'Không quét được mã. Bạn có thể nhập tay mã can.');
+       } catch (scanError) {
+         setError(isZaloPermissionDenied(scanError)
+           ? 'Zalo chưa có quyền dùng camera để quét QR. Hãy bật quyền Camera trong Zalo hoặc nhập tay mã can.'
+           : scanError instanceof Error
+             ? scanError.message
+             : 'Không quét được mã. Bạn có thể nhập tay mã can.');
       } finally {
         setBusy(false);
       }
@@ -1255,7 +1280,6 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
   const [analyzingImages, setAnalyzingImages] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [overrideAcknowledged, setOverrideAcknowledged] = useState(false);
-  const [gradeConfirmed, setGradeConfirmed] = useState(false);
   const [geo, setGeo] = useState<GeoPoint | null>(null);
   const [saving, setSaving] = useState(false);
   const [takingPhoto, setTakingPhoto] = useState(false);
@@ -1263,6 +1287,7 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [locationFallback, setLocationFallback] = useState(false);
+  const [locating, setLocating] = useState(false);
   const [clientUuid] = useState(() => crypto.randomUUID());
   const [highDeviationAcknowledgement, setHighDeviationAcknowledgement] = useState<string | null>(null);
   const mountedRef = useRef(true);
@@ -1274,14 +1299,16 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
     zaloClient.cancelMediaPicker?.();
   }, []);
   const capacity = Number(container.capacity_liters ?? 0);
-  const enteredLiters = liters.trim() === '' ? null : Number(liters);
-  const actualKg = kilograms.trim() === '' ? null : Number(kilograms);
+  const enteredLiters = parseLocalizedDecimal(liters);
+  const actualKg = parseLocalizedDecimal(kilograms);
   const hasLiters = enteredLiters !== null && Number.isFinite(enteredLiters) && enteredLiters > 0;
   const hasKilograms = actualKg !== null && Number.isFinite(actualKg) && actualKg > 0;
   const litersDerivedFromKilograms = !hasLiters && hasKilograms;
   const actualLiters = litersDerivedFromKilograms ? (actualKg as number) / DEFAULT_DENSITY_KG_PER_LITER : enteredLiters ?? 0;
   const maxLiters = capacity * 1.1;
-  const invalidLiters = actualLiters > maxLiters || (hasLiters && (!Number.isFinite(actualLiters) || actualLiters <= 0));
+  const invalidLiters =
+    actualLiters > maxLiters ||
+    (enteredLiters !== null && (!Number.isFinite(enteredLiters) || enteredLiters <= 0));
   const invalidKg = actualKg !== null && (!Number.isFinite(actualKg) || actualKg < 0);
   const invalidMass = (!hasLiters && !hasKilograms) || invalidLiters || invalidKg;
   const pickupVolumeForecast = getPickupVolumeForecastDisplay(stop);
@@ -1291,38 +1318,35 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
     setHighDeviationAcknowledgement(null);
   }, [highDeviationKey]);
   const highDeviationNeedsAcknowledgement = requiresPickupVolumeAcknowledgement(pickupVolumeDeviation, highDeviationAcknowledgement);
-  const gradePhotoMissing = isGradePhotoMissing(grade, suspectedAdulteration, photos.length);
   const imageGradeDisplay = getImageGradeAnalysisDisplay(imageAnalysis);
   const suggestedGrade = imageAnalysis?.suggested_grade ?? null;
   const needsImageGradeOverrideAcknowledgement = Boolean(
     grade && suggestedGrade && grade !== suggestedGrade && (imageAnalysis?.confidence === 'HIGH' || imageAnalysis?.confidence === 'MEDIUM'),
   );
   const imageGradeDecisionBlocked = needsImageGradeOverrideAcknowledgement && !overrideAcknowledged;
-  const submitBlockReason = grade === null
-    ? 'Vui lòng chọn phân hạng dầu trước khi xác nhận.'
-    : !gradeConfirmed
-      ? 'Vui lòng xác nhận hạng cuối trước khi lưu giao dịch.'
-    : analyzingImages
-      ? 'Vui lòng chờ phân tích ảnh hoàn tất trước khi lưu giao dịch.'
-    : invalidMass
-      ? (!hasLiters && !hasKilograms ? 'Vui lòng nhập số kg hoặc số lít lớn hơn 0.' : litersDerivedFromKilograms && invalidLiters ? `Số lít suy ra từ khối lượng (${actualLiters.toFixed(2)} lít) vượt dung tích cho phép ${maxLiters.toFixed(1)} lít.` : `Số lít phải lớn hơn 0 và không vượt ${maxLiters.toFixed(1)} lít.`)
-      : gradePhotoMissing
-        ? 'Hạng B, hạng C hoặc nghi ngờ pha lẫn cần ít nhất 1 ảnh trước khi gửi.'
-        : quality === Quality.FLAG && photos.length === 0
-          ? 'Giao dịch cần kiểm tra bắt buộc có ít nhất 1 ảnh.'
-          : highDeviationNeedsAcknowledgement
-            ? 'Vui lòng kiểm tra lại số lít và xác nhận tiếp tục.'
-            : imageGradeDecisionBlocked
-              ? 'Gợi ý AI khác hạng đã chọn. Vui lòng xác nhận bạn muốn giữ hạng này.'
-            : null;
+  const invalidLitersMessage = litersDerivedFromKilograms && invalidLiters
+    ? `Số lít suy ra từ khối lượng (${actualLiters.toFixed(2)} lít) vượt dung tích cho phép ${maxLiters.toFixed(1)} lít.`
+    : `Số lít phải lớn hơn 0 và không vượt ${maxLiters.toFixed(1)} lít.`;
+  const submitBlockReasons = getCollectionSubmitBlockReasons({
+    grade,
+    quality,
+    photoCount: photos.length,
+    suspectedAdulteration,
+    hasLiters,
+    hasKilograms,
+    invalidMass,
+    invalidLitersMessage,
+    highDeviationNeedsAcknowledgement,
+    imageGradeDecisionBlocked,
+  });
 
   function adjustLiters(amount: number): void {
-    const next = Math.max(0, (Number(liters) || 0) + amount);
+    const next = Math.max(0, (parseLocalizedDecimal(liters) || 0) + amount);
     setLiters(next.toFixed(1));
   }
 
   function adjustKilograms(amount: number): void {
-    const next = Math.max(0, (Number(kilograms) || 0) + amount);
+    const next = Math.max(0, (parseLocalizedDecimal(kilograms) || 0) + amount);
     setKilograms(next.toFixed(1));
   }
 
@@ -1359,7 +1383,6 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
     const nextPhotos = [...photos, photo];
     setPhotos(nextPhotos);
     setOverrideAcknowledged(false);
-    setGradeConfirmed(false);
     void analyzePhotos(nextPhotos);
   }
 
@@ -1422,8 +1445,33 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
     const nextPhotos = photos.filter((_, photoIndex) => photoIndex !== index);
     setPhotos(nextPhotos);
     setOverrideAcknowledged(false);
-    setGradeConfirmed(false);
     void analyzePhotos(nextPhotos);
+  }
+
+  async function retryGps(): Promise<void> {
+    if (locating || saving) return;
+    setLocating(true);
+    setError(null);
+    try {
+      const point = await zaloClient.getLocation();
+      if (!point || !isValidGeoPoint(point)) {
+        throw new Error('GPS không trả về tọa độ hợp lệ.');
+      }
+      if (mountedRef.current) {
+        setGeo(point);
+        setLocationFallback(false);
+      }
+    } catch (locationError) {
+      if (mountedRef.current) {
+        setError(
+          locationError instanceof Error
+            ? locationError.message
+            : 'Không lấy được GPS. Hãy kiểm tra quyền vị trí rồi thử lại.',
+        );
+      }
+    } finally {
+      if (mountedRef.current) setLocating(false);
+    }
   }
 
   async function submit(): Promise<void> {
@@ -1431,24 +1479,8 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
       setError('Vui lòng chọn phân hạng dầu trước khi xác nhận.');
       return;
     }
-    if (!gradeConfirmed) {
-      setError('Vui lòng xác nhận hạng cuối trước khi lưu giao dịch.');
-      return;
-    }
-    if (invalidMass) {
-      setError(!hasLiters && !hasKilograms ? 'Vui lòng nhập số kg hoặc số lít lớn hơn 0.' : litersDerivedFromKilograms && invalidLiters ? `Số lít suy ra từ khối lượng (${actualLiters.toFixed(2)} lít) vượt dung tích cho phép ${maxLiters.toFixed(1)} lít.` : `Số lít phải lớn hơn 0 và không vượt ${maxLiters.toFixed(1)} lít.`);
-      return;
-    }
-    if (quality === Quality.FLAG && photos.length === 0) {
-      setError('Chất lượng cần kiểm tra bắt buộc có ít nhất 1 ảnh.');
-      return;
-    }
-    if (highDeviationNeedsAcknowledgement) {
-      setError('Vui lòng kiểm tra lại số lít và xác nhận tiếp tục.');
-      return;
-    }
-    if (imageGradeDecisionBlocked) {
-      setError('Gợi ý AI khác hạng đã chọn. Vui lòng xác nhận bạn muốn giữ hạng này.');
+    if (submitBlockReasons.length > 0) {
+      setError(submitBlockReasons.join(' '));
       return;
     }
     if (saving || success) {
@@ -1507,7 +1539,10 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
       photos: photos.map((photo) => photo.url),
       collected_at: new Date().toISOString(),
       };
-      await enqueueCollection(payload);
+      const saved = await enqueueCollection(payload);
+      if (saved.client_uuid !== clientUuid || saved.status !== 'pending') {
+        throw new Error('Không đọc lại được giao dịch vừa lưu trên máy.');
+      }
       if (mountedRef.current) {
         setSuccess(true);
         void syncOutbox();
@@ -1534,11 +1569,10 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
     <div className="page-content collector-content">
       <button className="back-button" onClick={onBack} disabled={saving}>Quay lại quét mã</button>
        <header className="collector-screen-heading"><p className="eyebrow">GHI NHẬN THU GOM</p><h1>{container.merchant.name}</h1><p>{containerCode}</p></header>
-      <section className="entry-target-card"><span>Số lít quán khai</span><strong>{formatLiters(stop.expected_liters)}</strong>{pickupVolumeForecast ? <div className="entry-volume-forecast"><strong>{pickupVolumeForecast.predictedLiters === null ? 'AI chưa đủ dữ liệu để dự báo sản lượng.' : `AI dự báo: khoảng ${formatPickupVolumeLiters(pickupVolumeForecast.predictedLiters)}`}</strong><small>{pickupVolumeForecast.confidenceLabel}</small>{pickupVolumeForecast.declaredOnly ? <small>AI chưa có đủ lịch sử riêng cho quán này.</small> : null}</div> : null}<small>Mã giao dịch: {clientUuid.slice(0, 8)}…</small>{locationFallback ? <p className="location-banner">Không lấy được vị trí GPS, đang dùng vị trí trung tâm phường. Giao dịch có thể bị đánh dấu cần kiểm tra.</p> : null}</section>
+      <section className="entry-target-card"><span>Số lít quán khai</span><strong>{formatLiters(stop.expected_liters)}</strong>{pickupVolumeForecast ? <div className="entry-volume-forecast"><strong>{pickupVolumeForecast.predictedLiters === null ? 'AI chưa đủ dữ liệu để dự báo sản lượng.' : `AI dự báo: khoảng ${formatPickupVolumeLiters(pickupVolumeForecast.predictedLiters)}`}</strong><small>{pickupVolumeForecast.confidenceLabel}</small>{pickupVolumeForecast.declaredOnly ? <small>AI chưa có đủ lịch sử riêng cho quán này.</small> : null}</div> : null}<small>Mã giao dịch: {clientUuid.slice(0, 8)}…</small>{locationFallback ? <p className="location-banner">Đang dùng vị trí dự phòng là tâm phường, không phải GPS thực tế.</p> : geo ? <p className="field-help">Đã lấy vị trí GPS thực tế.</p> : <p className="field-help">GPS sẽ được lấy khi xác nhận; bạn cũng có thể lấy trước ngay bây giờ.</p>}<button type="button" className="text-button" onClick={() => { void retryGps(); }} disabled={locating || saving}>{locating ? 'Đang lấy GPS…' : 'Lấy lại GPS'}</button></section>
       <section className="quality-card">
         <p className="section-label">Phân hạng dầu</p>
-        <OilGradeSelector value={grade} disabled={saving} onChange={(nextGrade) => { setGrade(nextGrade); setOverrideAcknowledged(false); setGradeConfirmed(false); }} />
-        <label className="toggle-row grade-confirmation-row"><input type="checkbox" checked={gradeConfirmed} onChange={(event) => setGradeConfirmed(event.target.checked)} disabled={saving || grade === null} /><span>Tôi xác nhận hạng cuối: {grade ? `hạng ${grade}` : 'chưa chọn'}</span></label>
+        <OilGradeSelector value={grade} disabled={saving} onChange={(nextGrade) => { setGrade(nextGrade); setOverrideAcknowledged(false); }} />
         <label className="toggle-row"><input type="checkbox" checked={suspectedAdulteration} onChange={(event) => setSuspectedAdulteration(event.target.checked)} disabled={saving} /><span>Nghi ngờ pha lẫn</span></label>
         <p className="field-help">Bật nếu thấy có nước, dầu nhớt hoặc mùi lạ không phải dầu ăn.</p>
         <label className="grade-note-label" htmlFor="grade-note">Ghi chú phân hạng (không bắt buộc)</label>
@@ -1546,10 +1580,10 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
       </section>
       <section className="liter-entry-card">
         <label htmlFor="actual-kilograms">Khối lượng (kg đã cân)</label>
-        <div className="large-number-input"><button onClick={() => adjustKilograms(-0.5)} disabled={saving}>−</button><input id="actual-kilograms" type="number" inputMode="decimal" step="0.5" min="0" value={kilograms} onChange={(event) => setKilograms(event.target.value)} placeholder="0.0" /><span>kg</span><button onClick={() => adjustKilograms(0.5)} disabled={saving}>+</button></div>
+        <div className="large-number-input"><button onClick={() => adjustKilograms(-0.5)} disabled={saving}>−</button><input id="actual-kilograms" type="text" inputMode="decimal" value={kilograms} onChange={(event) => setKilograms(event.target.value)} placeholder="0,0" /><span>kg</span><button onClick={() => adjustKilograms(0.5)} disabled={saving}>+</button></div>
         <p className={invalidKg ? 'error-text' : 'field-help'}>{actualKg === null ? 'Không có số cân? Hệ thống sẽ ước lượng kg từ số lít bên dưới.' : 'SCALE — số kg này là số cân thực tế.'}</p>
         <label htmlFor="actual-liters">Số lít thực tế</label>
-        <div className="large-number-input"><button onClick={() => adjustLiters(-0.5)} disabled={saving}>−</button><input id="actual-liters" type="number" inputMode="decimal" step="0.5" min="0" value={liters} onChange={(event) => setLiters(event.target.value)} placeholder="0.0" /><span>lít</span><button onClick={() => adjustLiters(0.5)} disabled={saving}>+</button></div>
+        <div className="large-number-input"><button onClick={() => adjustLiters(-0.5)} disabled={saving}>−</button><input id="actual-liters" type="text" inputMode="decimal" value={liters} onChange={(event) => setLiters(event.target.value)} placeholder="0,0" /><span>lít</span><button onClick={() => adjustLiters(0.5)} disabled={saving}>+</button></div>
         <p className={invalidLiters && (liters || litersDerivedFromKilograms) ? 'error-text' : 'field-help'}>{litersDerivedFromKilograms ? `Số lít ước tính từ khối lượng: ${actualLiters.toFixed(2)} lít · dung tích tối đa ${maxLiters.toFixed(1)} lít` : `Dung tích ${formatLiters(capacity)} · tối đa ${maxLiters.toFixed(1)} lít`}</p>
         {pickupVolumeDeviation?.level === 'NORMAL' ? <p className="pickup-volume-deviation pickup-volume-deviation-normal">Sản lượng nằm gần mức AI dự báo.</p> : null}
         {pickupVolumeDeviation?.level === 'REVIEW' ? <p className="pickup-volume-deviation pickup-volume-deviation-review">Số lít đang chênh {formatDeviationPercent(pickupVolumeDeviation.deviation_pct)} so với AI dự báo. Hãy kiểm tra lại số nhập và mức dầu trong can.</p> : null}
@@ -1567,13 +1601,13 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
           <small>{imageGradeDisplay.summary}</small>
           {imageGradeDisplay.reasons.length > 0 ? <div className="image-grade-reasons">{imageGradeDisplay.reasons.map((reason, index) => <span key={`${reason}-${index}`}>{reason}</span>)}</div> : null}
           {suggestedGrade && grade && suggestedGrade !== grade ? <p className="image-grade-disagreement" role="status"><strong>Khác gợi ý:</strong> bạn chọn hạng {grade}, AI gợi ý hạng {suggestedGrade}. Lý do AI: {imageGradeDisplay.reasons.join(', ') || 'tín hiệu hình ảnh hạn chế'}.</p> : null}
-          {imageGradeDisplay.canUseSuggestion && imageAnalysis?.suggested_grade ? <button type="button" className="secondary-button image-grade-use-button" onClick={() => { setGrade(imageAnalysis.suggested_grade as OilGrade); setOverrideAcknowledged(false); setGradeConfirmed(false); }} disabled={saving}>Dùng gợi ý này</button> : null}
+          {imageGradeDisplay.canUseSuggestion && imageAnalysis?.suggested_grade ? <button type="button" className="secondary-button image-grade-use-button" onClick={() => { setGrade(imageAnalysis.suggested_grade as OilGrade); setOverrideAcknowledged(false); }} disabled={saving}>Dùng gợi ý này</button> : null}
           {needsImageGradeOverrideAcknowledgement ? <label className="image-grade-override"><input type="checkbox" checked={overrideAcknowledged} onChange={(event) => setOverrideAcknowledged(event.target.checked)} disabled={saving} /><span>Tôi đã kiểm tra và xác nhận giữ phân hạng đã chọn.</span></label> : null}
         </section>
       ) : null}
       {error ? <div className="error-panel">{error}</div> : null}
-      {submitBlockReason ? <p className="error-text submit-block-reason">{submitBlockReason}</p> : null}
-      <button className="submit-collection-button" onClick={() => { void submit(); }} disabled={saving || Boolean(submitBlockReason)}>{saving ? 'Đang lưu trên máy…' : 'Xác nhận thu gom'}</button>
+      {submitBlockReasons.length > 0 ? <div className="error-text submit-block-reason"><strong>Còn thiếu:</strong><ul>{submitBlockReasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></div> : null}
+      <button className="submit-collection-button" onClick={() => { void submit(); }} disabled={saving || submitBlockReasons.length > 0}>{saving ? 'Đang lưu trên máy…' : 'Xác nhận thu gom'}</button>
     </div>
   );
 }

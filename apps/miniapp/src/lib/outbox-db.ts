@@ -112,6 +112,7 @@ export class EcoOilDatabase extends Dexie {
 
 export let ecoOilDb = new EcoOilDatabase();
 let activeOutboxOwnerId: string | null = null;
+let legacyClaimOwnerId: string | null = null;
 const OUTBOX_LIMIT_BYTES = 50 * 1024 * 1024;
 const subscribers = new Set<() => void>();
 export const OUTBOX_OPERATION_TIMEOUT_MS = 4_500;
@@ -119,11 +120,44 @@ export const OUTBOX_OPERATION_TIMEOUT_MS = 4_500;
 export function setOutboxOwner(ownerId: string | null): void {
   if (activeOutboxOwnerId === ownerId) return;
   activeOutboxOwnerId = ownerId;
+  legacyClaimOwnerId = ownerId;
   emitChanged();
+  if (ownerId) {
+    void claimLegacyOutboxRecords(ownerId).catch((error: unknown) => {
+      console.warn('[outbox] Không thể gắn owner cho dữ liệu cũ', {
+        message: error instanceof Error ? error.message : 'unknown',
+      });
+    });
+  }
 }
 
 function belongsToActiveOwner(record: OutboxRecord): boolean {
-  return activeOutboxOwnerId === null || record.owner_id === activeOutboxOwnerId;
+  if (activeOutboxOwnerId === null) return false;
+  return (
+    record.owner_id === activeOutboxOwnerId ||
+    (!record.owner_id && legacyClaimOwnerId === activeOutboxOwnerId)
+  );
+}
+
+function requireActiveOutboxOwner(): string {
+  if (!activeOutboxOwnerId) {
+    throw new Error('Thiếu tài khoản người thu gom để lưu hàng chờ.');
+  }
+  return activeOutboxOwnerId;
+}
+
+export async function claimLegacyOutboxRecords(ownerId: string): Promise<number> {
+  if (!ownerId.trim()) return 0;
+  const legacyRecords = await ecoOilDb.outbox.filter((record) => !record.owner_id).toArray();
+  if (legacyRecords.length === 0) return 0;
+  await ecoOilDb.transaction('rw', ecoOilDb.outbox, async () => {
+    for (const record of legacyRecords) {
+      await ecoOilDb.outbox.put({ ...record, owner_id: ownerId });
+    }
+  });
+  if (activeOutboxOwnerId === ownerId) legacyClaimOwnerId = null;
+  emitChanged();
+  return legacyRecords.length;
 }
 
 function emitChanged(): void {
@@ -287,9 +321,10 @@ export async function persistOutboxForTest(record: OutboxRecord, options: Outbox
 
 export async function enqueueCollection(payload: CollectionCreateRequest): Promise<OutboxRecord> {
   const now = new Date().toISOString();
+  const ownerId = requireActiveOutboxOwner();
   const record: OutboxRecord = {
     client_uuid: payload.client_uuid,
-    ...(activeOutboxOwnerId ? { owner_id: activeOutboxOwnerId } : {}),
+    owner_id: ownerId,
     type: 'collection',
     payload,
     status: 'pending',
@@ -306,9 +341,10 @@ export async function enqueueCollection(payload: CollectionCreateRequest): Promi
 
 export async function enqueueStationDelivery(payload: StationDeliveryCreateRequest): Promise<OutboxRecord> {
   const now = new Date().toISOString();
+  const ownerId = requireActiveOutboxOwner();
   const record: OutboxRecord = {
     client_uuid: payload.client_uuid,
-    ...(activeOutboxOwnerId ? { owner_id: activeOutboxOwnerId } : {}),
+    owner_id: ownerId,
     type: 'station_delivery',
     payload,
     status: 'pending',

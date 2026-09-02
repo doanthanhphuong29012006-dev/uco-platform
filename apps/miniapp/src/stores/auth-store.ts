@@ -1,7 +1,7 @@
 import type { AuthUser } from '@eco-oil/shared-types';
 import { create } from 'zustand';
 import { ApiError, API_BASE_URL, api, setUnauthorizedHandler } from '../lib/api';
-import { tokenStorage } from '../lib/storage';
+import { authUserStorage, tokenStorage } from '../lib/storage';
 import { setOutboxOwner } from '../lib/outbox-db';
 import { isValidAuthSession, isValidAuthUser } from '../components/login-screen-logic';
 import { consumeZaloOAuthCode } from '../lib/oauth-callback';
@@ -22,6 +22,21 @@ function applyUserScope(user: AuthUser | null): void {
   setOutboxOwner(user?.role === 'COLLECTOR' ? user.collectorId ?? user.id : null);
 }
 
+function persistUser(user: AuthUser): void {
+  authUserStorage.save(user);
+  applyUserScope(user);
+}
+
+function clearSession(): void {
+  tokenStorage.clear();
+  authUserStorage.clear();
+  applyUserScope(null);
+}
+
+function isExpiredSessionError(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 401;
+}
+
 function loginErrorMessage(error: unknown, endpoint: string): string {
   const url = `${API_BASE_URL}${endpoint}`;
   const sdkError = typeof error === 'object' && error !== null
@@ -33,9 +48,8 @@ function loginErrorMessage(error: unknown, endpoint: string): string {
       api: sdkError.api,
       code: sdkError.code,
       message: sdkError.message,
-      error,
     });
-    return 'Zalo SDK không khả dụng ngoài app Zalo — đang dùng chế độ mô phỏng.';
+    return 'Zalo SDK không khả dụng. Hãy mở lại trong Zalo hoặc đăng nhập qua browser.';
   }
   if (error instanceof ApiError) {
     console.error('[auth] HTTP login error', { url, code: error.code, details: error.details });
@@ -58,32 +72,55 @@ export const useAuthStore = create<AuthState>((set) => ({
   error: null,
   hydrate: () => {
     if (hydratePromise) return hydratePromise;
+    set({ hydrated: false, busy: true, error: null });
     hydratePromise = (async () => {
+      const cachedUser = authUserStorage.load();
+      const restoreAfterTemporaryFailure = (error: unknown, endpoint: string) => {
+        if (cachedUser && isValidAuthUser(cachedUser) && tokenStorage.getAccessToken()) {
+          applyUserScope(cachedUser);
+          set({
+            user: cachedUser,
+            error: `${loginErrorMessage(error, endpoint)} Đang dùng phiên và dữ liệu đã lưu trên máy.`,
+          });
+          return;
+        }
+        applyUserScope(null);
+        set({ user: null, error: loginErrorMessage(error, endpoint) });
+      };
+
       let handoffSession: Awaited<ReturnType<typeof api.exchangeZaloOAuthCode>> | null = null;
       try {
         handoffSession = await consumeZaloOAuthCode((code) => api.exchangeZaloOAuthCode(code));
       } catch (error) {
-        tokenStorage.clear();
-        applyUserScope(null);
-        set({ user: null, hydrated: true, busy: false, error: loginErrorMessage(error, '/auth/zalo/exchange') });
+        if (isExpiredSessionError(error)) clearSession();
+        else restoreAfterTemporaryFailure(error, '/auth/zalo/exchange');
         return;
       }
       if (handoffSession) {
+        if (!isValidAuthSession(handoffSession)) {
+          clearSession();
+          set({ user: null, error: 'Phản hồi đăng nhập không có định danh người dùng hợp lệ.' });
+          return;
+        }
+        tokenStorage.setTokens(handoffSession.access_token, handoffSession.refresh_token);
+        persistUser(handoffSession.user);
         try {
-          if (!isValidAuthSession(handoffSession)) {
-            throw new Error('Phản hồi đăng nhập không có định danh người dùng hợp lệ.');
-          }
-          tokenStorage.setTokens(handoffSession.access_token, handoffSession.refresh_token);
           const user = await api.me();
           if (!isValidAuthUser(user)) {
             throw new Error('Phản hồi phiên đăng nhập không hợp lệ.');
           }
-          applyUserScope(user);
-          set({ user, hydrated: true, busy: false, error: null });
+          persistUser(user);
+          set({ user, error: null });
         } catch (error) {
-          tokenStorage.clear();
-          applyUserScope(null);
-          set({ user: null, hydrated: true, busy: false, error: loginErrorMessage(error, '/auth/zalo/exchange') });
+          if (isExpiredSessionError(error)) {
+            clearSession();
+            set({ user: null, error: 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.' });
+          } else {
+            set({
+              user: handoffSession.user,
+              error: `${loginErrorMessage(error, '/auth/me')} Đang dùng phiên vừa đăng nhập đã lưu trên máy.`,
+            });
+          }
         }
         return;
       }
@@ -91,19 +128,22 @@ export const useAuthStore = create<AuthState>((set) => ({
       try {
         const user = await api.me();
         if (!isValidAuthUser(user)) {
-          tokenStorage.clear();
-          applyUserScope(null);
-          set({ user: null, hydrated: true, error: 'Phiên đăng nhập không hợp lệ. Vui lòng chọn lại tài khoản.' });
+          clearSession();
+          set({ user: null, error: 'Phiên đăng nhập không hợp lệ. Vui lòng chọn lại tài khoản.' });
           return;
         }
-        applyUserScope(user);
-        set({ user, hydrated: true, error: null });
-      } catch {
-        tokenStorage.clear();
-        applyUserScope(null);
-        set({ user: null, hydrated: true, busy: false });
+        persistUser(user);
+        set({ user, error: null });
+      } catch (error) {
+        if (isExpiredSessionError(error)) {
+          clearSession();
+          set({ user: null, error: 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.' });
+        } else {
+          restoreAfterTemporaryFailure(error, '/auth/me');
+        }
       }
     })().finally(() => {
+      set({ hydrated: true, busy: false });
       hydratePromise = null;
     });
     return hydratePromise;
@@ -116,7 +156,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         throw new Error('Phản hồi đăng nhập không có định danh người dùng hợp lệ.');
       }
       tokenStorage.setTokens(session.access_token, session.refresh_token);
-      applyUserScope(session.user);
+      persistUser(session.user);
       set({ user: session.user, busy: false });
     } catch (error) {
       set({ busy: false, error: loginErrorMessage(error, '/auth/zalo') });
@@ -130,7 +170,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         throw new Error('Phản hồi đăng nhập không có định danh người dùng hợp lệ.');
       }
       tokenStorage.setTokens(session.access_token, session.refresh_token);
-      applyUserScope(session.user);
+      persistUser(session.user);
       set({ user: session.user, busy: false });
     } catch (error) {
       set({ busy: false, error: loginErrorMessage(error, '/auth/zalo') });
@@ -148,7 +188,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       if (!isValidAuthUser(user)) {
         throw new Error('Phản hồi phiên người thu gom không hợp lệ.');
       }
-      applyUserScope(user);
+      persistUser(user);
       set({ user, busy: false, error: null });
     } catch (error) {
       set({ busy: false, error: loginErrorMessage(error, '/auth/collector-invites/accept') });
@@ -164,8 +204,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         // Local logout must still complete when the API is offline.
       }
     }
-    tokenStorage.clear();
-    applyUserScope(null);
+    clearSession();
     set({ user: null, busy: false, error: null, hydrated: true });
   },
 }));

@@ -15,6 +15,9 @@ export default defineConfig(({ mode }) => {
     define: {
       'import.meta.env.VITE_API_BASE_URL': JSON.stringify(apiBaseUrl),
       'import.meta.env.VITE_DEMO_MODE': JSON.stringify(env.VITE_DEMO_MODE || 'false'),
+      'import.meta.env.VITE_DEVICE_CLIENT_MODE': JSON.stringify(
+        env.VITE_DEVICE_CLIENT_MODE || '',
+      ),
     },
     resolve: {
       alias: {

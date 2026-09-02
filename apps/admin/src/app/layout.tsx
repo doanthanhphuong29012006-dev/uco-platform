@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { Providers } from '../components/providers';
 import './globals.css';
 export const metadata: Metadata = {
-  title: 'ECollect',
+  title: 'ECOllect',
   description: 'Bảng vận hành thu gom dầu ăn đã qua sử dụng',
   icons: { icon: '/logo.svg' },
 };

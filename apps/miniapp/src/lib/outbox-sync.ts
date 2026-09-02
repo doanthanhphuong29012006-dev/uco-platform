@@ -99,7 +99,11 @@ async function performSync({ store = dexieOutboxStore, client, now = () => new D
     sent += collectionRecords.length;
     try {
       const response = await withSyncTimeout(syncClient.syncBatch(collectionRecords.map((record) => record.payload as CollectionCreateRequest)), syncTimeoutMs);
-      const results = new Map(response.results.map((result) => [result.client_uuid, result]));
+      const results = new Map(
+        (Array.isArray(response.results) ? response.results : [])
+          .filter((result) => typeof result.client_uuid === 'string' && result.client_uuid.length > 0)
+          .map((result) => [result.client_uuid, result]),
+      );
       for (const record of collectionRecords) {
         const result = results.get(record.client_uuid);
         if (result?.status === 'created' || result?.status === 'duplicate') {
@@ -128,6 +132,9 @@ async function performSync({ store = dexieOutboxStore, client, now = () => new D
         throw new Error('API nộp trạm chưa được cấu hình');
       }
       const response = await withSyncTimeout(syncClient.createStationDelivery(record.payload as StationDeliveryCreateRequest), syncTimeoutMs);
+      if (response.client_uuid !== record.client_uuid) {
+        throw new Error('Phản hồi nộp trạm không khớp client_uuid');
+      }
       await store.update({ ...record, status: 'synced', last_error: null, next_attempt_at: null, synced_at: currentTime.toISOString(), sync_started_at: null, updated_at: currentTime.toISOString(), server_id: response.id, server_response: response });
       synced += 1;
     } catch (error) {

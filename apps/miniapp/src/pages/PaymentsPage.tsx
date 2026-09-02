@@ -12,7 +12,7 @@ export function PaymentsPage() {
   const payments = useQuery({ queryKey: ['merchant-payments', userId], queryFn: () => api.payments() });
   if (payments.isPending) return <StatusView title="Đang tải thanh toán…" />;
   if (payments.isError) return <StatusView title="Chưa tải được thanh toán" message={payments.error instanceof ApiError ? payments.error.message : 'Vui lòng kiểm tra kết nối và thử lại.'} action={{ label: 'Thử lại', onClick: () => { void payments.refetch(); } }} />;
-  if (!payments.data.data.length) return <StatusView title="Chưa có kỳ thanh toán" message="Sau khi ECollect chốt kỳ, số tiền và trạng thái thanh toán sẽ xuất hiện tại đây." />;
+  if (!payments.data.data.length) return <StatusView title="Chưa có kỳ thanh toán" message="Sau khi ECOllect chốt kỳ, số tiền và trạng thái thanh toán sẽ xuất hiện tại đây." />;
   const periods = payments.data.data.reduce<Map<string, PaymentRecord[]>>((groups, payment) => {
     const rows = groups.get(payment.period) ?? [];
     rows.push(payment);

@@ -41,7 +41,13 @@ export class ApiError extends Error {
   }
 }
 
-type RequestOptions = Omit<RequestInit, 'body'> & { body?: unknown; retry?: boolean };
+type RequestOptions = Omit<RequestInit, 'body'> & {
+  body?: unknown;
+  retry?: boolean;
+  timeoutMs?: number;
+};
+
+export const API_REQUEST_TIMEOUT_MS = 15_000;
 
 let refreshPromise: Promise<string | null> | null = null;
 let unauthorizedHandler: (() => void) | null = null;
@@ -70,12 +76,55 @@ function errorFromResponse(status: number, payload: unknown): ApiError {
   return new ApiError(status, { code: status === 401 ? 'UNAUTHORIZED' : 'HTTP_ERROR', message: 'Không thể xử lý yêu cầu', details: null });
 }
 
+export async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+  timeoutMs = API_REQUEST_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const abortFromCaller = () => controller.abort(init.signal?.reason);
+  if (init.signal?.aborted) abortFromCaller();
+  else init.signal?.addEventListener('abort', abortFromCaller, { once: true });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<Response>((_resolve, reject) => {
+    timer = globalThis.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+      reject(new ApiError(0, {
+        code: 'REQUEST_TIMEOUT',
+        message: 'Máy chủ phản hồi quá thời gian chờ. Vui lòng thử lại.',
+        details: null,
+      }));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([
+      fetch(input, { ...init, signal: controller.signal }),
+      timeout,
+    ]);
+  } catch (error) {
+    if (timedOut) {
+      if (error instanceof ApiError && error.code === 'REQUEST_TIMEOUT') throw error;
+      throw new ApiError(0, {
+        code: 'REQUEST_TIMEOUT',
+        message: 'Máy chủ phản hồi quá thời gian chờ. Vui lòng thử lại.',
+        details: null,
+      });
+    }
+    throw error;
+  } finally {
+    if (timer !== undefined) globalThis.clearTimeout(timer);
+    init.signal?.removeEventListener('abort', abortFromCaller);
+  }
+}
+
 async function refreshAccessToken(): Promise<string | null> {
   const refreshToken = tokenStorage.getRefreshToken();
   if (!refreshToken) {
     return null;
   }
-  const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+  const response = await fetchWithTimeout(`${API_BASE_URL}/auth/refresh`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: refreshToken ? JSON.stringify({ refresh_token: refreshToken }) : undefined,
@@ -95,7 +144,7 @@ async function refreshAccessToken(): Promise<string | null> {
 
 function getRefreshOnce(): Promise<string | null> {
   if (!refreshPromise) {
-    refreshPromise = refreshAccessToken().catch(() => null).finally(() => {
+    refreshPromise = refreshAccessToken().finally(() => {
       refreshPromise = null;
     });
   }
@@ -103,7 +152,7 @@ function getRefreshOnce(): Promise<string | null> {
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { body, retry = true, headers, ...init } = options;
+  const { body, retry = true, headers, timeoutMs = API_REQUEST_TIMEOUT_MS, ...init } = options;
   const accessToken = tokenStorage.getAccessToken();
   const requestHeaders = new Headers(headers);
   if (body !== undefined) {
@@ -113,17 +162,23 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     requestHeaders.set('Authorization', `Bearer ${accessToken}`);
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetchWithTimeout(`${API_BASE_URL}${path}`, {
     ...init,
     headers: requestHeaders,
     body: body === undefined ? undefined : JSON.stringify(body),
     credentials: 'include',
-  });
+  }, timeoutMs);
   const payload = await parseResponse(response);
   if (response.status === 401 && retry) {
-    const refreshedToken = await getRefreshOnce();
-    if (refreshedToken) {
-      return request<T>(path, { ...options, retry: false });
+    try {
+      const refreshedToken = await getRefreshOnce();
+      if (refreshedToken) {
+        return request<T>(path, { ...options, retry: false });
+      }
+    } catch (refreshError) {
+      if (!(refreshError instanceof ApiError) || refreshError.status !== 401) {
+        throw refreshError;
+      }
     }
     tokenStorage.clear();
     unauthorizedHandler?.();

@@ -28,6 +28,20 @@ export function clearZaloOAuthCode(
   history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
 }
 
+export function isRetryableOAuthExchangeError(error: unknown): boolean {
+  if (error instanceof TypeError) return true;
+  if (!error || typeof error !== 'object') return false;
+  const candidate = error as { status?: unknown; code?: unknown };
+  const status = Number(candidate.status);
+  return (
+    candidate.code === 'REQUEST_TIMEOUT' ||
+    status === 0 ||
+    status === 408 ||
+    status === 429 ||
+    status >= 500
+  );
+}
+
 export async function consumeZaloOAuthCode<T>(
   exchange: (code: string) => Promise<T>,
   location: BrowserLocation | null = currentLocation(),
@@ -36,8 +50,13 @@ export async function consumeZaloOAuthCode<T>(
   const code = readZaloOAuthCode(location);
   if (!code) return null;
   try {
-    return await exchange(code);
-  } finally {
+    const session = await exchange(code);
     clearZaloOAuthCode(location, history);
+    return session;
+  } catch (error) {
+    if (!isRetryableOAuthExchangeError(error)) {
+      clearZaloOAuthCode(location, history);
+    }
+    throw error;
   }
 }

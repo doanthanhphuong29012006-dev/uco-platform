@@ -16,9 +16,9 @@ export default function LoginPage() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-ink p-5">
       <section className="w-full max-w-md rounded-3xl bg-white p-8 shadow-2xl">
-        <img src="/logo.svg" alt="ECollect" className="h-20 w-20" />
+        <img src="/logo.svg" alt="ECOllect" className="h-20 w-20" />
         <p className="mt-4 text-sm font-bold uppercase tracking-[0.25em] text-emerald-700">
-          ECollect
+          ECOllect
         </p>
         <h1 className="mt-3 text-3xl font-bold text-ink">Bảng vận hành</h1>
         <p className="mt-3 text-slate-600">Đăng nhập bằng tài khoản và mật khẩu quản trị.</p>
