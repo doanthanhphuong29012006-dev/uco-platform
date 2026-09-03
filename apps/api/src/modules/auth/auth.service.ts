@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   ServiceUnavailableException,
   UnauthorizedException,
@@ -54,6 +55,8 @@ type UserWithProfiles = Prisma.UserGetPayload<{
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(JwtService) private readonly jwt: JwtService,
@@ -709,7 +712,7 @@ export class AuthService {
     phone: string | null,
     name?: string,
   ): Promise<UserWithProfiles> {
-    return this.prisma.user.upsert({
+    const user = await this.prisma.user.upsert({
       where: { zaloId },
       create: { zaloId, phone, name: name ?? null, role: Role.MERCHANT },
       update: { ...(phone ? { phone } : {}), ...(name ? { name } : {}), deletedAt: null },
@@ -719,6 +722,13 @@ export class AuthService {
         station: { select: { id: true } },
       },
     });
+    this.logger.log({
+      event: 'zalo_identity_mapped',
+      user_id: user.id,
+      collector_id: user.collector?.id ?? null,
+      role: user.role,
+    });
+    return user;
   }
 
   private sealOAuthState(payload: {

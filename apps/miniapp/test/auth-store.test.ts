@@ -3,6 +3,7 @@ import test from 'node:test';
 import { useAuthStore } from '../src/stores/auth-store';
 import { tokenStorage } from '../src/lib/storage';
 import { fetchWithTimeout } from '../src/lib/api';
+import { pendingStationDeliveryStorage } from '../src/lib/storage';
 
 test('API requests time out instead of leaving authentication hydration pending forever', async () => {
   const originalFetch = globalThis.fetch;
@@ -92,6 +93,38 @@ test('authenticated collector invite acceptance exchanges the session and routes
     assert.equal(useAuthStore.getState().user?.collectorId, 'collector-1');
     assert.equal(tokenStorage.getAccessToken(), 'collector-access-fixture');
   } finally {
+    tokenStorage.clear();
+    useAuthStore.setState({ user: null, hydrated: false, busy: false, error: null });
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('logout clears authentication but preserves the active route stored by collectorId', async () => {
+  const originalFetch = globalThis.fetch;
+  const collectorId = 'collector-stable-logout';
+  const activeRoute = {
+    stops: [], total_expected_liters: 0, remaining_capacity_l: 100,
+    route_id: 'route-stable', route_status: 'ACTIVE', persisted: true,
+    client_uuid: '11111111-1111-4111-8111-111111111111', started_at: '2026-09-03T08:00:00.000Z',
+  } as never;
+  const shift = { completed: {}, totalStops: 1, savedAt: '2026-09-03T08:01:00.000Z', activeRoute };
+  pendingStationDeliveryStorage.save(collectorId, shift);
+  tokenStorage.setTokens('access-before-logout', 'refresh-before-logout');
+  useAuthStore.setState({
+    user: { id: 'user-stable', zalo_id: 'zalo-stable', phone: '0900000001', name: 'Collector', role: 'COLLECTOR', merchantId: null, collectorId, merchantApprovalStatus: null, merchantRejectionReason: null },
+    hydrated: true,
+    busy: false,
+    error: null,
+  });
+  globalThis.fetch = async () => new Response(JSON.stringify({ success: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+
+  try {
+    await useAuthStore.getState().signOut();
+    assert.equal(tokenStorage.getAccessToken(), null);
+    assert.equal(useAuthStore.getState().user, null);
+    assert.deepEqual(pendingStationDeliveryStorage.load(collectorId), shift);
+  } finally {
+    pendingStationDeliveryStorage.clear(collectorId);
     tokenStorage.clear();
     useAuthStore.setState({ user: null, hydrated: false, busy: false, error: null });
     globalThis.fetch = originalFetch;

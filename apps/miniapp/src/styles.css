@@ -248,6 +248,8 @@ label { color: var(--text-primary); }
 .collect-action { color: #ffffff; background: var(--primary); }
 .disabled-action { color: var(--disabled) !important; background: var(--disabled-surface) !important; pointer-events: none; }
 .action-error { margin: 8px 0 0; font-size: .76rem; font-weight: 750; }
+.phone-fallback { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; color: var(--muted); font-size: .78rem; }
+.action-notice { margin: 6px 0 0; color: var(--primary); font-size: .76rem; font-weight: 750; }
 
 .collector-screen-heading { padding: 18px 0; }
 .collector-screen-heading .eyebrow { margin-bottom: 5px; }

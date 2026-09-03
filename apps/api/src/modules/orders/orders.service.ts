@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { AlertSeverity, AlertType, ContainerState, EntityStatus, MerchantApprovalStatus, OrderStatus, OrderSource } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import type { CurrentRouteResponse } from '@eco-oil/shared-types';
@@ -53,6 +53,8 @@ type PersistedRoute = {
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async createReady(user: AccessTokenPayload, input: OrderReadyInput) {
@@ -195,10 +197,23 @@ export class OrdersService {
       where: { collectorId: collector.id, status: 'ACTIVE' },
       include: { stops: { orderBy: { sequence: 'asc' } } },
     });
-    if (activeRoute) {
-      return this.serializePersistedRoute(activeRoute as unknown as PersistedRoute);
-    }
-    return this.buildRoutePreview(collector, query);
+    const response = activeRoute
+      ? await this.serializePersistedRoute(activeRoute as unknown as PersistedRoute)
+      : await this.buildRoutePreview(collector, query);
+    const statusCounts = response.stops.reduce<Record<string, number>>((counts, stop) => {
+      const status = stop.route_stop_status ?? 'READY';
+      counts[status] = (counts[status] ?? 0) + 1;
+      return counts;
+    }, {});
+    this.logger.log({
+      event: 'collector_route_loaded',
+      user_id: user.sub,
+      collector_id: collector.id,
+      route_id: response.route_id,
+      route_status: response.route_status,
+      order_statuses: statusCounts,
+    });
+    return response;
   }
 
   async startRoute(user: AccessTokenPayload, input: RouteStartInput): Promise<CurrentRouteResponse> {
@@ -518,20 +533,38 @@ export class OrdersService {
     };
   }
 
-  private serializePersistedRoute(route: PersistedRoute): CurrentRouteResponse {
+  private async serializePersistedRoute(route: PersistedRoute): Promise<CurrentRouteResponse> {
+    const pendingOrderIds = route.stops
+      .filter((stop) => stop.status === 'PENDING')
+      .map((stop) => stop.orderId);
+    const liveRows = await this.prisma.findLiveRouteStopMerchants(pendingOrderIds);
+    const liveByOrderId = new Map(liveRows.map((row) => [row.orderId, row]));
     const stops = route.stops.map((stop) => {
       const merchantSnapshot = stop.merchantSnapshot as Record<string, unknown>;
       const aiSnapshot = stop.aiSnapshot as Record<string, unknown>;
-      const merchant = merchantSnapshot as unknown as CurrentRouteResponse['stops'][number]['merchant'];
+      const live = stop.status === 'PENDING' ? liveByOrderId.get(stop.orderId) : undefined;
+      const merchant = live
+        ? {
+            name: live.merchantName,
+            address: live.merchantAddress,
+            phone: live.merchantPhone,
+            lat: live.merchantLat,
+            lng: live.merchantLng,
+          }
+        : merchantSnapshot as unknown as CurrentRouteResponse['stops'][number]['merchant'];
       return {
         seq: stop.sequence,
         order_id: stop.orderId,
         merchant,
-        container_code: String(merchantSnapshot.container_code ?? ''),
+        container_code: live?.containerCode ?? String(merchantSnapshot.container_code ?? ''),
         expected_liters: Number(stop.expectedLiters ?? 0),
         priority: Number(aiSnapshot.priority ?? 0),
         distance_m: Number(merchantSnapshot.distance_m ?? 0),
-        ward_center: (merchantSnapshot.ward_center as CurrentRouteResponse['stops'][number]['ward_center']) ?? null,
+        ward_center: live
+          ? live.wardCenterLat === null || live.wardCenterLng === null
+            ? null
+            : { lat: live.wardCenterLat, lng: live.wardCenterLng }
+          : (merchantSnapshot.ward_center as CurrentRouteResponse['stops'][number]['ward_center']) ?? null,
         pickup_priority_score: Number(aiSnapshot.pickup_priority_score ?? 0),
         pickup_priority_level: aiSnapshot.pickup_priority_level as CurrentRouteResponse['stops'][number]['pickup_priority_level'],
         pickup_priority_reason_codes: Array.isArray(aiSnapshot.pickup_priority_reason_codes) ? aiSnapshot.pickup_priority_reason_codes as string[] : [],

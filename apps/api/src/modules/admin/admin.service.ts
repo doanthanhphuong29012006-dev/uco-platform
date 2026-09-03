@@ -1077,6 +1077,7 @@ export class AdminService {
     const rows = await this.prisma.$queryRaw<
       Array<{
         id: string;
+        ward_id: string;
         name: string;
         address: string | null;
         lat: number | null;
@@ -1095,7 +1096,7 @@ export class AdminService {
         total: number;
       }>
     >`
-      SELECT m."id", m."business_name" AS name, m."address", u."phone", w."code" AS ward_code, w."name" AS ward_name,
+      SELECT m."id", m."ward_id", m."business_name" AS name, m."address", u."phone", w."code" AS ward_code, w."name" AS ward_name,
         ST_Y(m."location"::geometry)::float8 AS lat,
         ST_X(m."location"::geometry)::float8 AS lng,
         nearest.distance_m::float8 AS distance_m,
@@ -1136,6 +1137,7 @@ export class AdminService {
     return {
       data: rows.map((row) => ({
         id: row.id,
+        ward_id: row.ward_id,
         name: row.name,
         address: row.address,
         lat: row.lat === null ? null : Number(row.lat),

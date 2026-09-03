@@ -358,10 +358,27 @@ export function buildGoogleMapsDirectionsUrl(destination: GeoPoint): string {
 
 export function normalizeVietnamesePhone(phoneNumber: string): string {
   const normalized = phoneNumber.trim().replace(/[\s().-]/g, '');
-  if (!/^(?:\+84|84|0)\d{8,10}$/.test(normalized)) {
-    throw new DeviceIntegrationError('PHONE_INVALID', 'Số điện thoại quán không hợp lệ.');
+  if (/^0\d{9}$/.test(normalized)) return `+84${normalized.slice(1)}`;
+  if (/^84\d{9}$/.test(normalized)) return `+${normalized}`;
+  if (/^\+84\d{9}$/.test(normalized)) return normalized;
+  throw new DeviceIntegrationError('PHONE_INVALID', 'Số điện thoại quán không hợp lệ.');
+}
+
+type TelOpener = (phoneNumber: string) => boolean;
+
+function openTelUrl(phoneNumber: string): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    window.location.href = `tel:${phoneNumber}`;
+    return true;
+  } catch {
+    return false;
   }
-  return normalized.startsWith('84') ? `+${normalized}` : normalized;
+}
+
+export async function copyPhoneNumber(phoneNumber: string): Promise<boolean> {
+  const normalized = normalizeVietnamesePhone(phoneNumber);
+  return copyText(normalized, typeof navigator === 'undefined' ? null : navigator);
 }
 
 async function compressImage(filePath: string): Promise<PhotoAsset> {
@@ -388,6 +405,7 @@ export class RealZaloClient implements IZaloClient {
     private readonly resolveImage: (filePath: string) => Promise<PhotoAsset> = compressImage,
     private readonly mediaPickerLifecycle: () => MediaPickerLifecycle = getMediaPickerLifecycle,
     private readonly mediaPickerTimeoutMs = MEDIA_PICKER_WATCHDOG_MS,
+    private readonly openTel: TelOpener = openTelUrl,
   ) {}
 
   async login(): Promise<SeedAccount> {
@@ -456,9 +474,17 @@ export class RealZaloClient implements IZaloClient {
   }
 
   async openPhone(phoneNumber: string): Promise<void> {
-    const trimmedPhone = normalizeVietnamesePhone(phoneNumber);
-    const { openPhone } = await this.loadSdk();
-    await openPhone({ phoneNumber: trimmedPhone });
+    const normalizedPhone = normalizeVietnamesePhone(phoneNumber);
+    try {
+      const { openPhone } = await this.loadSdk();
+      await openPhone({ phoneNumber: normalizedPhone });
+    } catch {
+      if (this.openTel(normalizedPhone)) return;
+      throw new DeviceIntegrationError(
+        'PHONE_OPEN_BLOCKED',
+        `Thiết bị không cho mở cuộc gọi. Số quán: ${normalizedPhone}`,
+      );
+    }
   }
 
   async openDirections(destination: GeoPoint): Promise<void> {

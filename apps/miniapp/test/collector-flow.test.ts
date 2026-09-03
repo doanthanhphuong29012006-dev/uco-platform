@@ -9,6 +9,8 @@ import { resolve } from 'node:path';
 import { createServer } from 'vite';
 import { isValidGeoPoint } from '../src/lib/zalo-client';
 import { formatLiters } from '../src/lib/formatters';
+import { ApiError } from '../src/lib/api';
+import { canUseOfflineCache } from '../src/lib/offline-cache';
 
 type PickupPriorityHelpers = typeof import('../src/pages/CollectorFlow');
 
@@ -41,6 +43,12 @@ function stop(overrides: Record<string, unknown> = {}) {
 test('liters formatter renders the unit exactly once', () => {
   assert.equal(formatLiters(15), '15 lít');
   assert.equal((formatLiters(15).match(/lít/g) ?? []).length, 1);
+});
+
+test('route cache is used for timeout/server failures but not a final unauthorized response', () => {
+  assert.equal(canUseOfflineCache(new ApiError(0, { code: 'REQUEST_TIMEOUT', message: 'timeout', details: null })), true);
+  assert.equal(canUseOfflineCache(new ApiError(503, { code: 'UNAVAILABLE', message: 'down', details: null })), true);
+  assert.equal(canUseOfflineCache(new ApiError(401, { code: 'UNAUTHORIZED', message: 'expired', details: null })), false);
 });
 
 test('pickup priority maps every API level to the Vietnamese label and style', async () => {
@@ -165,6 +173,24 @@ test('pickup priority display does not reorder stops and accepts insufficient da
   assert.equal(succeeded, false);
   assert.deepEqual(busy, [true, false]);
   assert.deepEqual(errors, [null, 'SDK failed']);
+});
+
+test('empty route UI distinguishes no READY, ACTIVE load inconsistency and genuine completion', async () => {
+  const { getEmptyRouteState } = await loadPickupPriorityHelpers();
+  const base = {
+    stops: [],
+    total_expected_liters: 0,
+    remaining_capacity_l: 100,
+    route_id: null,
+    persisted: false,
+    client_uuid: null,
+    started_at: null,
+  } as never;
+  assert.equal(getEmptyRouteState({ ...base, route_status: 'PREVIEW' }, 0, []), 'no-ready');
+  assert.equal(getEmptyRouteState({ ...base, route_id: 'route-1', persisted: true, route_status: 'ACTIVE' }, 0, []), 'incomplete-active');
+  assert.equal(getEmptyRouteState({ ...base, route_id: 'route-1', persisted: true, route_status: 'COMPLETED' }, 0, []), 'completed');
+  const active = { ...base, route_id: 'route-1', persisted: true, route_status: 'ACTIVE', stops: [stop({ route_stop_status: 'PENDING' })] } as never;
+  assert.equal(getEmptyRouteState(active, 0, ['order-01']), 'completed');
 });
 
 test('image grading display translates suggestion, confidence and bounded reasons', async () => {

@@ -39,6 +39,7 @@ function createService(rows: RouteOrderRow[], maxCapacityLiters = 100) {
       findUnique: jest.fn().mockResolvedValue(null),
     },
     findReadyOrdersForRoute,
+    findLiveRouteStopMerchants: jest.fn().mockResolvedValue([]),
     findRecentCollectionHistoryByMerchantIds,
   } as unknown as PrismaService;
   return { service: new OrdersService(prisma), findReadyOrdersForRoute, findRecentCollectionHistoryByMerchantIds };
@@ -87,6 +88,7 @@ function createLifecycleService() {
       findFirst: jest.fn().mockResolvedValue(null),
     },
     findReadyOrdersForRoute: jest.fn().mockResolvedValue([routeRow()]),
+    findLiveRouteStopMerchants: jest.fn().mockResolvedValue([]),
     findRecentCollectionHistoryByMerchantIds: jest.fn().mockResolvedValue([]),
     $transaction: jest.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
   } as unknown as PrismaService;
@@ -404,5 +406,44 @@ describe('OrdersService persisted collection route lifecycle', () => {
     });
     expect(db.findReadyOrdersForRoute).not.toHaveBeenCalled();
     expect(db.findRecentCollectionHistoryByMerchantIds).not.toHaveBeenCalled();
+  });
+
+  it('refreshes live merchant details only for PENDING stops in an ACTIVE route', async () => {
+    const collectedStop = {
+      ...persistedRoute().stops[0],
+      orderId: 'order-collected',
+      sequence: 2,
+      status: 'COLLECTED',
+      collectedAt: new Date('2026-08-26T09:00:00.000Z'),
+      merchantSnapshot: {
+        ...persistedRoute().stops[0].merchantSnapshot,
+        name: 'Tên lịch sử',
+        phone: '0901111111',
+      },
+    };
+    const route = persistedRoute({ stops: [persistedRoute().stops[0], collectedStop] });
+    const { service, prisma } = createLifecycleService();
+    const db = prisma as unknown as {
+      collectionRoute: { findFirst: jest.Mock };
+      findLiveRouteStopMerchants: jest.Mock;
+    };
+    db.collectionRoute.findFirst.mockResolvedValue(route);
+    db.findLiveRouteStopMerchants.mockResolvedValue([{
+      orderId: 'order-01',
+      merchantName: 'Tên mới từ Admin',
+      merchantAddress: 'Địa chỉ mới',
+      merchantPhone: '+84987654321',
+      merchantLat: 10.2,
+      merchantLng: 106.2,
+      wardCenterLat: 10,
+      wardCenterLng: 106,
+      containerCode: 'ECO-UCO-Q3P7-001',
+    }]);
+
+    const result = await service.currentRoute({ sub: 'collector-user' } as never, {});
+
+    expect(db.findLiveRouteStopMerchants).toHaveBeenCalledWith(['order-01']);
+    expect(result.stops[0]?.merchant).toMatchObject({ name: 'Tên mới từ Admin', phone: '+84987654321' });
+    expect(result.stops[1]?.merchant).toMatchObject({ name: 'Tên lịch sử', phone: '0901111111' });
   });
 });

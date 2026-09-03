@@ -8,14 +8,14 @@ import { ApiError, api } from '../lib/api';
 import { formatLiters } from '../lib/formatters';
 import { getLatestStationReceipt, retryOutbox, type OutboxRecord, type StoredStationReceipt } from '../lib/outbox-db';
 import { useOnlineStatus, useOutboxRows, useOutboxStats } from '../lib/outbox-hooks';
-import { loadRouteWithCache, lookupContainerWithCache, prefetchRouteData, type RouteLoadResult } from '../lib/offline-cache';
+import { canUseOfflineCache, loadRouteWithCache, lookupContainerWithCache, prefetchRouteData, type RouteLoadResult } from '../lib/offline-cache';
 import { enqueueCollection } from '../lib/outbox-db';
 import { startOutboxSyncWorker, syncOutbox } from '../lib/outbox-sync';
 import { outboxErrorMessage } from '../lib/outbox-errors';
 import { submitContainerCode } from '../lib/container-code';
 import { pendingStationDeliveryStorage } from '../lib/storage';
 import type { PendingStationDeliveryDraft } from '../lib/storage';
-import { isValidGeoPoint, isZaloPermissionDenied, zaloClient } from '../lib/zalo-client';
+import { copyPhoneNumber, isValidGeoPoint, isZaloPermissionDenied, normalizeVietnamesePhone, zaloClient } from '../lib/zalo-client';
 import type { PhotoAsset } from '../lib/zalo-client';
 import { compressImageBlob } from '../lib/zalo-client';
 import { pickZaloPhoto } from '../lib/media-picker';
@@ -667,7 +667,31 @@ export function getPickupPriorityDisplay(stop: RouteStop): {
 }
 
 export function isValidPhone(phone: unknown): phone is string {
-  return typeof phone === 'string' && phone.trim().length > 0;
+  if (typeof phone !== 'string') return false;
+  try {
+    normalizeVietnamesePhone(phone);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export type EmptyRouteState = 'none' | 'no-ready' | 'completed' | 'incomplete-active';
+
+export function getEmptyRouteState(
+  route: CurrentRouteResponse,
+  visibleStopCount: number,
+  completedOrderIds: string[],
+): EmptyRouteState {
+  if (visibleStopCount > 0) return 'none';
+  if (route.route_status === 'COMPLETED') return 'completed';
+  if (route.route_status === 'PREVIEW') return 'no-ready';
+  const completed = new Set(completedOrderIds);
+  const allProcessed = route.stops.length > 0 && route.stops.every((stop) =>
+    stop.route_stop_status === 'COLLECTED'
+    || stop.route_stop_status === 'SKIPPED'
+    || completed.has(stop.order_id));
+  return allProcessed ? 'completed' : 'incomplete-active';
 }
 
 export async function runCollectorAction(
@@ -722,6 +746,8 @@ export function CollectorFlow() {
   const [refreshNotice, setRefreshNotice] = useState<RouteRefreshNotice | null>(null);
   const refreshRunner = useRef<(() => Promise<void>) | null>(null);
   const locationRunner = useRef<(() => Promise<LocationAttemptResult>) | null>(null);
+  const routeDataRef = useRef<RouteLoadResult | undefined>(undefined);
+  const locationRef = useRef<GeoPoint | null>(null);
   const online = useOnlineStatus();
   const outboxStats = useOutboxStats();
   const outboxRows = useOutboxRows();
@@ -749,7 +775,7 @@ export function CollectorFlow() {
       try {
         return await loadRouteWithCache(location ?? undefined, collectorStorageId);
       } catch (error) {
-        if (restoredShift?.activeRoute) {
+        if (restoredShift?.activeRoute && canUseOfflineCache(error)) {
           return { route: restoredShift.activeRoute, fromCache: true, cachedAt: restoredShift.savedAt };
         }
         throw error;
@@ -760,6 +786,8 @@ export function CollectorFlow() {
   const routeProgress = route.data
     ? reconcileRouteProgress(route.data.route, completed, route.data.route.route_id ?? restoredRouteId, outboxRows)
     : { completed, completedOrderIds: Object.keys(completed), skippedOrderIds: [] };
+  routeDataRef.current = route.data;
+  locationRef.current = location;
 
   useEffect(() => {
     const loadedRouteId = route.data?.route.route_id;
@@ -792,7 +820,7 @@ export function CollectorFlow() {
   if (refreshRunner.current === null) {
     refreshRunner.current = createRouteRefreshRunner(
       async () => {
-        const fallback = route.data?.route.stops.find((stop) => stop.ward_center)?.ward_center ?? location;
+        const fallback = routeDataRef.current?.route.stops.find((stop) => stop.ward_center)?.ward_center ?? locationRef.current;
         const attempt = locationRunner.current;
         const refreshed = await refreshRouteWithLocation(
           async () => {
@@ -829,8 +857,8 @@ export function CollectorFlow() {
   }, [location, route.data]);
 
   useEffect(() => {
-    if (route.data && initialStopCount === null) {
-      setInitialStopCount(route.data.route.stops.length);
+    if (route.data) {
+      setInitialStopCount((current) => Math.max(current ?? 0, route.data.route.stops.length));
     }
   }, [initialStopCount, route.data]);
 
@@ -1008,6 +1036,8 @@ export function CollectorFlow() {
         onOpenOutbox={() => setScreen({ name: 'outbox' })}
         refreshing={refreshing}
         refreshNotice={refreshNotice}
+        loadError={route.isError}
+        completedOrderIds={routeProgress.completedOrderIds}
         onRefresh={() => { void refreshRoute(); }}
         lastReceipt={lastReceipt}
         onOpenLastReceipt={() => setScreen({ name: 'receipt-view' })}
@@ -1039,6 +1069,8 @@ interface CollectorRouteScreenProps {
   prefetching: boolean;
   refreshing: boolean;
   refreshNotice: RouteRefreshNotice | null;
+  loadError: boolean;
+  completedOrderIds: string[];
   lastReceipt: StoredStationReceipt | null;
   onStartShift: () => void;
   onCancelShift: () => void;
@@ -1049,12 +1081,13 @@ interface CollectorRouteScreenProps {
   onOpenLastReceipt: () => void;
 }
 
-function CollectorRouteScreen({ stops, route, location, locationDenied, completed, totalStops, outboxRows, outboxStats, shiftStarted, shiftError, prefetching, refreshing, refreshNotice, lastReceipt, onStartShift, onCancelShift, onOpenQr, onOpenSummary, onOpenOutbox, onRefresh, onOpenLastReceipt }: CollectorRouteScreenProps) {
+function CollectorRouteScreen({ stops, route, location, locationDenied, completed, completedOrderIds, totalStops, outboxRows, outboxStats, shiftStarted, shiftError, prefetching, refreshing, refreshNotice, loadError, lastReceipt, onStartShift, onCancelShift, onOpenQr, onOpenSummary, onOpenOutbox, onRefresh, onOpenLastReceipt }: CollectorRouteScreenProps) {
   const vehicleCapacity = route.route.total_expected_liters + route.route.remaining_capacity_l;
   const routeFill = vehicleCapacity > 0 ? Math.min(100, Math.round((route.route.total_expected_liters / vehicleCapacity) * 100)) : 0;
   const completedLiters = Object.values(completed).reduce((sum, item) => sum + item.liters, 0);
   const routeOptimization = getRouteOptimizationDisplay(route.route.route_optimization);
   const routeCapacityRisk = getRouteCapacityRiskDisplay(route.route.route_capacity_risk, vehicleCapacity);
+  const emptyState = getEmptyRouteState(route.route, stops.length, completedOrderIds);
 
   return (
     <div className="page-content collector-content">
@@ -1066,6 +1099,7 @@ function CollectorRouteScreen({ stops, route, location, locationDenied, complete
         </div>
       </header>
       {refreshNotice ? <div className={`route-refresh-notice route-refresh-notice-${refreshNotice.kind}`} role={refreshNotice.kind === 'error' ? 'alert' : 'status'}>{refreshNotice.message}</div> : null}
+      {loadError ? <div className="route-refresh-notice route-refresh-notice-error" role="alert">Không tải được bản tuyến mới; dữ liệu đã lưu vẫn được giữ. <button className="text-button" onClick={onRefresh}>Thử lại</button></div> : null}
       {!location && !locationDenied ? <div className="location-banner">Đang xin quyền vị trí để tính tuyến gần nhất…</div> : null}
       {locationDenied ? <div className="location-banner">Không lấy được vị trí GPS, đang dùng vị trí trung tâm phường. Giao dịch có thể bị đánh dấu cần kiểm tra.</div> : null}
       {route.fromCache ? <div className="offline-cache-banner">Đang dùng dữ liệu lúc {formatTime(route.cachedAt)}</div> : null}
@@ -1095,8 +1129,12 @@ function CollectorRouteScreen({ stops, route, location, locationDenied, complete
         </section>
       ) : null}
       <div className="route-summary-line"><strong>{Object.keys(completed).length} / {Math.max(totalStops, Object.keys(completed).length)} điểm đã thu</strong><button className="text-button" onClick={onOpenSummary}>Tóm tắt ca</button></div>
-      {stops.length === 0 ? (
-        <StatusView title="Đã hoàn thành tuyến" message={completedLiters > 0 ? `Đã thu ${formatLiters(completedLiters)}. Bạn có thể xem lại tóm tắt ca.` : 'Hiện chưa có điểm READY trong phường.'} action={{ label: 'Xem tóm tắt ca', onClick: onOpenSummary }} />
+      {emptyState === 'no-ready' ? (
+        <StatusView title="Hiện chưa có điểm READY" message="Chưa có quán nào trong phường yêu cầu thu gom. Hãy tải lại khi có đơn mới." action={{ label: 'Tải lại tuyến', onClick: onRefresh }} />
+      ) : emptyState === 'completed' ? (
+        <StatusView title="Đã hoàn thành tuyến" message={completedLiters > 0 ? `Đã thu ${formatLiters(completedLiters)}. Bạn có thể xem lại tóm tắt ca.` : 'Server xác nhận toàn bộ điểm trong tuyến đã được xử lý.'} action={{ label: 'Xem tóm tắt ca', onClick: onOpenSummary }} />
+      ) : emptyState === 'incomplete-active' ? (
+        <StatusView title="Chưa tải đủ điểm của tuyến ACTIVE" message="Ca vẫn đang hoạt động nhưng chưa nhận được danh sách điểm. Dữ liệu ca không bị xóa; hãy thử tải lại." action={{ label: 'Thử lại', onClick: onRefresh }} />
       ) : (
         <section className="collector-stop-list">
           {stops.map((stop) => <CollectorStopCard key={stop.order_id} stop={stop} outboxRow={findRowForStop(outboxRows, stop)} onOpenQr={() => onOpenQr(stop)} />)}
@@ -1131,18 +1169,37 @@ function CollectorStopCard({ stop, outboxRow, onOpenQr }: { stop: RouteStop; out
   const pickupVolumeForecast = getPickupVolumeForecastDisplay(stop);
   const [actionBusy, setActionBusy] = useState<'phone' | 'directions' | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const phone = isValidPhone(stop.merchant.phone) ? stop.merchant.phone.trim() : '';
-  const canCall = phone.length > 0;
+  const [copyNotice, setCopyNotice] = useState<string | null>(null);
+  const rawPhone = typeof stop.merchant.phone === 'string' ? stop.merchant.phone.trim() : '';
+  let normalizedPhone = '';
+  try {
+    normalizedPhone = normalizeVietnamesePhone(rawPhone);
+  } catch {
+    // The explicit validation message is rendered below.
+  }
+  const canCall = normalizedPhone.length > 0;
+  const phoneIssue = !rawPhone
+    ? 'Quán chưa có số điện thoại.'
+    : !canCall
+      ? `Số điện thoại quán không hợp lệ: ${rawPhone}`
+      : null;
   const canOpenDirections = isValidGeoPoint(stop.merchant);
 
   function openPhone(): void {
     if (!canCall || actionBusy) return;
     void runCollectorAction(
-      () => zaloClient.openPhone(phone),
+      () => zaloClient.openPhone(normalizedPhone),
       'Không thể mở cuộc gọi. Vui lòng thử lại.',
       (busy) => setActionBusy(busy ? 'phone' : null),
       setActionError,
     );
+  }
+
+  function copyPhone(): void {
+    if (!canCall) return;
+    void copyPhoneNumber(normalizedPhone).then((copied) => {
+      setCopyNotice(copied ? 'Đã sao chép số điện thoại.' : `Không thể tự sao chép. Số quán: ${normalizedPhone}`);
+    }).catch(() => setCopyNotice(`Không thể tự sao chép. Số quán: ${normalizedPhone}`));
   }
 
   function openDirections(): void {
@@ -1182,6 +1239,9 @@ function CollectorStopCard({ stop, outboxRow, onOpenQr }: { stop: RouteStop; out
           <button type="button" className={`map-action ${!canOpenDirections ? 'disabled-action' : ''}`} onClick={openDirections} disabled={!canOpenDirections || actionBusy !== null}>{actionBusy === 'directions' ? 'Đang mở…' : 'Chỉ đường'}</button>
           <button className="collect-action" onClick={onOpenQr} disabled={status === 'pending' || status === 'syncing'}>{status === 'synced' ? 'Đã thu' : 'Thu gom'}</button>
         </div>
+        {phoneIssue ? <p className="action-error" role="alert">{phoneIssue}</p> : null}
+        {canCall ? <div className="phone-fallback"><span>Số quán: {normalizedPhone}</span><button type="button" className="text-button" onClick={copyPhone}>Sao chép số</button></div> : null}
+        {copyNotice ? <p className="action-notice" role="status">{copyNotice}</p> : null}
         {actionError ? <p className="action-error" role="alert">{actionError}</p> : null}
       </div>
     </article>

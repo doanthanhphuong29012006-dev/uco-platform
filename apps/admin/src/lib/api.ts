@@ -173,6 +173,18 @@ export const api = {
     client.request<PagedResponse<AdminMerchantSummary>>(
       `/admin/merchants${query({ page: 1, limit: 100, ...params })}`,
     ),
+  updateMerchant: (
+    id: string,
+    body: {
+      name: string;
+      phone: string;
+      address: string;
+      business_type?: string;
+      ward_id: string;
+      lat?: number;
+      lng?: number;
+    },
+  ) => client.request(`/merchants/${id}`, { method: 'PATCH', body }),
   collectors: () =>
     client.request<PagedResponse<AdminCollectorSummary>>(
       '/admin/collectors?page=1&limit=100&include_inactive=true',

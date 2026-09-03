@@ -101,7 +101,7 @@ test('browser client opens tel and Google Maps and delegates QR/camera/gallery c
   );
 
   await client.openPhone('0901 000 001');
-  assert.equal(browserWindow.location.href, 'tel:0901000001');
+  assert.equal(browserWindow.location.href, 'tel:+84901000001');
   await client.openDirections({ lat: 21.0333, lng: 105.85 });
   assert.match(opened[0], /^https:\/\/www\.google\.com\/maps\/dir/);
   assert.equal(await client.scanQRCode(), 'ECO-QR-BROWSER');
@@ -136,6 +136,35 @@ test('real client calls native openPhone with the trimmed phone number', async (
   await client.openPhone('  +84900000001  ');
 
   assert.deepEqual(calls, ['+84900000001']);
+});
+
+test('Vietnamese phone normalization produces one canonical number for 0, 84 and +84', async () => {
+  const { normalizeVietnamesePhone } = await import('../src/lib/zalo-client');
+  assert.equal(normalizeVietnamesePhone('0901 234 567'), '+84901234567');
+  assert.equal(normalizeVietnamesePhone('84.901.234.567'), '+84901234567');
+  assert.equal(normalizeVietnamesePhone('+84-901-234-567'), '+84901234567');
+  assert.throws(() => normalizeVietnamesePhone('12345'), /không hợp lệ/);
+});
+
+test('real client falls back to tel when native openPhone fails', async () => {
+  const fallbacks: string[] = [];
+  const { RealZaloClient } = await import('../src/lib/zalo-client');
+  const client = new RealZaloClient(
+    async () => ({
+      openPhone: async () => { throw new Error('native blocked'); },
+      openWebview: async () => undefined,
+    }),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    (phone) => { fallbacks.push(phone); return true; },
+  );
+
+  await client.openPhone('84901234567');
+  assert.deepEqual(fallbacks, ['+84901234567']);
 });
 
 test('real client opens encoded Google Maps directions in the configured webview', async () => {

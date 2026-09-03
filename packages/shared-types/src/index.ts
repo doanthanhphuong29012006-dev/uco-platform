@@ -547,6 +547,7 @@ export interface AdminStationSummary {
 
 export interface AdminMerchantSummary {
   id: string;
+  ward_id: string;
   name: string;
   address: string | null;
   lat: number | null;

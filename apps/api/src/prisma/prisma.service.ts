@@ -29,6 +29,18 @@ export interface RouteOrderRow {
   distanceM: number;
 }
 
+export interface LiveRouteStopMerchantRow {
+  orderId: string;
+  merchantName: string;
+  merchantAddress: string | null;
+  merchantPhone: string | null;
+  merchantLat: number;
+  merchantLng: number;
+  wardCenterLat: number | null;
+  wardCenterLng: number | null;
+  containerCode: string;
+}
+
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   async onModuleInit(): Promise<void> {
@@ -111,6 +123,33 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       originLng,
       originLat,
       wardIds,
+    );
+  }
+
+  async findLiveRouteStopMerchants(orderIds: string[]): Promise<LiveRouteStopMerchantRow[]> {
+    const uniqueOrderIds = [...new Set(orderIds)];
+    if (uniqueOrderIds.length === 0) {
+      return [];
+    }
+    return this.$queryRawUnsafe<LiveRouteStopMerchantRow[]>(
+      `SELECT
+        o."id" AS "orderId",
+        m."business_name" AS "merchantName",
+        m."address" AS "merchantAddress",
+        u."phone" AS "merchantPhone",
+        ST_Y(COALESCE(m."location", ST_SetSRID(ST_MakePoint(w."center_lng", w."center_lat"), 4326)::geography)::geometry)::float8 AS "merchantLat",
+        ST_X(COALESCE(m."location", ST_SetSRID(ST_MakePoint(w."center_lng", w."center_lat"), 4326)::geography)::geometry)::float8 AS "merchantLng",
+        w."center_lat"::float8 AS "wardCenterLat",
+        w."center_lng"::float8 AS "wardCenterLng",
+        c."qr_code" AS "containerCode"
+      FROM "collection_orders" o
+      JOIN "merchants" m ON m."id" = o."merchant_id"
+      JOIN "users" u ON u."id" = m."user_id"
+      JOIN "containers" c ON c."id" = o."container_id"
+      JOIN "wards" w ON w."id" = m."ward_id"
+      WHERE o."id" = ANY($1::uuid[])
+        AND o."deleted_at" IS NULL`,
+      uniqueOrderIds,
     );
   }
 
