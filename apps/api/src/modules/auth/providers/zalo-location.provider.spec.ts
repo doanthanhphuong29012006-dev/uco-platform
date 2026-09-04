@@ -11,6 +11,22 @@ describe('ZaloLocationProvider', () => {
     global.fetch = fetchMock as unknown as typeof fetch;
   });
 
+  it('detects a tunnel reaching Profile Relay before sending a single-use location token', async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ service: 'ecollect-zalo-profile-relay', version: 2 }) });
+    const provider = new ZaloLocationProvider(new ConfigService({ ZALO_LOCATION_RELAY_URL: 'https://wrong.example/zalo/location', ZALO_LOCATION_RELAY_TOKEN: 'x'.repeat(32) }));
+    await expect(provider.resolve(input)).rejects.toMatchObject({ response: { code: 'ZALO_LOCATION_RELAY_SERVICE_MISMATCH' } });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(fetchMock.mock.calls)).not.toContain(input.location_token);
+  });
+
+  it('distinguishes relay authentication failure from user GPS permission', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ service: 'ecollect-zalo-location-relay', version: 2 }) });
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({ error: 'UNAUTHORIZED' }) });
+    const provider = new ZaloLocationProvider(new ConfigService({ ZALO_LOCATION_RELAY_URL: 'https://relay.example/zalo/location', ZALO_LOCATION_RELAY_TOKEN: 'x'.repeat(32) }));
+    await expect(provider.resolve(input)).rejects.toMatchObject({ response: { code: 'ZALO_LOCATION_RELAY_AUTH_FAILED' } });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it('exchanges a location token and returns valid coordinates', async () => {
     fetchMock.mockResolvedValue({
       ok: true,
@@ -44,6 +60,7 @@ describe('ZaloLocationProvider', () => {
   });
 
   it('exchanges through an authenticated HTTPS relay without sending the app secret', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ service: 'ecollect-zalo-location-relay', version: 2 }) });
     fetchMock.mockResolvedValue({
       ok: true,
       status: 200,
@@ -100,7 +117,6 @@ describe('ZaloLocationProvider', () => {
       event: 'zalo_location_exchange_rejected',
       status: 401,
       provider_error: 202,
-      provider_message: 'invalid location token',
     });
     expect(JSON.stringify(warnSpy.mock.calls)).not.toContain(input.access_token);
     expect(JSON.stringify(warnSpy.mock.calls)).not.toContain(input.location_token);
@@ -140,7 +156,7 @@ describe('ZaloLocationProvider', () => {
     const provider = new ZaloLocationProvider(new ConfigService({ ZALO_APP_SECRET: 'backend-secret-test' }));
     const result = provider.resolve(input);
     const assertion = expect(result).rejects.toMatchObject({
-      response: expect.objectContaining({ code: 'ZALO_LOCATION_PROVIDER_UNAVAILABLE' }),
+      response: expect.objectContaining({ code: 'ZALO_LOCATION_TIMEOUT' }),
       status: 502,
     });
 

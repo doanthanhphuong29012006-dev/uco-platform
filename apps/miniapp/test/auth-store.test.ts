@@ -4,6 +4,17 @@ import { useAuthStore } from '../src/stores/auth-store';
 import { tokenStorage } from '../src/lib/storage';
 import { fetchWithTimeout } from '../src/lib/api';
 import { pendingStationDeliveryStorage } from '../src/lib/storage';
+import { api } from '../src/lib/api';
+
+test('single-use location exchange does not refresh/replay on provider 401', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => { calls++; return new Response(JSON.stringify({ code: 'ZALO_LOCATION_TOKEN_INVALID', message: 'expired', details: null }), { status: 401 }); };
+  try {
+    await assert.rejects(() => api.resolveZaloLocation('test-access', 'test-location'));
+    assert.equal(calls, 1);
+  } finally { globalThis.fetch = originalFetch; }
+});
 
 test('API requests time out instead of leaving authentication hydration pending forever', async () => {
   const originalFetch = globalThis.fetch;

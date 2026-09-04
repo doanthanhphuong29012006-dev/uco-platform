@@ -222,10 +222,12 @@ export const api = {
     }),
   registerMyMerchant: (payload: MerchantOnboardingRequest) =>
     request<unknown>('/merchants/me', { method: 'POST', body: payload, retry: false }),
+  myMerchant: () => request<{ name: string; address: string | null; business_type: string | null; ward_id: string | null; lat: number | null; lng: number | null; user: { phone: string | null } }>('/merchants/me'),
   resolveZaloLocation: (accessToken: string, locationToken: string) =>
     request<GeoPoint>('/auth/zalo/location', {
       method: 'POST',
       body: { access_token: accessToken, location_token: locationToken },
+      retry: false, // A location token is single-use, including provider failures.
     }),
   logout: (refreshToken?: string) => request<{ success: true }>('/auth/logout', { method: 'POST', ...(refreshToken ? { body: { refresh_token: refreshToken } } : {}), retry: false }),
   me: () => request<AuthUser>('/auth/me'),

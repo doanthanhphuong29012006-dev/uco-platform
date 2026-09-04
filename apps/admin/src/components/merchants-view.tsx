@@ -15,7 +15,7 @@ function valuesForMerchant(merchant: AdminMerchantSummary): MerchantEditFormValu
     phone: merchant.phone ?? '',
     address: merchant.address ?? '',
     businessType: merchant.business_type ?? '',
-    wardId: merchant.ward_id,
+    wardId: merchant.ward_id ?? '',
     lat: merchant.lat?.toString() ?? '',
     lng: merchant.lng?.toString() ?? '',
   };

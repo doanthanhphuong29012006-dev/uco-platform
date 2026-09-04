@@ -119,6 +119,12 @@ test('documented ZMP capabilities identify a real Zalo runtime without private g
   assert.equal(isZaloEnvironment(runtime as never), true);
 });
 
+test('native Mini App URL is recognized before SDK creates its global object', async () => {
+  const { isZaloEnvironment } = await import('../src/lib/zalo-client');
+  assert.equal(isZaloEnvironment({ location: { href: 'https://h5.zdn.vn/zapps/123/index.html' }, navigator: { userAgent: 'iPhone Zalo/1' } } as never), true);
+  assert.equal(isZaloEnvironment({ location: { href: 'https://web.example.test/' }, navigator: { userAgent: 'iPhone Zalo/1' } } as never), false);
+});
+
 test('browser GPS maps timeout separately from permission denial', async () => {
   setBrowserGeolocation((_success, failure) => failure({ code: 3, PERMISSION_DENIED: 1, TIMEOUT: 3 }));
   const { browserLocation } = await import('../src/lib/zalo-client');
@@ -133,7 +139,10 @@ test('real client calls native openPhone with the trimmed phone number', async (
     openWebview: async () => undefined,
   }));
 
-  await client.openPhone('  +84900000001  ');
+  await client.preparePhone();
+  const pending = client.openPhone('  +84900000001  ');
+  assert.equal(calls.length, 1, 'SDK invoked synchronously within click gesture');
+  await pending;
 
   assert.deepEqual(calls, ['+84900000001']);
 });
@@ -146,8 +155,54 @@ test('Vietnamese phone normalization produces one canonical number for 0, 84 and
   assert.throws(() => normalizeVietnamesePhone('12345'), /không hợp lệ/);
 });
 
-test('real client falls back to tel when native openPhone fails', async () => {
-  const fallbacks: string[] = [];
+test('native phone timeout settles without launching a second dialer', async () => {
+  const { RealZaloClient } = await import('../src/lib/zalo-client');
+  let calls = 0;
+  const client = new RealZaloClient(async () => ({ openPhone: () => { calls++; return new Promise(() => undefined); }, openWebview: async () => undefined }), undefined, undefined, undefined, undefined, undefined, undefined, 5);
+  await client.preparePhone();
+  await assert.rejects(() => client.openPhone('0901234567'), { code: 'PHONE_OPEN_BLOCKED' });
+  assert.equal(calls, 1);
+});
+
+test('GPS requests are single flight and never exchange a previously used token', async () => {
+  const { RealZaloClient } = await import('../src/lib/zalo-client');
+  let exchanges = 0;
+  let reads = 0;
+  const client = new RealZaloClient(undefined, async () => ({ getAccessToken: async () => 'test-access', getLocation: async () => { reads++; return { token: 'single-use' }; } }), async () => { exchanges++; await wait(5); return { lat: 21.03, lng: 105.85 }; });
+  await Promise.all([client.getLocation(), client.getLocation()]);
+  assert.equal(reads, 1);
+  assert.equal(exchanges, 1);
+  await assert.rejects(() => client.getLocation(), { code: 'ZALO_LOCATION_TOKEN_REUSED' });
+  assert.equal(exchanges, 1);
+});
+
+test('GPS permission denied stops before token exchange', async () => {
+  const { RealZaloClient } = await import('../src/lib/zalo-client');
+  let exchanges = 0;
+  const client = new RealZaloClient(undefined, async () => ({ getSetting: async () => ({ authSetting: { 'scope.userLocation': false } }), authorize: async () => ({ 'scope.userLocation': false }), getAccessToken: async () => 'test', getLocation: async () => ({ token: 'unused' }) }), async () => { exchanges++; return { lat: 21, lng: 105 }; });
+  await assert.rejects(() => client.getLocation(), { code: 'GEOLOCATION_PERMISSION_DENIED' });
+  assert.equal(exchanges, 0);
+});
+
+test('GPS SDK timeout releases the flight for an explicit retry', async () => {
+  const { RealZaloClient } = await import('../src/lib/zalo-client');
+  let calls = 0;
+  const client = new RealZaloClient(undefined, async () => ({ getAccessToken: async () => 'test', getLocation: () => { calls++; return calls === 1 ? new Promise(() => undefined) : Promise.resolve({ token: 'fresh-token' }); } }), async () => ({ lat: 21, lng: 105 }), undefined, undefined, undefined, undefined, 5);
+  await assert.rejects(() => client.getLocation(), { code: 'DEVICE_TIMEOUT' });
+  assert.deepEqual(await client.getLocation(), { lat: 21, lng: 105 });
+});
+
+test('GPS exchange failure is not retried with the same token', async () => {
+  const { RealZaloClient } = await import('../src/lib/zalo-client');
+  let calls = 0;
+  const client = new RealZaloClient(undefined, async () => ({ getAccessToken: async () => 'test', getLocation: async () => ({ token: 'consumed-on-error' }) }), async () => { calls++; throw new Error('relay refused'); });
+  await assert.rejects(() => client.getLocation(), /relay refused/);
+  await assert.rejects(() => client.getLocation(), { code: 'ZALO_LOCATION_TOKEN_REUSED' });
+  assert.equal(calls, 1);
+});
+
+test('native failure does not open an automatic tel fallback', async () => {
+  const before = window.location?.href;
   const { RealZaloClient } = await import('../src/lib/zalo-client');
   const client = new RealZaloClient(
     async () => ({
@@ -160,11 +215,12 @@ test('real client falls back to tel when native openPhone fails', async () => {
     undefined,
     undefined,
     undefined,
-    (phone) => { fallbacks.push(phone); return true; },
+    10,
   );
 
-  await client.openPhone('84901234567');
-  assert.deepEqual(fallbacks, ['+84901234567']);
+  await client.preparePhone();
+  await assert.rejects(() => client.openPhone('84901234567'), { code: 'PHONE_OPEN_BLOCKED' });
+  assert.equal(window.location?.href, before);
 });
 
 test('real client opens encoded Google Maps directions in the configured webview', async () => {
@@ -233,7 +289,7 @@ test('real client rejects an empty SDK location token without browser geolocatio
     async () => ({ lat: 21.0333, lng: 105.85 }),
   );
 
-  await assert.rejects(() => client.getLocation({ lat: 21.0333, lng: 105.85 }), /token vị trí Zalo/);
+  await assert.rejects(() => client.getLocation(), { code: 'ZALO_LOCATION_TOKEN_MISSING' });
 });
 
 test('real client normalizes raw, JSON and URL container QR payloads', async () => {

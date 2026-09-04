@@ -7,6 +7,8 @@ const ZALO_LOCATION_TIMEOUT_MS = 5_000;
 const MIN_RELAY_TOKEN_LENGTH = 32;
 
 type ZaloLocationResponse = {
+  service?: unknown;
+  version?: unknown;
   error?: unknown;
   message?: unknown;
   data?: {
@@ -40,6 +42,12 @@ export class ZaloLocationProvider {
       ? await this.exchangeThroughRelay(input, relay)
       : await this.exchangeDirectly(input, secret!);
 
+    if (relay && (response.status === 404 || response.status === 405)) {
+      throw new BadGatewayException({ code: 'ZALO_LOCATION_RELAY_ENDPOINT_INVALID', message: 'Tunnel không định tuyến /zalo/location đến Location Relay (8787).', details: null });
+    }
+    if (relay && response.status === 401 && payload.error === 'UNAUTHORIZED') {
+      throw new BadGatewayException({ code: 'ZALO_LOCATION_RELAY_AUTH_FAILED', message: 'Token xác thực backend với Location Relay không khớp.', details: null });
+    }
     if (response.status >= 500) {
       throw new BadGatewayException({
         code: 'ZALO_LOCATION_PROVIDER_UNAVAILABLE',
@@ -58,8 +66,7 @@ export class ZaloLocationProvider {
       this.logger.warn({
         event: 'zalo_location_exchange_rejected',
         status: response.status,
-        provider_error: this.safeDiagnostic(payload.error),
-        provider_message: this.safeDiagnostic(payload.message),
+        provider_error: typeof payload.error === 'number' ? payload.error : null,
       });
       throw new UnauthorizedException({
         code: 'ZALO_LOCATION_TOKEN_INVALID',
@@ -88,6 +95,14 @@ export class ZaloLocationProvider {
   }
 
   private async exchangeThroughRelay(input: ZaloLocationInput, relay: RelayConfig): Promise<LocationExchange> {
+    const health = await this.exchange(new URL('/health', relay.url).toString(), { method: 'GET' });
+    if (!health.response.ok || health.payload.service !== 'ecollect-zalo-location-relay' || health.payload.version !== 2) {
+      throw new BadGatewayException({
+        code: 'ZALO_LOCATION_RELAY_SERVICE_MISMATCH',
+        message: 'URL GPS không tới Location Relay version 2. Kiểm tra tunnel cổng 8787, không dùng tunnel Profile Relay 8788.',
+        details: null,
+      });
+    }
     return this.exchange(relay.url, {
       method: 'POST',
       headers: {
@@ -99,6 +114,7 @@ export class ZaloLocationProvider {
   }
 
   private async exchange(url: string, options: RequestInit): Promise<LocationExchange> {
+    const started = Date.now();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), ZALO_LOCATION_TIMEOUT_MS);
     try {
@@ -106,6 +122,8 @@ export class ZaloLocationProvider {
         ...options,
         signal: controller.signal,
       });
+      this.logger.log({ event: 'zalo_location_http', stage: options.method === 'GET' && url.endsWith('/health') ? 'relay-health' : 'exchange', http_status: response.status, elapsed_ms: Date.now() - started });
+      if (response.status === 404 || response.status === 405) throw new BadGatewayException({ code: 'ZALO_LOCATION_RELAY_ENDPOINT_INVALID', message: 'Endpoint vị trí không tồn tại. Kiểm tra URL và cổng tunnel.', details: null });
       try {
         const payload = await response.json() as ZaloLocationResponse;
         return { response, payload };
@@ -117,8 +135,8 @@ export class ZaloLocationProvider {
         throw error;
       }
       throw new BadGatewayException({
-        code: 'ZALO_LOCATION_PROVIDER_UNAVAILABLE',
-        message: 'Không kết nối được dịch vụ vị trí Zalo',
+        code: controller.signal.aborted ? 'ZALO_LOCATION_TIMEOUT' : 'ZALO_LOCATION_PROVIDER_UNAVAILABLE',
+        message: controller.signal.aborted ? 'Dịch vụ đổi token vị trí quá thời gian chờ. Hãy lấy token mới.' : 'Không kết nối được dịch vụ vị trí Zalo',
         details: null,
       });
     } finally {
@@ -142,7 +160,7 @@ export class ZaloLocationProvider {
         details: null,
       });
     }
-    if (url.protocol !== 'https:' || !token || token.length < MIN_RELAY_TOKEN_LENGTH) {
+    if (url.protocol !== 'https:' || url.pathname !== '/zalo/location' || url.search || url.username || url.password || !token || token.length < MIN_RELAY_TOKEN_LENGTH) {
       throw new ServiceUnavailableException({
         code: 'ZALO_LOCATION_RELAY_CONFIG_INVALID',
         message: 'Relay vị trí Zalo cần URL HTTPS và token tối thiểu 32 ký tự',

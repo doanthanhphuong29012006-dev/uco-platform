@@ -115,8 +115,11 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       JOIN "wards" w ON w."id" = m."ward_id"
       CROSS JOIN origin
       WHERE o."status" = 'READY'::"OrderStatus"
+        AND o."collector_id" IS NULL
         AND o."deleted_at" IS NULL
         AND m."status" = 'ACTIVE'::"EntityStatus"
+        AND m."approval_status" = 'APPROVED'::"MerchantApprovalStatus"
+        AND m."deleted_at" IS NULL
         AND c."status" = 'ACTIVE'::"EntityStatus"
         AND m."ward_id" = ANY($3::uuid[])
       ORDER BY o."priority" DESC, "distanceM" ASC, o."requested_at" ASC`,

@@ -21,11 +21,14 @@ export class MerchantsService {
     if (existing) {
       throw new ConflictException('Merchant profile already exists');
     }
-    await this.requireWard(input.ward_id);
-    const merchant = await this.prisma.merchant.create({
+    if (input.ward_id) await this.requireWard(input.ward_id);
+    const merchant = await this.prisma.$transaction(async (tx) => {
+    if (input.phone) await tx.user.update({ where: { id: user.sub }, data: { phone: input.phone } });
+    const created = await tx.merchant.create({
       data: {
         userId: user.sub,
-        wardId: input.ward_id,
+        wardId: input.ward_id ?? null,
+        approvalStatus: MerchantApprovalStatus.PENDING,
         businessName: input.name,
         address: input.address,
         avgDailyLiters: input.avg_daily_liters,
@@ -33,7 +36,9 @@ export class MerchantsService {
       },
       include: { user: true, ward: true },
     });
-    await this.prisma.setGeographyPoint('merchants', merchant.id, input.lat, input.lng);
+    await tx.$executeRaw`UPDATE "merchants" SET "location" = ST_SetSRID(ST_MakePoint(${input.lng}, ${input.lat}), 4326)::geography WHERE "id" = ${created.id}::uuid`;
+    return created;
+    });
     return this.findOne(merchant.id);
   }
 
@@ -46,7 +51,7 @@ export class MerchantsService {
         details: { zalo_id: input.zalo_id },
       });
     }
-    await this.requireWard(input.ward_id);
+    if (input.ward_id) await this.requireWard(input.ward_id);
     const merchant = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: { zaloId: input.zalo_id, phone: input.phone, name: input.name, role: Role.MERCHANT },
@@ -54,7 +59,7 @@ export class MerchantsService {
       const created = await tx.merchant.create({
         data: {
           userId: user.id,
-          wardId: input.ward_id,
+          wardId: input.ward_id ?? null,
           businessName: input.name,
           businessType: input.business_type,
           address: input.address,
@@ -214,6 +219,9 @@ export class MerchantsService {
   async update(user: AccessTokenPayload, id: string, input: MerchantPatchInput) {
     await this.assertOwnerOrAdmin(user, id);
     const existing = await this.getRequired(id);
+    if (user.role !== Role.ADMIN && input.ward_id !== undefined && input.ward_id !== existing.wardId) {
+      throw new ForbiddenException('Chỉ Admin được gán hoặc đổi phường cho hồ sơ quán');
+    }
     if (input.ward_id) {
       await this.requireWard(input.ward_id);
     }
@@ -318,7 +326,7 @@ export class MerchantsService {
       approval_status: row.approvalStatus,
       rejection_reason: row.rejectionReason,
       is_active: row.isActive,
-      ward: { id: row.ward.id, code: row.ward.code, name: row.ward.name },
+      ward: row.ward ? { id: row.ward.id, code: row.ward.code, name: row.ward.name } : null,
       user: { id: row.user.id, name: row.user.name, phone: row.user.phone },
     };
   }

@@ -33,6 +33,7 @@ function createService(rows: RouteOrderRow[], maxCapacityLiters = 100) {
   const findReadyOrdersForRoute = jest.fn().mockResolvedValue(rows);
   const findRecentCollectionHistoryByMerchantIds = jest.fn().mockResolvedValue([]);
   const prisma = {
+    collectionOrder: { findMany: jest.fn().mockResolvedValue([]) },
     collector: { findUnique: jest.fn().mockResolvedValue({ ...collector, maxCapacityLiters }) },
     collectionRoute: {
       findFirst: jest.fn().mockResolvedValue(null),
@@ -48,6 +49,7 @@ function createService(rows: RouteOrderRow[], maxCapacityLiters = 100) {
 function persistedRoute(overrides: Record<string, unknown> = {}) {
   return {
     id: 'route-01',
+    collectorId: 'collector-01',
     clientUuid: '11111111-1111-4111-8111-111111111111',
     status: 'ACTIVE',
     originLat: 10,
@@ -82,6 +84,7 @@ function createLifecycleService() {
     collectionRouteStop: { count: jest.fn().mockResolvedValue(0), updateMany: jest.fn() },
   };
   const prisma = {
+    collectionOrder: { findMany: jest.fn().mockResolvedValue([]) },
     collector: { findUnique: jest.fn().mockResolvedValue({ ...collector, id: 'collector-01' }) },
     collectionRoute: {
       findUnique: jest.fn().mockResolvedValue(null),
@@ -371,6 +374,28 @@ describe('OrdersService currentRoute pickup priority', () => {
 });
 
 describe('OrdersService persisted collection route lifecycle', () => {
+  it('detects own ASSIGNED orders without an ACTIVE route without modifying orders', async () => {
+    const { service, prisma, tx } = createLifecycleService();
+    jest.mocked(prisma.collectionOrder.findMany).mockResolvedValue([{ id: 'order-01', status: 'ASSIGNED' }] as never);
+    await expect(service.currentRoute({ sub: 'collector-user' } as never, {})).rejects.toMatchObject({ response: { code: 'ASSIGNED_ORDERS_WITHOUT_ACTIVE_ROUTE' } });
+    expect(tx.collectionOrder.updateMany).not.toHaveBeenCalled();
+    expect(prisma.collectionOrder.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { collectorId: 'collector-01', status: 'ASSIGNED', deletedAt: null } }));
+  });
+
+  it('restores own ASSIGNED pending stop from server after reload', async () => {
+    const { service, prisma, route, tx } = createLifecycleService();
+    jest.mocked(prisma.collectionOrder.findMany).mockResolvedValue([{ id: 'order-01', status: 'ASSIGNED' }] as never);
+    jest.mocked(prisma.collectionRoute.findFirst).mockResolvedValue(route as never);
+    expect((await service.currentRoute({ sub: 'collector-user' } as never, {})).stops[0]).toMatchObject({ order_id: 'order-01', route_stop_status: 'PENDING' });
+    expect(tx.collectionOrder.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('does not reveal or claim another collector route through client_uuid replay', async () => {
+    const { service, prisma, route, tx } = createLifecycleService();
+    jest.mocked(prisma.collectionRoute.findUnique).mockResolvedValue({ ...route, collectorId: 'another-collector' } as never);
+    await expect(service.startRoute({ sub: 'collector-user' } as never, { client_uuid: route.clientUuid })).rejects.toMatchObject({ status: 403 });
+    expect(tx.collectionOrder.updateMany).not.toHaveBeenCalled();
+  });
   it('starts one server-owned route and returns the persisted snapshot', async () => {
     const { service, prisma, tx } = createLifecycleService();
     const result = await service.startRoute({ sub: 'collector-user' } as never, {

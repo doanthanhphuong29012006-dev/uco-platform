@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 import { AdminShell } from './admin-shell';
 import { Badge, EmptyState, ErrorState, Skeleton } from './ui';
+import { ApprovalWardForm } from './approval-ward-form';
 
 type Coordinates = { lat: string; lng: string };
 
@@ -17,17 +18,20 @@ export function ApprovalsView() {
   const [createNew, setCreateNew] = useState(false);
   const [coordinates, setCoordinates] = useState<Record<string, Coordinates>>({});
   const [coordinateError, setCoordinateError] = useState<string | null>(null);
+  const [selectedWards, setSelectedWards] = useState<Record<string, string>>({});
+  const [checked, setChecked] = useState<Record<string, string>>({});
+  const [addingWardFor, setAddingWardFor] = useState<string | null>(null);
+  const wards = useQuery({ queryKey: ['wards', false], queryFn: () => api.wards(false) });
 
   const pending = useQuery({ queryKey: ['pending-merchants'], queryFn: () => api.merchants({ status: 'PENDING' }) });
   const unassigned = useQuery({ queryKey: ['unassigned-containers'], queryFn: () => api.containers({ unassigned: true }) });
 
   const approve = useMutation({
-    mutationFn: async ({ merchantId, lat, lng }: { merchantId: string; lat: number; lng: number }) => {
-      await api.approveMerchant(merchantId, { lat, lng });
+    mutationFn: async ({ merchantId, lat, lng, wardId }: { merchantId: string; lat: number; lng: number; wardId: string }) => {
+      await api.approveMerchant(merchantId, { lat, lng, ward_id: wardId });
       if (selectedContainerId) await api.assignContainer(selectedContainerId, merchantId);
       if (createNew) {
-        const merchant = pending.data?.data.find((item) => item.id === merchantId);
-        const created = await api.createContainer({ ward_code: merchant?.ward_code ?? undefined, capacity_liters: 30 });
+        const created = await api.createContainer({ ward_id: wardId, capacity_liters: 30 });
         await api.assignContainer(created.id, merchantId);
       }
     },
@@ -39,6 +43,8 @@ export function ApprovalsView() {
       void queryClient.invalidateQueries({ queryKey: ['pending-merchants'] });
       void queryClient.invalidateQueries({ queryKey: ['unassigned-containers'] });
       void queryClient.invalidateQueries({ queryKey: ['pending-merchants-count'] });
+      void queryClient.invalidateQueries({ queryKey: ['merchants'] });
+      void queryClient.invalidateQueries({ queryKey: ['wards'] });
     },
   });
 
@@ -60,14 +66,17 @@ export function ApprovalsView() {
     <h2 className="mt-1 text-3xl font-bold">Duyệt quán</h2>
     <section className="mt-6 grid gap-4">
       {!pending.data?.data.length ? <EmptyState message="Không có hồ sơ nào đang chờ duyệt." /> : pending.data.data.map((merchant) => {
+        const wardId = selectedWards[merchant.id] ?? merchant.ward_id ?? '';
         const current = coordinates[merchant.id] ?? { lat: String(merchant.lat ?? ''), lng: String(merchant.lng ?? '') };
+        const verificationKey = `${wardId}:${current.lat}:${current.lng}`;
         return <article key={merchant.id} className="rounded-2xl border border-amber-200 bg-white p-5 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h3 className="text-lg font-bold">{merchant.name}</h3>
               <p className="mt-1 text-sm text-slate-600">{merchant.address ?? 'Chưa có địa chỉ'}</p>
               <p className="mt-2 text-sm text-slate-500">{merchant.business_type ?? 'Chưa chọn loại hình'} · {merchant.phone ?? 'Chưa có số điện thoại'}</p>
-              <p className="mt-1 text-xs text-slate-400">Phường: {merchant.ward_name ?? merchant.ward_code ?? '—'}</p>
+              <p className="mt-1 text-xs text-slate-400">Phường: {merchant.ward_name ?? merchant.ward_code ?? 'Chờ Admin gán phường'}</p>
+              <p>Tọa độ: {merchant.lat ?? 'Chưa có'}, {merchant.lng ?? 'Chưa có'}</p>
             </div>
             <Badge tone="orange">PENDING</Badge>
           </div>
@@ -83,6 +92,12 @@ export function ApprovalsView() {
           </div>
           {provisionId === merchant.id && <div className="mt-4 grid gap-3 rounded-xl bg-emerald-50 p-4">
             <strong>Tọa độ thực tế trước khi duyệt</strong>
+            <label>Phường<select value={wardId} disabled={approve.isPending || wards.isLoading} onChange={(event) => { setSelectedWards((old) => ({ ...old, [merchant.id]: event.target.value })); setChecked((old) => ({ ...old, [merchant.id]: '' })); }}><option value="">Chọn phường</option>{wards.data?.map((ward) => <option key={ward.id} value={ward.id}>{ward.name} ({ward.code})</option>)}</select></label>
+            {wards.error ? <p role="alert">Không tải được danh mục. <button onClick={() => void wards.refetch()}>Thử lại</button></p> : null}
+            <button type="button" disabled={approve.isPending} onClick={() => setAddingWardFor(addingWardFor === merchant.id ? null : merchant.id)}>Thêm phường</button>
+            {addingWardFor === merchant.id ? <ApprovalWardForm onCreated={(id) => { setSelectedWards((old) => ({ ...old, [merchant.id]: id })); setChecked((old) => ({ ...old, [merchant.id]: '' })); setAddingWardFor(null); }} /> : null}
+            <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${current.lat},${current.lng}`)}`} target="_blank" rel="noreferrer">Kiểm tra tọa độ trên bản đồ</a>
+            <label><input type="checkbox" checked={checked[merchant.id] === verificationKey} onChange={(event) => setChecked((old) => ({ ...old, [merchant.id]: event.target.checked ? verificationKey : '' }))} />Tôi đã kiểm tra tọa độ và phường của quán</label>
             <p className="text-sm text-slate-600">Kiểm tra vị trí trên bản đồ hoặc nhập tọa độ GPS của quán. Không dùng tọa độ mặc định.</p>
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="grid gap-1 text-sm font-semibold">Vĩ độ (8–24)<input className="min-h-11 rounded-xl border bg-white px-3" type="number" step="any" value={current.lat} onChange={(event) => setCoordinates((old) => ({ ...old, [merchant.id]: { ...current, lat: event.target.value } }))} /></label>
@@ -97,7 +112,8 @@ export function ApprovalsView() {
                 setCoordinateError('Vui lòng nhập tọa độ thực trong lãnh thổ Việt Nam; không dùng tọa độ mặc định.');
                 return;
               }
-              approve.mutate({ merchantId: merchant.id, lat, lng });
+              if (!wardId || checked[merchant.id] !== verificationKey) { setCoordinateError('Chọn phường và xác nhận đã kiểm tra vị trí trước khi duyệt.'); return; }
+              approve.mutate({ merchantId: merchant.id, lat, lng, wardId });
             }}>{approve.isPending ? 'Đang xử lý…' : 'Xác nhận duyệt'}</button><button className="min-h-11 rounded-xl border px-4 font-semibold" onClick={() => setProvisionId(null)}>Hủy</button></div>
             {coordinateError && <p className="text-sm text-red-700">{coordinateError}</p>}
             {approve.error && <p className="text-sm text-red-700">{approve.error instanceof ApiError ? approve.error.message : 'Không thể duyệt hồ sơ.'}</p>}

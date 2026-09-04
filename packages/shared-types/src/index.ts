@@ -164,7 +164,7 @@ export interface MerchantOnboardingRequest {
   business_type?: string;
   lat: number;
   lng: number;
-  ward_id: string;
+  ward_id?: string;
   avg_daily_liters?: number;
 }
 
@@ -185,7 +185,7 @@ export interface MerchantRegistrationRequest {
   business_type: string;
   lat: number;
   lng: number;
-  ward_id: string;
+  ward_id?: string;
   avg_daily_liters?: number;
 }
 
@@ -547,7 +547,7 @@ export interface AdminStationSummary {
 
 export interface AdminMerchantSummary {
   id: string;
-  ward_id: string;
+  ward_id: string | null;
   name: string;
   address: string | null;
   lat: number | null;

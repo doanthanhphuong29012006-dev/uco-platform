@@ -78,6 +78,7 @@ function safeProviderValue(value: unknown): string | number | boolean | null {
 }
 
 async function exchangeLocation(input: LocationInput, appSecret: string, fetcher: Fetcher): Promise<{ status: number; payload: ZaloPayload }> {
+  const started = Date.now();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -91,6 +92,7 @@ async function exchangeLocation(input: LocationInput, appSecret: string, fetcher
       signal: controller.signal,
     });
     const payload = await response.json() as ZaloPayload;
+    console.info('[zalo-location-relay]', { stage: 'provider-exchange', http_status: response.status, provider_error: typeof payload.error === 'number' ? payload.error : null, elapsed_ms: Date.now() - started });
     if (!response.ok || payload.error !== undefined && payload.error !== 0) {
       return {
         status: response.status,
@@ -117,7 +119,7 @@ async function exchangeLocation(input: LocationInput, appSecret: string, fetcher
 export function createZaloLocationRelayServer(config: RelayConfig, fetcher: Fetcher = fetch) {
   return createServer(async (request, response) => {
     if (request.method === 'GET' && request.url === '/health') {
-      sendJson(response, 200, { status: 'ok' });
+      sendJson(response, 200, { status: 'ok', service: 'ecollect-zalo-location-relay', version: 2 });
       return;
     }
     if (request.method !== 'POST' || request.url !== '/zalo/location') {
@@ -142,7 +144,7 @@ export function createZaloLocationRelayServer(config: RelayConfig, fetcher: Fetc
         sendJson(response, 400, { error: 'INVALID_INPUT' });
         return;
       }
-      console.warn('[zalo-location-relay] provider request failed', { code });
+      console.warn('[zalo-location-relay] provider request failed', { code: code === 'INVALID_PROVIDER_RESPONSE' ? code : 'PROVIDER_UNAVAILABLE' });
       sendJson(response, 502, { error: 'PROVIDER_UNAVAILABLE' });
     }
   });

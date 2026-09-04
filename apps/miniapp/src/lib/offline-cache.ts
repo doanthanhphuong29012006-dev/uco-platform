@@ -35,7 +35,12 @@ export async function prefetchRouteData(route: CurrentRouteResponse, location: G
 export async function loadRouteWithCache(location?: GeoPoint, ownerId?: string | null): Promise<RouteLoadResult> {
   try {
     const route = await api.currentRoute(location);
-    await cacheRoute(route, location ?? null, ownerId);
+    try {
+      await cacheRoute(route, location ?? null, ownerId);
+    } catch {
+      // A storage failure must not replace a valid server route with an older/empty cache.
+      console.warn('[collector-route]', { stage: 'cache-write-failed', collector_id: ownerId ?? null, route_id: route.route_id });
+    }
     void Promise.all(route.stops.map(async (stop) => {
       try {
         await cacheContainer(await api.containerByQr(stop.container_code));

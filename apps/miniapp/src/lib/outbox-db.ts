@@ -319,9 +319,23 @@ export async function persistOutboxForTest(record: OutboxRecord, options: Outbox
   return persistOutboxRecord(record, options);
 }
 
-export async function enqueueCollection(payload: CollectionCreateRequest): Promise<OutboxRecord> {
-  const now = new Date().toISOString();
+const collectionEnqueues = new Map<string, Promise<OutboxRecord>>();
+
+export function enqueueCollection(payload: CollectionCreateRequest): Promise<OutboxRecord> {
   const ownerId = requireActiveOutboxOwner();
+  const key = `${ownerId}:${payload.order_id}`;
+  const pending = collectionEnqueues.get(key);
+  if (pending) return pending;
+  const operation = enqueueCollectionOnce(payload, ownerId).finally(() => collectionEnqueues.delete(key));
+  collectionEnqueues.set(key, operation);
+  return operation;
+}
+
+async function enqueueCollectionOnce(payload: CollectionCreateRequest, ownerId: string): Promise<OutboxRecord> {
+  const existing = await ecoOilDb.outbox.filter((row) => row.owner_id === ownerId && row.type === 'collection'
+    && (row.payload as Partial<CollectionCreateRequest>).order_id === payload.order_id).first();
+  if (existing) return existing;
+  const now = new Date().toISOString();
   const record: OutboxRecord = {
     client_uuid: payload.client_uuid,
     owner_id: ownerId,
@@ -336,7 +350,9 @@ export async function enqueueCollection(payload: CollectionCreateRequest): Promi
     updated_at: now,
     sync_started_at: null,
   };
-  return persistOutboxRecord(record);
+  const saved = await persistOutboxRecord(record);
+  console.info('[collection]', { stage: 'confirmed-locally', collector_id: ownerId, order_id: payload.order_id, client_uuid: saved.client_uuid, outbox_status: saved.status });
+  return saved;
 }
 
 export async function enqueueStationDelivery(payload: StationDeliveryCreateRequest): Promise<OutboxRecord> {

@@ -191,7 +191,7 @@ export const api = {
     ),
   collectorPerformance: (id: string) =>
     client.request<AdminCollectorPerformance>(`/admin/collectors/${id}/performance`),
-  approveMerchant: (id: string, body: { lat: number; lng: number }) =>
+  approveMerchant: (id: string, body: { lat: number; lng: number; ward_id: string }) =>
     client.request(`/admin/merchants/${id}/approve`, { method: 'POST', body }),
   rejectMerchant: (id: string, reason: string) =>
     client.request(`/admin/merchants/${id}/reject`, { method: 'POST', body: { reason } }),

@@ -1077,7 +1077,7 @@ export class AdminService {
     const rows = await this.prisma.$queryRaw<
       Array<{
         id: string;
-        ward_id: string;
+        ward_id: string | null;
         name: string;
         address: string | null;
         lat: number | null;
@@ -1113,7 +1113,7 @@ export class AdminService {
         COUNT(*) OVER()::int AS total
       FROM "merchants" m
       JOIN "users" u ON u."id" = m."user_id"
-      JOIN "wards" w ON w."id" = m."ward_id"
+      LEFT JOIN "wards" w ON w."id" = m."ward_id"
       LEFT JOIN LATERAL (
         SELECT ST_Distance(m."location", s."location") AS distance_m
         FROM "stations" s
@@ -1362,6 +1362,11 @@ export class AdminService {
       });
     }
     const updated = await this.prisma.$transaction(async (tx) => {
+      const wardId = input.ward_id ?? merchant.wardId;
+      if (!wardId) throw new BadRequestException({ code: 'MERCHANT_WARD_REQUIRED', message: 'Admin phải chọn phường trước khi duyệt.', details: null });
+      const ward = await tx.ward.findUnique({ where: { id: wardId } });
+      if (!ward || ward.deletedAt || ward.status !== EntityStatus.ACTIVE || !ward.isActive) throw new BadRequestException('Phường không hoạt động hoặc không tồn tại');
+      if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < 8 || lat > 24 || lng < 102 || lng > 110) throw new BadRequestException('Tọa độ quán không hợp lệ');
       await tx.$executeRaw`
         UPDATE "merchants"
         SET "location" = ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography
@@ -1369,13 +1374,13 @@ export class AdminService {
       `;
       const row = await tx.merchant.update({
         where: { id },
-        data: { approvalStatus: MerchantApprovalStatus.APPROVED, rejectionReason: null },
+        data: { wardId, approvalStatus: MerchantApprovalStatus.APPROVED, rejectionReason: null },
       });
-      if (merchant.ward.centerLat !== null && merchant.ward.centerLng !== null) {
+      if (ward.centerLat !== null && ward.centerLng !== null) {
         const distanceRows = await tx.$queryRaw<Array<{ distance_m: number }>>`
           SELECT ST_Distance(
             ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography,
-            ST_SetSRID(ST_MakePoint(${merchant.ward.centerLng}, ${merchant.ward.centerLat}), 4326)::geography
+            ST_SetSRID(ST_MakePoint(${ward.centerLng}, ${ward.centerLat}), 4326)::geography
           ) AS distance_m
         `;
         const distanceM = Number(distanceRows[0]?.distance_m ?? 0);
@@ -1387,7 +1392,7 @@ export class AdminService {
               message: 'Tọa độ quán cách xa tâm phường được gán hơn 20 km',
               details: {
                 merchant_id: id,
-                ward_id: merchant.wardId,
+                ward_id: wardId,
                 distance_m: distanceM,
                 threshold_m: 20000,
               },
@@ -1503,7 +1508,7 @@ export class AdminService {
 
   async createWard(input: AdminWardCreateInput, actorUserId: string) {
     const existing = await this.prisma.ward.findUnique({ where: { code: input.code } });
-    if (existing && existing.deletedAt === null) {
+    if (existing) {
       throw new ConflictException({
         code: 'WARD_CODE_ALREADY_EXISTS',
         message: 'Mã phường đã tồn tại',
@@ -1533,6 +1538,11 @@ export class AdminService {
         },
       });
       return created;
+    }).catch((error: unknown) => {
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'P2002') {
+        throw new ConflictException({ code: 'WARD_CODE_ALREADY_EXISTS', message: 'Mã phường đã tồn tại', details: null });
+      }
+      throw error;
     });
     return (await this.listWards({ include_inactive: true })).find((item) => item.id === ward.id);
   }
@@ -2081,7 +2091,7 @@ export class AdminService {
       status: row.status,
       approval_status: row.approvalStatus,
       rejection_reason: row.rejectionReason,
-      ward: { id: row.ward.id, code: row.ward.code, name: row.ward.name },
+      ward: row.ward ? { id: row.ward.id, code: row.ward.code, name: row.ward.name } : null,
     };
   }
 

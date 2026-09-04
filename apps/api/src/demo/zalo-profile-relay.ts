@@ -150,7 +150,7 @@ export function createZaloProfileRelayServer(
 
   return createServer(async (request, response) => {
     if (request.method === 'GET' && request.url === '/health') {
-      sendJson(response, 200, { status: 'ok' });
+      sendJson(response, 200, { status: 'ok', service: 'ecollect-zalo-profile-relay', version: 2 });
       return;
     }
     if (request.method !== 'POST' || request.url !== ZALO_PROFILE_RELAY_PATH) {
@@ -226,8 +226,8 @@ function requiredSecret(): string {
   return value;
 }
 
-function relayPort(): number {
-  const value = Number(process.env.ZALO_PROFILE_RELAY_PORT ?? 8787);
+export function relayPort(configuredPort = process.env.ZALO_PROFILE_RELAY_PORT): number {
+  const value = Number(configuredPort ?? 8788);
   if (!Number.isInteger(value) || value < 1 || value > 65_535) throw new Error('ZALO_PROFILE_RELAY_PORT is invalid');
   return value;
 }

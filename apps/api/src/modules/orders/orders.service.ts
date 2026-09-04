@@ -62,7 +62,7 @@ export class OrdersService {
     if (!merchant || merchant.status === EntityStatus.INACTIVE) {
       throw new NotFoundException('Merchant profile not found');
     }
-    if (merchant.approvalStatus !== MerchantApprovalStatus.APPROVED) {
+    if (merchant.approvalStatus !== MerchantApprovalStatus.APPROVED || !merchant.wardId) {
       throw new ForbiddenException({
         code: 'MERCHANT_NOT_APPROVED',
         message: 'Tài khoản quán chưa được duyệt',
@@ -70,6 +70,7 @@ export class OrdersService {
       });
     }
 
+    const wardId = merchant.wardId;
     const assignedContainerCount = await this.prisma.container.count({
       where: { merchantId: merchant.id, status: EntityStatus.ACTIVE },
     });
@@ -129,7 +130,7 @@ export class OrdersService {
       });
       const collector = await tx.collectorWard.findFirst({
         where: {
-          wardId: merchant.wardId,
+          wardId,
           collector: { status: EntityStatus.ACTIVE, isActive: true, deletedAt: null },
         },
         select: { collectorId: true },
@@ -197,6 +198,15 @@ export class OrdersService {
       where: { collectorId: collector.id, status: 'ACTIVE' },
       include: { stops: { orderBy: { sequence: 'asc' } } },
     });
+    const assignedOrders = await this.prisma.collectionOrder.findMany({
+      where: { collectorId: collector.id, status: OrderStatus.ASSIGNED, deletedAt: null },
+      select: { id: true, status: true },
+    });
+    const orphaned = assignedOrders.filter((order) => !activeRoute?.stops.some((stop) => stop.orderId === order.id && stop.status === 'PENDING'));
+    if (orphaned.length) {
+      this.logger.warn({ event: 'assigned_orders_without_active_route', user_id: user.sub, collector_id: collector.id, route_id: activeRoute?.id ?? null, order_ids: orphaned.map((order) => order.id) });
+      throw new ConflictException({ code: 'ASSIGNED_ORDERS_WITHOUT_ACTIVE_ROUTE', message: 'Có đơn ASSIGNED của bạn chưa gắn đúng tuyến ACTIVE. Dữ liệu được giữ nguyên; hãy liên hệ Admin kiểm tra.', details: { collector_id: collector.id, route_id: activeRoute?.id ?? null, order_ids: orphaned.map((order) => order.id) } });
+    }
     const response = activeRoute
       ? await this.serializePersistedRoute(activeRoute as unknown as PersistedRoute)
       : await this.buildRoutePreview(collector, query);
@@ -211,6 +221,7 @@ export class OrdersService {
       collector_id: collector.id,
       route_id: response.route_id,
       route_status: response.route_status,
+      assigned_orders: assignedOrders,
       order_statuses: statusCounts,
     });
     return response;
@@ -223,6 +234,9 @@ export class OrdersService {
       include: { stops: { orderBy: { sequence: 'asc' } } },
     });
     if (existingByClient) {
+      if (existingByClient.collectorId !== collector.id) {
+        throw new ForbiddenException('Tuyến thuộc người thu gom khác');
+      }
       if (existingByClient.status === 'CANCELLED') {
         throw new ConflictException({ code: 'ROUTE_CLIENT_UUID_CANCELLED', message: 'Client UUID đã được dùng cho một ca đã hủy', details: null });
       }

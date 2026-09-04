@@ -9,6 +9,7 @@ import {
   ecoOilDb,
   enqueueCollection,
   persistOutboxForTest,
+  retryOutbox,
   setOutboxOwner,
   type OutboxRecord,
   type OutboxStats,
@@ -48,6 +49,13 @@ test('pending outbox payload survives a database close and reopen', async () => 
   };
 
   await enqueueCollection(payload);
+  const duplicate = await enqueueCollection({ ...payload, client_uuid: '00000000-0000-4000-8000-000000000088' });
+  assert.equal(duplicate.client_uuid, payload.client_uuid, 'reopened form reuses the confirmed transaction UUID');
+  assert.equal(await ecoOilDb.outbox.count(), 1);
+  await ecoOilDb.outbox.update(payload.client_uuid, { status: 'failed', last_error: 'offline' });
+  await retryOutbox(payload.client_uuid);
+  assert.equal((await ecoOilDb.outbox.get(payload.client_uuid))?.status, 'pending');
+  assert.equal(await ecoOilDb.outbox.count(), 1, 'retry neither deletes nor duplicates the queued transaction');
   ecoOilDb.close();
 
   const reopened = new EcoOilDatabase();

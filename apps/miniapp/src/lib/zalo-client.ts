@@ -1,4 +1,5 @@
 import type { GeoPoint } from '@eco-oil/shared-types';
+import type { GetLocationReturns, GetSettingReturn } from 'zmp-sdk';
 import { scanBrowserQrCode } from './browser-qr-scanner';
 
 export interface PhotoAsset {
@@ -25,6 +26,7 @@ export interface IZaloClient {
   chooseImage(source?: ImageSource): Promise<PhotoAsset>;
   cancelMediaPicker?(): void;
   openPhone(phoneNumber: string): Promise<void>;
+  preparePhone?(): Promise<void>;
   openDirections(destination: GeoPoint, address?: string | null): Promise<void>;
   getStorage(key: string): string | null;
   setStorage(key: string, value: string): void;
@@ -71,10 +73,16 @@ export function isZaloEnvironment(runtimeWindow: Window | undefined = typeof win
   ].filter((candidate) => typeof candidate === 'function').length;
   const userAgent = runtimeWindow.navigator?.userAgent ?? '';
   const hasAppIdentity = Boolean(runtime.APP_ID?.trim() || runtime.zAppID?.trim());
+  let hasMiniAppUrl = false;
+  try {
+    const url = new URL(runtimeWindow.location.href);
+    // zmp-sdk 2.53.0 appEnv/getEnv uses this host/path BEFORE it installs ZaloMiniAppSDK.
+    hasMiniAppUrl = url.hostname === 'h5.zdn.vn' && (url.pathname.startsWith('/zapps/') || url.searchParams.get('env') === 'TESTING_LOCAL');
+  } catch { /* Tests and older injected runtimes may not expose location yet. */ }
 
   // A real ZMP runtime exposes several documented SDK capabilities. Older
   // clients are also recognized from the Zalo UA plus an injected app id.
-  return supportedNativeFunctions >= 2 || (hasAppIdentity && /\bZalo\b/i.test(userAgent));
+  return hasMiniAppUrl || supportedNativeFunctions >= 2 || (hasAppIdentity && /\bZalo\b/i.test(userAgent));
 }
 
 export class DeviceIntegrationError extends Error {
@@ -173,7 +181,9 @@ export interface ZaloNavigationSdk {
 
 export interface ZaloLocationSdk {
   getAccessToken(): Promise<string>;
-  getLocation(): Promise<{ token?: string }>;
+  getLocation(): Promise<GetLocationReturns>;
+  getSetting?(): Promise<GetSettingReturn>;
+  authorize?(args: { scopes: ['scope.userLocation'] }): Promise<{ 'scope.userLocation'?: boolean }>;
 }
 
 export interface ZaloMediaPickerError {
@@ -290,7 +300,7 @@ export function isZaloPermissionDenied(error: unknown): boolean {
     return false;
   }
   const code = (error as { code?: unknown }).code;
-  return Number(code) === -201 || code === 'GEOLOCATION_PERMISSION_DENIED' || code === 'CAMERA_PERMISSION_DENIED';
+  return Number(code) === -201 || Number(code) === -2002 || code === 'GEOLOCATION_PERMISSION_DENIED' || code === 'CAMERA_PERMISSION_DENIED';
 }
 
 function withDeviceTimeout<T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> {
@@ -364,18 +374,6 @@ export function normalizeVietnamesePhone(phoneNumber: string): string {
   throw new DeviceIntegrationError('PHONE_INVALID', 'Số điện thoại quán không hợp lệ.');
 }
 
-type TelOpener = (phoneNumber: string) => boolean;
-
-function openTelUrl(phoneNumber: string): boolean {
-  if (typeof window === 'undefined') return false;
-  try {
-    window.location.href = `tel:${phoneNumber}`;
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export async function copyPhoneNumber(phoneNumber: string): Promise<boolean> {
   const normalized = normalizeVietnamesePhone(phoneNumber);
   return copyText(normalized, typeof navigator === 'undefined' ? null : navigator);
@@ -393,6 +391,10 @@ export class RealZaloClient implements IZaloClient {
   private seedAccount: SeedAccount = { zaloId: '', phone: '' };
   private cancelActiveMediaPicker: (() => void) | null = null;
   private mediaPickerCancelRequested = false;
+  private navigationSdk: ZaloNavigationSdk | null = null;
+  private navigationLoading: Promise<void> | null = null;
+  private locationInFlight: Promise<GeoPoint | null> | null = null;
+  private readonly usedLocationTokens = new Set<string>();
 
   constructor(
     private readonly loadSdk: () => Promise<ZaloNavigationSdk> = () => import('zmp-sdk'),
@@ -405,7 +407,7 @@ export class RealZaloClient implements IZaloClient {
     private readonly resolveImage: (filePath: string) => Promise<PhotoAsset> = compressImage,
     private readonly mediaPickerLifecycle: () => MediaPickerLifecycle = getMediaPickerLifecycle,
     private readonly mediaPickerTimeoutMs = MEDIA_PICKER_WATCHDOG_MS,
-    private readonly openTel: TelOpener = openTelUrl,
+    private readonly deviceTimeoutMs = 20_000,
   ) {}
 
   async login(): Promise<SeedAccount> {
@@ -421,25 +423,55 @@ export class RealZaloClient implements IZaloClient {
     return import('zmp-sdk').then(({ getAccessToken }) => getAccessToken());
   }
 
-  async getLocation(): Promise<GeoPoint | null> {
-    const sdk = await this.loadLocationSdk();
-    const accessToken = (
-      await withDeviceTimeout(sdk.getAccessToken(), 15_000, 'Zalo không trả access token.')
-    ).trim();
-    const { token } = await withDeviceTimeout(
-      sdk.getLocation(),
-      20_000,
-      'Zalo không phản hồi yêu cầu vị trí.',
-    );
-    const locationToken = token?.trim();
-    if (!accessToken || !locationToken) {
-      throw new Error('Không lấy được token vị trí Zalo');
+  getLocation(): Promise<GeoPoint | null> {
+    if (!this.locationInFlight) {
+      this.locationInFlight = this.acquireLocation().finally(() => { this.locationInFlight = null; });
     }
-    return withDeviceTimeout(
-      this.resolveLocation(accessToken, locationToken),
-      20_000,
-      'Máy chủ không đổi được token vị trí trong thời gian cho phép.',
-    );
+    return this.locationInFlight;
+  }
+
+  private async acquireLocation(): Promise<GeoPoint> {
+    let stage = 'sdk-load';
+    const started = Date.now();
+    const timed = <T,>(operation: Promise<T>) => withDeviceTimeout(operation, this.deviceTimeoutMs, `GPS không phản hồi tại bước ${stage}. Hãy thử lấy vị trí lại.`);
+    try {
+      const sdk = await timed(this.loadLocationSdk());
+      stage = 'permission';
+      if (sdk.getSetting && sdk.authorize) {
+        const setting = await timed(sdk.getSetting());
+        if (!setting.authSetting['scope.userLocation']) {
+          const granted = await timed(sdk.authorize({ scopes: ['scope.userLocation'] }));
+          if (!granted['scope.userLocation']) throw new DeviceIntegrationError('GEOLOCATION_PERMISSION_DENIED', 'Chưa được cấp quyền vị trí cho Mini App trong Zalo.');
+        }
+      }
+      stage = 'access-token';
+      const accessToken = (await timed(sdk.getAccessToken())).trim();
+      if (!accessToken) throw new DeviceIntegrationError('ZALO_ACCESS_TOKEN_MISSING', 'Zalo không trả access token. Kiểm tra runtime và đăng nhập lại.');
+      stage = 'location-result';
+      const result = await timed(sdk.getLocation());
+      const token = typeof result.token === 'string' ? result.token.trim() : '';
+      console.info('[gps]', { stage, runtime: this.mode, has_token: Boolean(token), has_legacy_coordinates: result.latitude !== undefined && result.longitude !== undefined, elapsed_ms: Date.now() - started });
+      if (!token) {
+        // Older SDK clients can return real coordinates instead of a token.
+        const point = { lat: Number(result.latitude), lng: Number(result.longitude) };
+        if (result.latitude?.trim() && result.longitude?.trim() && isValidGeoPoint(point)) return point;
+        throw new DeviceIntegrationError('ZALO_LOCATION_TOKEN_MISSING', 'SDK Zalo không trả token hoặc tọa độ vị trí. Kiểm tra quyền Mini App, runtime và phiên bản Zalo; relay chưa được gọi.');
+      }
+      if (this.usedLocationTokens.has(token)) throw new DeviceIntegrationError('ZALO_LOCATION_TOKEN_REUSED', 'Zalo trả lại token vị trí đã dùng. Hãy lấy vị trí mới.');
+      this.usedLocationTokens.add(token);
+      stage = 'backend-exchange';
+      const point = await timed(this.resolveLocation(accessToken, token));
+      if (!isValidGeoPoint(point)) throw new DeviceIntegrationError('ZALO_LOCATION_INVALID', 'Máy chủ trả tọa độ không hợp lệ.');
+      console.info('[gps]', { stage: 'complete', runtime: this.mode, elapsed_ms: Date.now() - started });
+      return point;
+    } catch (error) {
+      const details = error && typeof error === 'object' ? error as { code?: unknown; status?: unknown } : {};
+      console.warn('[gps]', { stage, runtime: this.mode, code: typeof details.code === 'number' || typeof details.code === 'string' && /^[A-Z_]+$/.test(details.code) ? details.code : 'UNKNOWN', http_status: typeof details.status === 'number' ? details.status : null, elapsed_ms: Date.now() - started });
+      if (isZaloPermissionDenied(error)) throw new DeviceIntegrationError('GEOLOCATION_PERMISSION_DENIED', 'Quyền vị trí Mini App bị từ chối. Kiểm tra quyền trong Zalo rồi thử lại.');
+      if (Number(details.code) === -1404) throw new DeviceIntegrationError('ZALO_LOCATION_SDK_UNSUPPORTED', 'Phiên bản Zalo này không hỗ trợ API/token vị trí. Hãy cập nhật Zalo và kiểm tra quyền API của Mini App.');
+      if (!(error instanceof Error)) throw new DeviceIntegrationError('ZALO_LOCATION_SDK_ERROR', `Zalo báo lỗi ở bước ${stage} (mã ${typeof details.code === 'number' ? details.code : 'không rõ'}). Hãy thử lấy vị trí mới.`);
+      throw error;
+    }
   }
 
   async scanQRCode(): Promise<string> {
@@ -473,16 +505,23 @@ export class RealZaloClient implements IZaloClient {
     else this.mediaPickerCancelRequested = true;
   }
 
+  preparePhone(): Promise<void> {
+    if (!this.navigationLoading) this.navigationLoading = this.loadSdk().then((sdk) => { this.navigationSdk = sdk; }).catch((error) => { this.navigationLoading = null; throw error; });
+    return this.navigationLoading;
+  }
+
   async openPhone(phoneNumber: string): Promise<void> {
     const normalizedPhone = normalizeVietnamesePhone(phoneNumber);
+    if (!this.navigationSdk) throw new DeviceIntegrationError('PHONE_SDK_NOT_READY', 'SDK gọi điện chưa sẵn sàng. Hãy bấm “Gọi bằng điện thoại” bên dưới.');
+    const started = Date.now();
     try {
-      const { openPhone } = await this.loadSdk();
-      await openPhone({ phoneNumber: normalizedPhone });
-    } catch {
-      if (this.openTel(normalizedPhone)) return;
+      // Invoke before any await/import: preserve the user's native click gesture.
+      await withDeviceTimeout(this.navigationSdk.openPhone({ phoneNumber: normalizedPhone }), this.deviceTimeoutMs, 'Zalo chưa phản hồi mở màn hình gọi.');
+    } catch (error) {
+      console.warn('[phone]', { stage: 'open-screen', runtime: this.mode, elapsed_ms: Date.now() - started, code: error instanceof DeviceIntegrationError ? error.code : typeof (error as { code?: unknown } | null)?.code === 'number' ? (error as { code: number }).code : 'SDK_ERROR' });
       throw new DeviceIntegrationError(
         'PHONE_OPEN_BLOCKED',
-        `Thiết bị không cho mở cuộc gọi. Số quán: ${normalizedPhone}`,
+        'Không xác nhận được việc mở màn hình gọi. Nếu chưa mở, hãy bấm “Gọi bằng điện thoại” hoặc sao chép số.',
       );
     }
   }

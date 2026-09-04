@@ -80,7 +80,7 @@ export const merchantRegisterSchema = z.object({
   business_type: z.string().trim().min(1).max(120).optional(),
   lat: vietnamLatitudeSchema,
   lng: vietnamLongitudeSchema,
-  ward_id: uuidSchema,
+  ward_id: uuidSchema.optional(),
   avg_daily_liters: z.number().finite().nonnegative().max(100000).optional(),
 });
 export type MerchantRegisterInput = z.infer<typeof merchantRegisterSchema>;
@@ -94,6 +94,7 @@ export type MerchantPublicRegisterInput = z.infer<typeof merchantPublicRegisterS
 
 export const merchantApprovalSchema = z
   .object({
+    ward_id: uuidSchema.optional(),
     lat: vietnamLatitudeSchema.optional(),
     lng: vietnamLongitudeSchema.optional(),
   })

@@ -19,7 +19,7 @@ interface AuthState {
 }
 
 function applyUserScope(user: AuthUser | null): void {
-  setOutboxOwner(user?.role === 'COLLECTOR' ? user.collectorId ?? user.id : null);
+  setOutboxOwner(user?.role === 'COLLECTOR' ? user.collectorId : null);
 }
 
 function persistUser(user: AuthUser): void {

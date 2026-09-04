@@ -98,7 +98,8 @@ export class ContainersService {
     if (!merchant || merchant.status === EntityStatus.INACTIVE) {
       throw new NotFoundException('Merchant not found');
     }
-    return merchant;
+    if (!merchant.wardId) throw new ConflictException('Quán đang chờ Admin gán phường');
+    return { ...merchant, wardId: merchant.wardId };
   }
 
   private async getRequired(id: string) {
@@ -109,11 +110,11 @@ export class ContainersService {
     return row;
   }
 
-  private serialize(row: { id: string; qrCode: string; state: ContainerState; status: EntityStatus; capacityLiters: Prisma.Decimal | null; merchant: { id: string; businessName: string; address: string | null; wardId: string } | null }, includeLocation = false) {
+  private serialize(row: { id: string; qrCode: string; state: ContainerState; status: EntityStatus; capacityLiters: Prisma.Decimal | null; merchant: { id: string; businessName: string; address: string | null; wardId: string | null } | null }, includeLocation = false) {
     return this.serializeAsync(row, includeLocation);
   }
 
-  private async serializeAsync(row: { id: string; qrCode: string; state: ContainerState; status: EntityStatus; capacityLiters: Prisma.Decimal | null; merchant: { id: string; businessName: string; address: string | null; wardId: string } | null }, includeLocation: boolean) {
+  private async serializeAsync(row: { id: string; qrCode: string; state: ContainerState; status: EntityStatus; capacityLiters: Prisma.Decimal | null; merchant: { id: string; businessName: string; address: string | null; wardId: string | null } | null }, includeLocation: boolean) {
     const point = includeLocation && row.merchant ? await this.prisma.getGeographyPoint('merchants', row.merchant.id) : null;
     return {
       id: row.id,

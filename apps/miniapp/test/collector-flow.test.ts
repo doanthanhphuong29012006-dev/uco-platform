@@ -9,8 +9,9 @@ import { resolve } from 'node:path';
 import { createServer } from 'vite';
 import { isValidGeoPoint } from '../src/lib/zalo-client';
 import { formatLiters } from '../src/lib/formatters';
-import { ApiError } from '../src/lib/api';
-import { canUseOfflineCache } from '../src/lib/offline-cache';
+import { api, ApiError } from '../src/lib/api';
+import { canUseOfflineCache, loadRouteWithCache } from '../src/lib/offline-cache';
+import { ecoOilDb } from '../src/lib/outbox-db';
 
 type PickupPriorityHelpers = typeof import('../src/pages/CollectorFlow');
 
@@ -51,6 +52,22 @@ test('route cache is used for timeout/server failures but not a final unauthoriz
   assert.equal(canUseOfflineCache(new ApiError(401, { code: 'UNAUTHORIZED', message: 'expired', details: null })), false);
 });
 
+test('failed cache persistence cannot discard the valid current route returned by the server', async () => {
+  const originalRoute = api.currentRoute;
+  const originalPut = ecoOilDb.routeCache.put;
+  const latest = { route_id: 'active-server-route', route_status: 'ACTIVE', stops: [] } as never;
+  api.currentRoute = async () => latest;
+  ecoOilDb.routeCache.put = async () => { throw new Error('storage unavailable'); };
+  try {
+    const result = await loadRouteWithCache(undefined, 'collector-stable');
+    assert.equal(result.route, latest);
+    assert.equal(result.fromCache, false);
+  } finally {
+    api.currentRoute = originalRoute;
+    ecoOilDb.routeCache.put = originalPut;
+  }
+});
+
 test('pickup priority maps every API level to the Vietnamese label and style', async () => {
   const { getPickupPriorityDisplay, pickupPriorityLevelLabel } = await loadPickupPriorityHelpers();
   const expected = [
@@ -79,7 +96,7 @@ test('route progress only restores completed stops for the matching route and re
     'order-a': { liters: 6, kilograms: 5.46, clientUuid: 'client-a', stop: stop({ order_id: 'order-a' }) },
   } as never;
   const restored = reconcileRouteProgress(route, storedCompleted, 'route-a', []);
-  assert.deepEqual(restored.completedOrderIds, ['order-a']);
+  assert.deepEqual(restored.completedOrderIds, []); // Local storage alone is not server confirmation.
 
   const differentRoute = { ...route, route_id: 'route-b' } as never;
   assert.deepEqual(reconcileRouteProgress(differentRoute, storedCompleted, 'route-a', []).completedOrderIds, []);
@@ -91,7 +108,7 @@ test('route progress only restores completed stops for the matching route and re
     payload: { order_id: 'order-a', actual_liters: 7, actual_kg: 6.37 },
   } as never;
   const fromOutbox = reconcileRouteProgress(route, {}, 'route-a', [pending]);
-  assert.equal(fromOutbox.completedOrderIds.includes('order-a'), true);
+  assert.equal(fromOutbox.completedOrderIds.includes('order-a'), false);
   assert.equal(fromOutbox.completed['order-a']?.liters, 7);
 });
 
@@ -107,7 +124,7 @@ test('preview route keeps a locally completed stop after the API removes its col
     remaining_capacity_l: 80,
   } as never;
 
-  const progress = reconcileRouteProgress(refreshedPreview, storedCompleted, undefined, []);
+  const progress = reconcileRouteProgress(refreshedPreview, storedCompleted, undefined, [{ type: 'collection', client_uuid: 'client-collected', status: 'synced', payload: { order_id: 'order-collected' } }] as never);
   assert.deepEqual(progress.completedOrderIds, ['order-collected']);
   assert.equal(progress.completed['order-collected']?.liters, 21);
   assert.equal(Object.values(progress.completed).reduce((sum, item) => sum + item.liters, 0), 21);

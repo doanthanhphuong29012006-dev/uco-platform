@@ -1,6 +1,7 @@
 import request from 'supertest';
 import {
   createZaloProfileRelayServer,
+  relayPort,
   ZALO_PROFILE_RELAY_PATH,
   ZALO_PROFILE_RELAY_SECRET_HEADER,
   ZALO_PROFILE_URL,
@@ -10,10 +11,24 @@ describe('Zalo profile relay', () => {
   const relaySecret = 'relay-secret-that-is-at-least-32-characters-long';
   const accessToken = 'zalo-access-token-that-must-never-be-logged';
 
+  it('defaults to a separate port from the Location Relay and validates overrides', () => {
+    const previous = process.env.ZALO_PROFILE_RELAY_PORT;
+    delete process.env.ZALO_PROFILE_RELAY_PORT;
+    try {
+      expect(relayPort()).toBe(8788);
+      expect(relayPort('8790')).toBe(8790);
+      expect(() => relayPort('invalid')).toThrow('ZALO_PROFILE_RELAY_PORT is invalid');
+      expect(() => relayPort('0')).toThrow('ZALO_PROFILE_RELAY_PORT is invalid');
+    } finally {
+      if (previous === undefined) delete process.env.ZALO_PROFILE_RELAY_PORT;
+      else process.env.ZALO_PROFILE_RELAY_PORT = previous;
+    }
+  });
+
   it('keeps the health check public', async () => {
     const server = createZaloProfileRelayServer({ relaySecret }, jest.fn() as typeof fetch);
 
-    await request(server).get('/health').expect(200, { status: 'ok' });
+    await request(server).get('/health').expect(200, { status: 'ok', service: 'ecollect-zalo-profile-relay', version: 2 });
   });
 
   it('rejects missing and invalid relay secrets without forwarding the access token', async () => {

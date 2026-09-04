@@ -91,10 +91,10 @@ export function reconcileRouteProgress(
     });
     if (stored) {
       completed[stop.order_id] = stored;
-      completedOrderIds.add(stop.order_id);
+      if (outbox?.status === 'synced') completedOrderIds.add(stop.order_id);
     } else if (outbox) {
       completed[stop.order_id] = completedStopFromOutbox(outbox, stop);
-      completedOrderIds.add(stop.order_id);
+      if (outbox.status === 'synced') completedOrderIds.add(stop.order_id);
     }
   }
 
@@ -102,7 +102,9 @@ export function reconcileRouteProgress(
     for (const [orderId, stored] of Object.entries(storedCompleted)) {
       if (skippedOrderIds.has(orderId) || completed[orderId]) continue;
       completed[orderId] = stored;
-      completedOrderIds.add(orderId);
+      if (outboxRows.some((row) => row.client_uuid === stored.clientUuid && row.status === 'synced')) {
+        completedOrderIds.add(orderId);
+      }
     }
   }
 
@@ -727,10 +729,10 @@ export async function completeCollectorShiftSafely(options: {
 
 export function CollectorFlow() {
   const queryClient = useQueryClient();
-  const collectorStorageId = useAuthStore((state) => state.user?.collectorId ?? state.user?.id ?? null);
+  const collectorStorageId = useAuthStore((state) => state.user?.collectorId ?? null);
   const [restoredShift] = useState(() => collectorStorageId ? pendingStationDeliveryStorage.load(collectorStorageId) : null);
   const restoredRouteId = restoredShift?.routeId ?? restoredShift?.activeRoute?.route_id ?? undefined;
-  const [screen, setScreen] = useState<CollectorScreen>(() => restoredRouteId && Object.keys(restoredShift?.completed ?? {}).length > 0 ? { name: 'summary' } : { name: 'route' });
+  const [screen, setScreen] = useState<CollectorScreen>({ name: 'route' });
   const [location, setLocation] = useState<GeoPoint | null>(null);
   const [locationDenied, setLocationDenied] = useState(false);
   const [completed, setCompleted] = useState<Record<string, CompletedStop>>(restoredShift?.completed ?? {});
@@ -770,6 +772,7 @@ export function CollectorFlow() {
   }, []);
 
   const route = useQuery<RouteLoadResult>({
+    enabled: Boolean(collectorStorageId),
     queryKey: ['collector-route', collectorStorageId, location],
     queryFn: async () => {
       try {
@@ -784,7 +787,7 @@ export function CollectorFlow() {
     staleTime: 15_000,
   });
   const routeProgress = route.data
-    ? reconcileRouteProgress(route.data.route, completed, route.data.route.route_id ?? restoredRouteId, outboxRows)
+    ? reconcileRouteProgress(route.data.route, completed, restoredRouteId ?? route.data.route.route_id ?? undefined, outboxRows)
     : { completed, completedOrderIds: Object.keys(completed), skippedOrderIds: [] };
   routeDataRef.current = route.data;
   locationRef.current = location;
@@ -1004,10 +1007,12 @@ export function CollectorFlow() {
     content = <CollectorSummaryScreen route={route.data?.route} completed={routeProgress.completed} completedCount={routeProgress.completedOrderIds.length} totalStops={initialStopCount ?? route.data?.route.stops.length ?? 0} onBack={() => setScreen({ name: 'route' })} onOpenDelivery={() => setScreen({ name: 'station-delivery' })} />;
   } else if (screen.name === 'station-delivery') {
     content = <StationDeliveryFlow completed={routeProgress.completed} pendingDelivery={pendingDelivery} collectorId={collectorStorageId} routeId={route.data?.route.route_id ?? restoredRouteId} onPendingDelivery={(draft) => setPendingDelivery(draft)} onReceiptSaved={setLastReceipt} onBack={() => setScreen({ name: 'summary' })} onFinish={finishShift} />;
+  } else if (!collectorStorageId) {
+    content = <StatusView title="Chưa xác định được Collector" message="Tài khoản chưa có collector_id ổn định. Hãy đăng nhập lại hoặc liên hệ Admin; dữ liệu ca vẫn được giữ." />;
   } else if (route.isPending && !route.data) {
     content = <StatusView title="Đang tải tuyến hôm nay…" />;
   } else if (route.isError && !route.data) {
-    content = <StatusView title="Chưa tải được tuyến" message="Chưa có dữ liệu tuyến trên máy. Kiểm tra kết nối rồi thử lại." action={{ label: 'Thử lại', onClick: () => { void route.refetch(); } }} />;
+    content = <StatusView title="Chưa tải được tuyến" message={route.error instanceof Error ? route.error.message : 'Chưa có dữ liệu tuyến trên máy. Kiểm tra kết nối rồi thử lại.'} action={{ label: 'Thử lại', onClick: () => { void route.refetch(); } }} />;
   } else if (route.data) {
     const activeStopIds = new Set(routeProgress.completedOrderIds);
     const skippedStopIds = new Set(routeProgress.skippedOrderIds);
@@ -1031,7 +1036,10 @@ export function CollectorFlow() {
         prefetching={prefetching}
         onStartShift={() => { void startShift(); }}
         onCancelShift={() => { void cancelShift(); }}
-        onOpenQr={(stop) => setScreen({ name: 'qr', stop })}
+        onOpenQr={(stop) => {
+          console.info('[collection]', { stage: 'open-form-only', collector_id: collectorStorageId, route_id: route.data?.route.route_id, order_id: stop.order_id, route_stop_status: stop.route_stop_status ?? 'READY', outbox_status: findRowForStop(outboxRows, stop)?.status ?? null });
+          setScreen({ name: 'qr', stop });
+        }}
         onOpenSummary={() => setScreen({ name: 'summary' })}
         onOpenOutbox={() => setScreen({ name: 'outbox' })}
         refreshing={refreshing}
@@ -1128,7 +1136,7 @@ function CollectorRouteScreen({ stops, route, location, locationDenied, complete
           {routeOptimization.detail ? <small>{routeOptimization.detail}</small> : null}
         </section>
       ) : null}
-      <div className="route-summary-line"><strong>{Object.keys(completed).length} / {Math.max(totalStops, Object.keys(completed).length)} điểm đã thu</strong><button className="text-button" onClick={onOpenSummary}>Tóm tắt ca</button></div>
+      <div className="route-summary-line"><strong>{completedOrderIds.length} / {Math.max(totalStops, completedOrderIds.length)} điểm được server xác nhận đã thu</strong><button className="text-button" onClick={onOpenSummary}>Tóm tắt ca</button></div>
       {emptyState === 'no-ready' ? (
         <StatusView title="Hiện chưa có điểm READY" message="Chưa có quán nào trong phường yêu cầu thu gom. Hãy tải lại khi có đơn mới." action={{ label: 'Tải lại tuyến', onClick: onRefresh }} />
       ) : emptyState === 'completed' ? (
@@ -1164,6 +1172,7 @@ function OutboxIssueNotice({ rows, stats, onOpen }: { rows: OutboxRecord[]; stat
 }
 
 function CollectorStopCard({ stop, outboxRow, onOpenQr }: { stop: RouteStop; outboxRow: OutboxRecord | undefined; onOpenQr: () => void }) {
+  useEffect(() => { void zaloClient.preparePhone?.().catch(() => undefined); }, []);
   const status = outboxRow?.status;
   const pickupPriority = getPickupPriorityDisplay(stop);
   const pickupVolumeForecast = getPickupVolumeForecastDisplay(stop);
@@ -1237,10 +1246,10 @@ function CollectorStopCard({ stop, outboxRow, onOpenQr }: { stop: RouteStop; out
         <div className="stop-actions">
           <button type="button" className={`call-action ${!canCall ? 'disabled-action' : ''}`} onClick={openPhone} disabled={!canCall || actionBusy !== null}>{actionBusy === 'phone' ? 'Đang mở…' : 'Gọi quán'}</button>
           <button type="button" className={`map-action ${!canOpenDirections ? 'disabled-action' : ''}`} onClick={openDirections} disabled={!canOpenDirections || actionBusy !== null}>{actionBusy === 'directions' ? 'Đang mở…' : 'Chỉ đường'}</button>
-          <button className="collect-action" onClick={onOpenQr} disabled={status === 'pending' || status === 'syncing'}>{status === 'synced' ? 'Đã thu' : 'Thu gom'}</button>
+          <button type="button" className="collect-action" onClick={onOpenQr} disabled={Boolean(outboxRow)}>{status === 'synced' ? 'Đã thu' : outboxRow ? 'Chờ đồng bộ' : 'Thu gom'}</button>
         </div>
         {phoneIssue ? <p className="action-error" role="alert">{phoneIssue}</p> : null}
-        {canCall ? <div className="phone-fallback"><span>Số quán: {normalizedPhone}</span><button type="button" className="text-button" onClick={copyPhone}>Sao chép số</button></div> : null}
+        {canCall ? <div className="phone-fallback"><span>Số quán: {normalizedPhone}</span>{actionBusy !== 'phone' ? <a href={`tel:${normalizedPhone}`}>Gọi bằng điện thoại</a> : null}<button type="button" className="text-button" onClick={copyPhone}>Sao chép số</button><small>Mở màn hình gọi không xác nhận thuê bao có thể liên lạc.</small></div> : null}
         {copyNotice ? <p className="action-notice" role="status">{copyNotice}</p> : null}
         {actionError ? <p className="action-error" role="alert">{actionError}</p> : null}
       </div>
@@ -1600,14 +1609,15 @@ function CollectorEntryScreen({ stop, container, containerCode, onBack, onSucces
       collected_at: new Date().toISOString(),
       };
       const saved = await enqueueCollection(payload);
-      if (saved.client_uuid !== clientUuid || saved.status !== 'pending') {
+      if (!saved) {
         throw new Error('Không đọc lại được giao dịch vừa lưu trên máy.');
       }
       if (mountedRef.current) {
         setSuccess(true);
         void syncOutbox();
         window.setTimeout(() => {
-          if (mountedRef.current) onSuccess(actualLiters, actualKg, clientUuid);
+          const savedPayload = saved.payload as CollectionCreateRequest;
+          if (mountedRef.current) onSuccess(savedPayload.actual_liters ?? actualLiters, savedPayload.actual_kg ?? null, saved.client_uuid);
         }, 450);
       }
     } catch (submitError) {

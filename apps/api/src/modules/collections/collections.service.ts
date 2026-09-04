@@ -105,6 +105,9 @@ export class CollectionsService {
         });
       }
       const originalOrderStatus = order.status;
+      if (order.merchant.approvalStatus !== 'APPROVED' || !order.merchant.wardId) {
+        throw new ForbiddenException('Quán chưa được duyệt hoặc chưa được gán phường');
+      }
       if (!collector.collectorWards.some((item) => item.wardId === order.merchant.wardId)) {
         throw new ForbiddenException('Order is outside collector ward');
       }
