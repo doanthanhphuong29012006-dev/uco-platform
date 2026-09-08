@@ -32,6 +32,24 @@ describe('GPS-first merchant onboarding (isolated mocked database)', () => {
     expect(tx.merchant.update).toHaveBeenCalledWith({ where: { id: 'merchant-1' }, data: { wardId: 'ward-1', approvalStatus: 'APPROVED', rejectionReason: null } });
   });
 
+  it('rolls back merchant edits when the phone update conflicts', async () => {
+    const existing = { id: 'merchant-1', userId: 'user-1', wardId: 'ward-1', approvalStatus: 'APPROVED', rejectionReason: null, user: { id: 'user-1', name: 'Quán cũ', phone: '0900000000' }, ward: null };
+    const merchantUpdate = jest.fn().mockResolvedValue({ id: 'merchant-1' });
+    const userUpdate = jest.fn().mockRejectedValue({ code: 'P2002' });
+    const tx = { merchant: { update: merchantUpdate }, user: { update: userUpdate }, $executeRaw: jest.fn() };
+    const prisma = {
+      merchant: { findUnique: jest.fn().mockResolvedValue(existing) },
+      ward: { findUnique: jest.fn() },
+      getGeographyPoint: jest.fn().mockResolvedValue(null),
+      $transaction: jest.fn((fn) => fn(tx)),
+    };
+    const service = new MerchantsService(prisma as never);
+    await expect(service.update({ sub: 'admin', role: Role.ADMIN } as never, 'merchant-1', { name: 'Tên mới', phone: '0987654321' })).rejects.toMatchObject({ response: { code: 'PHONE_ALREADY_IN_USE' } });
+    expect(merchantUpdate).toHaveBeenCalledTimes(1);
+    expect(userUpdate).toHaveBeenCalledTimes(1);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
   it('does not partially update coordinates or approve a profile without a ward', async () => {
     const tx = { $executeRaw: jest.fn(), merchant: { update: jest.fn() } };
     const prisma = { merchant: { findUnique: jest.fn().mockResolvedValue({ id: 'merchant-1', wardId: null }) }, getGeographyPoint: jest.fn().mockResolvedValue({ lat: form.lat, lng: form.lng }), $transaction: jest.fn((fn) => fn(tx)) };

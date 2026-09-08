@@ -19,6 +19,7 @@ export function LoginScreen() {
   const error = useAuthStore((state) => state.error);
   const loginSeed = useAuthStore((state) => state.loginSeed);
   const loginWithZalo = useAuthStore((state) => state.loginWithZalo);
+  const authenticatedUser = useAuthStore((state) => state.user);
   const hydrate = useAuthStore((state) => state.hydrate);
   const [registering, setRegistering] = useState(false);
   const [registerError, setRegisterError] = useState<string | null>(null);
@@ -112,8 +113,11 @@ export function LoginScreen() {
       const point = await zaloClient.getLocation();
       if (!point)
         throw new Error('Không lấy được vị trí GPS. Vui lòng bật quyền vị trí rồi thử lại.');
-      await api.registerMerchant({ ...registerForm, lat: point.lat, lng: point.lng });
-      await loginSeed(registerForm.zalo_id, registerForm.phone);
+      if (!authenticatedUser || authenticatedUser.role !== 'MERCHANT') {
+        throw new Error('Hãy đăng nhập Zalo trước khi gửi hồ sơ quán để xác minh đúng tài khoản.');
+      }
+      await api.registerMyMerchant({ ...registerForm, lat: point.lat, lng: point.lng });
+      await hydrate();
     } catch (reason) {
       setRegisterError(
         reason instanceof Error

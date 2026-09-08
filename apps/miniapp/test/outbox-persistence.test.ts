@@ -32,6 +32,16 @@ test('legacy unowned outbox rows are claimed without deletion and stay isolated 
   setOutboxOwner(null);
 });
 
+test('switching collectors does not implicitly claim a legacy row', async () => {
+  await ecoOilDb.outbox.clear();
+  const legacy = persistenceRecord('legacy-quarantined-client-uuid');
+  await ecoOilDb.outbox.put(legacy);
+  setOutboxOwner('collector-owner-new');
+  assert.equal((await dexieOutboxStore.list()).length, 0);
+  assert.equal((await ecoOilDb.outbox.get(legacy.client_uuid))?.owner_id, undefined);
+  setOutboxOwner(null);
+});
+
 test('pending outbox payload survives a database close and reopen', async () => {
   await ecoOilDb.outbox.clear();
   setOutboxOwner('collector-persistence');

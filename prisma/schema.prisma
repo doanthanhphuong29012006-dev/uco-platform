@@ -404,6 +404,7 @@ model CollectionTransaction {
   anomalyFeedback AnomalyFeedback?
 
   @@index([stationDeliveryId])
+  @@index([orderId])
   @@map("collection_transactions")
 }
 

@@ -33,15 +33,23 @@ export class ContainersService {
   }
 
   async assign(id: string, input: ContainerAssignInput) {
-    const existing = await this.getRequired(id);
-    if (existing.merchantId && existing.merchantId !== input.merchant_id) {
-      throw new ConflictException({ code: 'CONTAINER_ALREADY_ASSIGNED', message: 'Container is already assigned to another merchant', details: { merchant_id: existing.merchantId } });
-    }
-    const merchant = await this.requireMerchant(input.merchant_id);
-    const row = await this.prisma.container.update({
-      where: { id },
-      data: { merchantId: input.merchant_id, wardId: merchant.wardId, state: ContainerState.AT_MERCHANT },
-      include: { merchant: true },
+    const row = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "containers" WHERE "id" = ${id}::uuid FOR UPDATE`;
+      const existing = await tx.container.findUnique({ where: { id }, include: { merchant: true } });
+      if (!existing) throw new NotFoundException('Container not found');
+      const merchant = await tx.merchant.findUnique({ where: { id: input.merchant_id } });
+      if (!merchant || merchant.status === EntityStatus.INACTIVE) throw new NotFoundException('Merchant not found');
+      if (!merchant.wardId) throw new ConflictException('Quán đang chờ Admin gán phường');
+      if (existing.state === ContainerState.IN_TRANSIT) throw new ConflictException({ code: 'CONTAINER_IN_TRANSIT', message: 'Không thể đổi quán khi can đang trên đường', details: { state: existing.state } });
+      const [openOrder, undeliveredTransaction] = await Promise.all([
+        tx.collectionOrder.findFirst({ where: { containerId: id, status: { in: ['READY', 'ASSIGNED'] }, deletedAt: null }, select: { id: true } }),
+        tx.collectionTransaction.findFirst({ where: { containerId: id, deletedAt: null, stationDeliveryId: null }, select: { id: true } }),
+      ]);
+      if (openOrder || undeliveredTransaction) throw new ConflictException({ code: 'CONTAINER_HAS_ACTIVE_COLLECTION', message: 'Không thể đổi quán khi can còn đơn hoặc giao dịch chưa bàn giao', details: { order_id: openOrder?.id ?? null, transaction_id: undeliveredTransaction?.id ?? null } });
+      if (existing.merchantId && existing.merchantId !== input.merchant_id) {
+        throw new ConflictException({ code: 'CONTAINER_ALREADY_ASSIGNED', message: 'Container is already assigned to another merchant', details: { merchant_id: existing.merchantId } });
+      }
+      return tx.container.update({ where: { id }, data: { merchantId: input.merchant_id, wardId: merchant.wardId, state: ContainerState.AT_MERCHANT }, include: { merchant: true } });
     });
     return this.serialize(row);
   }

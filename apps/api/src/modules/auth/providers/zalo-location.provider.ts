@@ -62,6 +62,18 @@ export class ZaloLocationProvider {
         details: null,
       });
     }
+    if (payload.error === 116) {
+      throw new ServiceUnavailableException({ code: 'ZALO_LOCATION_SECRET_MISSING', message: 'Zalo App Secret chưa được cấu hình đúng ở backend.', details: null });
+    }
+    if (payload.error === 117) {
+      throw new ServiceUnavailableException({ code: 'ZALO_LOCATION_SECRET_INVALID', message: 'Zalo App Secret không hợp lệ. Kiểm tra đúng ứng dụng Zalo ở backend.', details: null });
+    }
+    if (payload.error === 118) {
+      throw new UnauthorizedException({ code: 'ZALO_LOCATION_CODE_WRONG_APP', message: 'Mã vị trí không thuộc ứng dụng Zalo đang cấu hình. Hãy lấy lại vị trí trong Mini App.', details: null });
+    }
+    if (payload.error === 119) {
+      throw new UnauthorizedException({ code: 'ZALO_LOCATION_CODE_USED', message: 'Mã vị trí Zalo đã được sử dụng. Hãy lấy lại vị trí rồi thử lại.', details: null });
+    }
     if (!response.ok || payload.error !== undefined && payload.error !== 0) {
       this.logger.warn({
         event: 'zalo_location_exchange_rejected',

@@ -1666,21 +1666,32 @@ export class AdminService {
   }
 
   async assignContainer(id: string, input: ContainerAssignInput, actorUserId: string) {
-    const [container, merchant] = await Promise.all([
-      this.prisma.container.findUnique({ where: { id }, include: { merchant: true } }),
-      this.prisma.merchant.findUnique({ where: { id: input.merchant_id } }),
-    ]);
-    if (!container) throw new NotFoundException('Container not found');
-    if (!merchant || merchant.status === EntityStatus.INACTIVE)
-      throw new NotFoundException('Merchant not found');
-    if (container.merchantId && container.merchantId !== merchant.id) {
-      throw new ConflictException({
-        code: 'CONTAINER_ALREADY_ASSIGNED',
-        message: 'Can đang thuộc quán khác',
-        details: { merchant_id: container.merchantId },
-      });
-    }
     const row = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "containers" WHERE "id" = ${id}::uuid FOR UPDATE`;
+      const [container, merchant] = await Promise.all([
+        tx.container.findUnique({ where: { id }, include: { merchant: true } }),
+        tx.merchant.findUnique({ where: { id: input.merchant_id } }),
+      ]);
+      if (!container) throw new NotFoundException('Container not found');
+      if (!merchant || merchant.status === EntityStatus.INACTIVE)
+        throw new NotFoundException('Merchant not found');
+      if (container.state === 'IN_TRANSIT') {
+        throw new ConflictException({ code: 'CONTAINER_IN_TRANSIT', message: 'Không thể đổi quán khi can đang trên đường', details: { state: container.state } });
+      }
+      const [openOrder, undeliveredTransaction] = await Promise.all([
+        tx.collectionOrder.findFirst({ where: { containerId: id, status: { in: ['READY', 'ASSIGNED'] }, deletedAt: null }, select: { id: true } }),
+        tx.collectionTransaction.findFirst({ where: { containerId: id, deletedAt: null, stationDeliveryId: null }, select: { id: true } }),
+      ]);
+      if (openOrder || undeliveredTransaction) {
+        throw new ConflictException({ code: 'CONTAINER_HAS_ACTIVE_COLLECTION', message: 'Không thể đổi quán khi can còn đơn hoặc giao dịch chưa bàn giao', details: { order_id: openOrder?.id ?? null, transaction_id: undeliveredTransaction?.id ?? null } });
+      }
+      if (container.merchantId && container.merchantId !== merchant.id) {
+        throw new ConflictException({
+          code: 'CONTAINER_ALREADY_ASSIGNED',
+          message: 'Can đang thuộc quán khác',
+          details: { merchant_id: container.merchantId },
+        });
+      }
       const updated = await tx.container.update({
         where: { id },
         data: {
@@ -1707,12 +1718,20 @@ export class AdminService {
   }
 
   async unassignContainer(id: string, actorUserId: string) {
-    const container = await this.prisma.container.findUnique({
-      where: { id },
-      include: { merchant: true },
-    });
-    if (!container) throw new NotFoundException('Container not found');
     const row = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "containers" WHERE "id" = ${id}::uuid FOR UPDATE`;
+      const container = await tx.container.findUnique({ where: { id }, include: { merchant: true } });
+      if (!container) throw new NotFoundException('Container not found');
+      if (container.state === 'IN_TRANSIT') {
+        throw new ConflictException({ code: 'CONTAINER_IN_TRANSIT', message: 'Không thể thu hồi khi can đang trên đường', details: { state: container.state } });
+      }
+      const [openOrder, undeliveredTransaction] = await Promise.all([
+        tx.collectionOrder.findFirst({ where: { containerId: id, status: { in: ['READY', 'ASSIGNED'] }, deletedAt: null }, select: { id: true } }),
+        tx.collectionTransaction.findFirst({ where: { containerId: id, deletedAt: null, stationDeliveryId: null }, select: { id: true } }),
+      ]);
+      if (openOrder || undeliveredTransaction) {
+        throw new ConflictException({ code: 'CONTAINER_HAS_ACTIVE_COLLECTION', message: 'Không thể thu hồi khi can còn đơn hoặc giao dịch chưa bàn giao', details: { order_id: openOrder?.id ?? null, transaction_id: undeliveredTransaction?.id ?? null } });
+      }
       const updated = await tx.container.update({
         where: { id },
         data: { merchantId: null, state: 'AT_MERCHANT' },

@@ -313,6 +313,14 @@ export interface RouteStop {
   collected_at?: string | null;
   skipped_at?: string | null;
   ward_center?: GeoPoint | null;
+  server_transaction?: {
+    id: string;
+    client_uuid: string;
+    actual_liters: number;
+    actual_kg: number | null;
+    station_delivery_id: string | null;
+    synced_at: string | null;
+  } | null;
 }
 
 export interface CurrentRouteResponse {

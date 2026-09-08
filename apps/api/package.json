@@ -8,7 +8,8 @@
     "dev": "nest start --watch",
     "lint": "eslint \"src/**/*.ts\"",
     "start": "node dist/main.js",
-    "test": "jest --passWithNoTests --runInBand",
+    "test": "jest --passWithNoTests --runInBand --testPathIgnorePatterns=e2e-spec",
+    "test:e2e": "jest --runInBand --testRegex='.*\\.e2e-spec\\.ts$'",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -138,6 +138,17 @@ describe('ZaloLocationProvider', () => {
     });
   });
 
+  it.each([
+    [116, 'ZALO_LOCATION_SECRET_MISSING', 503],
+    [117, 'ZALO_LOCATION_SECRET_INVALID', 503],
+    [118, 'ZALO_LOCATION_CODE_WRONG_APP', 401],
+    [119, 'ZALO_LOCATION_CODE_USED', 401],
+  ])('classifies provider error %s without exposing credentials', async (providerError, code, status) => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ error: providerError }) });
+    const provider = new ZaloLocationProvider(new ConfigService({ ZALO_APP_SECRET: 'backend-secret-test' }));
+    await expect(provider.resolve(input)).rejects.toMatchObject({ status, response: expect.objectContaining({ code }) });
+  });
+
   it('maps network failures to a bounded provider error', async () => {
     fetchMock.mockRejectedValue(new Error('network unavailable'));
     const provider = new ZaloLocationProvider(new ConfigService({ ZALO_APP_SECRET: 'backend-secret-test' }));

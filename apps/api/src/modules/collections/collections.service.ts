@@ -93,6 +93,16 @@ export class CollectionsService {
         throw new NotFoundException('Collector profile not found');
       }
 
+      // Serialize all state transitions for one collector (collect, start and
+      // cancel-route) before touching order/route-stop rows. This keeps the
+      // lock order deterministic under concurrent requests and prevents
+      // PostgreSQL deadlocks between route cancellation and collection.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${collector.id}))`;
+
+      // Serialize every collection/cancel/start operation on the order row.
+      // The client UUID protects retries; this lock protects two different
+      // UUIDs racing to collect the same order.
+      await tx.$queryRaw`SELECT "id" FROM "collection_orders" WHERE "id" = ${input.order_id}::uuid FOR UPDATE`;
       const order = await tx.collectionOrder.findUnique({
         where: { id: input.order_id },
         include: { merchant: true, container: true },
@@ -119,6 +129,15 @@ export class CollectionsService {
           code: 'ORDER_ASSIGNED_TO_OTHER_COLLECTOR',
           message: 'Đơn đã được giao cho người thu gom khác',
           details: { order_id: order.id },
+        });
+      }
+      if (originalOrderStatus === OrderStatus.COLLECTED) {
+        const replay = await this.loadByClientUuid(tx, input.client_uuid, collector.id);
+        if (replay) return { row: replay, replayed: true };
+        throw new ConflictException({
+          code: 'ORDER_ALREADY_COLLECTED',
+          message: 'Order does not exist or has already been collected',
+          details: { order_id: order.id, status: order.status },
         });
       }
       if (!order.containerId || !order.container || order.container.qrCode !== input.container_code) {
@@ -298,14 +317,6 @@ export class CollectionsService {
           await tx.collectionTransaction.update({ where: { id: replay.id }, data: { syncedAt: new Date() } });
         }
         return { row: replay, replayed: true };
-      }
-
-      if (originalOrderStatus === OrderStatus.COLLECTED) {
-        throw new ConflictException({
-          code: 'ORDER_ALREADY_COLLECTED',
-          message: 'Order does not exist or has already been collected',
-          details: { order_id: order.id, status: order.status },
-        });
       }
 
       const transaction = inserted[0];

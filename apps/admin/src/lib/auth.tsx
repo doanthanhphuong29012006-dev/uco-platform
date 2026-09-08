@@ -2,7 +2,7 @@
 
 import type { AuthUser } from '@eco-oil/shared-types';
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { api } from './api';
+import { ApiError, api } from './api';
 import { browserTokenStorage } from './storage';
 
 interface AuthContextValue {
@@ -24,7 +24,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     api.me().then((nextUser) => {
       if (nextUser.role === 'ADMIN') setUser(nextUser);
       else browserTokenStorage.clear();
-    }).catch(() => browserTokenStorage.clear()).finally(() => setLoading(false));
+    }).catch((reason) => {
+      if (reason instanceof ApiError && reason.status === 401) {
+        browserTokenStorage.clear();
+        setUser(null);
+      } else {
+        setError(reason instanceof Error ? reason.message : 'Không thể kiểm tra phiên đăng nhập.');
+      }
+    }).finally(() => setLoading(false));
   }, []);
 
   const value = useMemo<AuthContextValue>(() => ({

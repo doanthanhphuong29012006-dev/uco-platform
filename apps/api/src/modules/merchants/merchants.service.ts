@@ -225,26 +225,36 @@ export class MerchantsService {
     if (input.ward_id) {
       await this.requireWard(input.ward_id);
     }
-    const merchant = await this.prisma.merchant.update({
-      where: { id },
-      data: {
-        ...(input.name !== undefined ? { businessName: input.name } : {}),
-        ...(input.address !== undefined ? { address: input.address } : {}),
-        ...(input.ward_id !== undefined ? { wardId: input.ward_id } : {}),
-        ...(input.avg_daily_liters !== undefined ? { avgDailyLiters: input.avg_daily_liters } : {}),
-        ...(input.business_type !== undefined ? { businessType: input.business_type } : {}),
-        ...(existing.approvalStatus === MerchantApprovalStatus.REJECTED
-          ? { approvalStatus: MerchantApprovalStatus.PENDING, rejectionReason: null }
-          : {}),
-      },
-    });
-    if (input.phone !== undefined) {
-      await this.prisma.user.update({ where: { id: existing.userId }, data: { phone: input.phone } });
+    try {
+      const merchant = await this.prisma.$transaction(async (tx) => {
+        const updated = await tx.merchant.update({
+          where: { id },
+          data: {
+            ...(input.name !== undefined ? { businessName: input.name } : {}),
+            ...(input.address !== undefined ? { address: input.address } : {}),
+            ...(input.ward_id !== undefined ? { wardId: input.ward_id } : {}),
+            ...(input.avg_daily_liters !== undefined ? { avgDailyLiters: input.avg_daily_liters } : {}),
+            ...(input.business_type !== undefined ? { businessType: input.business_type } : {}),
+            ...(existing.approvalStatus === MerchantApprovalStatus.REJECTED
+              ? { approvalStatus: MerchantApprovalStatus.PENDING, rejectionReason: null }
+              : {}),
+          },
+        });
+        if (input.phone !== undefined) {
+          await tx.user.update({ where: { id: existing.userId }, data: { phone: input.phone } });
+        }
+        if (input.lat !== undefined && input.lng !== undefined) {
+          await tx.$executeRaw`UPDATE "merchants" SET "location" = ST_SetSRID(ST_MakePoint(${input.lng}, ${input.lat}), 4326)::geography WHERE "id" = ${id}::uuid`;
+        }
+        return updated;
+      });
+      return this.findOne(merchant.id);
+    } catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'P2002') {
+        throw new ConflictException({ code: 'PHONE_ALREADY_IN_USE', message: 'Số điện thoại đã được dùng cho tài khoản khác.', details: null });
+      }
+      throw error;
     }
-    if (input.lat !== undefined && input.lng !== undefined) {
-      await this.prisma.setGeographyPoint('merchants', id, input.lat, input.lng);
-    }
-    return this.findOne(merchant.id);
   }
 
   async updateStatus(user: AccessTokenPayload, id: string, input: EntityStatusInput) {

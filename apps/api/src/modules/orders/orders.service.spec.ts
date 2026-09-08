@@ -75,6 +75,7 @@ function persistedRoute(overrides: Record<string, unknown> = {}) {
 function createLifecycleService() {
   const route = persistedRoute();
   const tx = {
+    $executeRaw: jest.fn().mockResolvedValue(0),
     collectionOrder: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     collectionRoute: {
       create: jest.fn().mockResolvedValue(route),

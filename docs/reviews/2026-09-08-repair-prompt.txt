@@ -1,0 +1,109 @@
+Tiếp tục sửa dự án ECOllect/Y.E.S 2 từ trạng thái code hiện tại. Tôi yêu cầu sửa các lỗi trong review dưới đây, không chỉ phân tích hoặc viết kế hoạch. Đọc AGENTS.md nếu có. Báo cáo tham chiếu: docs/reviews/2026-09-08-project-review.md, review tại commit 149fadc. Kiểm tra lại từng phát hiện trên HEAD hiện tại; nếu đã được sửa hoặc không tái hiện được, ghi rõ bằng chứng, không thay đổi máy móc.
+
+PHẠM VI VÀ AN TOÀN
+- Giữ nguyên thay đổi hiện có của tôi. Không reset/undo, không commit/push/deploy.
+- Không kết nối ghi, migration, seed/reset, sửa dữ liệu thật trên Neon/Render. Không dùng DATABASE_URL production còn sót trong môi trường shell. Không in .env, token, App Secret, connection string hoặc PII vào log.
+- Không chạy pnpm install, nâng dependency, xóa/cài lại node_modules; môi trường OneDrive từng khóa file. Dùng binary đã có. Nếu thiếu dependency thật sự thì báo rõ trước khi thay đổi.
+- Không xóa volume Docker, không down -v, không sửa lại migration đã áp dụng. Nếu cần thay schema, tạo migration mới, kiểm tra dữ liệu xung đột bằng truy vấn chỉ đọc trên môi trường được phép; không tự xóa/merge dữ liệu trùng.
+- Sửa bảo vệ database test trước khi chạy E2E. Chỉ dùng DB/schema test cô lập được xác minh, không coi NODE_ENV=test là đủ an toàn.
+- Làm lần lượt, có regression test cho từng nhóm. Không mở rộng thành rewrite kiến trúc/giao diện ngoài phạm vi.
+
+A. CHẶN E2E XÓA NHẦM DỮ LIỆU — P1
+apps/api/test/setup-env.ts hiện bỏ qua .env.test nếu thiếu. full-flow.e2e-spec.ts gọi deleteMany() không filter trên nhiều bảng và reset tất cả station. Jest mặc định bao gồm E2E.
+Yêu cầu:
+1. Fail closed trước kết nối DB/truy vấn khi chưa có đích test riêng được xác minh; không kế thừa URL production.
+2. Cô lập fixtures; cleanup chỉ dữ liệu của test, không xóa toàn bảng trên DB dùng chung.
+3. Tách lệnh unit/E2E rõ ràng.
+4. Test các trường hợp thiếu config, inherited production URL và DB local không được phép: phải dừng trước truy vấn destructive.
+
+B. CHỐNG GIAO DỊCH THU GOM TRÙNG — P1
+CollectionsService.processOne đọc order.status rồi insert ON CONFLICT(client_uuid), sau đó update COLLECTED; hai UUID khác nhau có thể cùng thu một order.
+Yêu cầu:
+- Một đơn chỉ phát sinh một giao dịch thu gom hợp lệ; xử lý bằng transaction/lock/conditional transition và constraint DB thích hợp, không chỉ frontend disabled.
+- Replay cùng UUID trả giao dịch cũ đúng owner, không ghi lại side effects.
+- Xử lý đồng thời với cancel/start route bằng lock order nhất quán.
+- Test trên DB cô lập: cùng order/hai UUID song song, cùng UUID retry, mất response rồi retry; kiểm tra số giao dịch/lít/can.
+
+C. CHUYỂN TRẠNG THÁI ĐƠN/CA NGUYÊN TỬ — P1
+OrdersService.createReady kiểm tra existing ngoài transaction; cancel kiểm tra READY rồi update chỉ theo id; cancelRoute kiểm tra COLLECTED trước transaction.
+Yêu cầu:
+- Không tạo hai đơn mở cho cùng can khi request đồng thời.
+- Không cho cancel ghi đè đơn vừa được assign/collected.
+- Không hủy ca vừa có thu gom thành công do đọc snapshot cũ.
+- Test concurrency createReady/createReady, cancel/startRoute, cancel/collect, cancelRoute/collect; không tạo orphan ASSIGNED, sai route stop hoặc thất thoát giao dịch. Không tự sửa dữ liệu lịch sử production.
+
+D. XÁC MINH DANH TÍNH ĐĂNG KÝ QUÁN — P1
+POST /merchants/register là Public, registerPublic tin zalo_id/phone từ body; LoginScreen còn sử dụng endpoint này.
+Yêu cầu:
+- Không tạo User/Merchant gắn Zalo ID khi chưa có proof Zalo được backend xác minh hoặc session hợp lệ.
+- Không tin zalo_id tự nhập. Cập nhật đồng bộ luồng browser và native, giữ đăng ký GPS thật, PENDING có thể chưa có ward; Admin phải gán ward hợp lệ trước APPROVED.
+- Không mất dữ liệu hồ sơ hiện có; không biến public signup thành đường chiếm Zalo ID/số điện thoại.
+- Test thiếu/giả proof, token A + ID B, proof hợp lệ và đăng ký lại.
+
+E. OUTBOX KHÔNG ĐỔI CHỦ KHI CHUYỂN TÀI KHOẢN — P1
+outbox-db.ts tự claim mọi record legacy không owner cho người vừa đăng nhập; claim đọc ngoài transaction rồi put. outbox-sync.ts lấy batch trước các await nhưng API lấy token hiện tại lúc gửi; cleanup không hủy batch đang chạy.
+Yêu cầu:
+- Gắn batch với owner/session epoch; không gửi dữ liệu A bằng token B khi logout/login, refresh hoặc retry.
+- Kết quả batch đang bay chỉ được ghi đúng owner; chuyển tài khoản không mất dữ liệu pending hoặc UUID.
+- Legacy chưa xác định chủ phải cách ly có thông báo/khôi phục có xác minh, không xóa và không tự claim theo người đăng nhập đầu tiên.
+- Test switch A/B trước send, giữa batch, trong refresh/retry, hai claim giao nhau và legacy không owner.
+
+F. KHÔI PHỤC CA/NỘP TRẠM TỪ SERVER — P1
+CollectorFlow.reconcileRouteProgress chỉ dựng CompletedStop từ local/outbox; API serializePersistedRoute không cung cấp actual transaction data; StationDeliveryFlow.getCandidates cần outbox synced + server_id.
+Yêu cầu:
+- Khi đổi thiết bị/mất cache, vẫn tải giao dịch đã thu và chưa nộp của collector từ server, actual liters/kg và transaction IDs đúng.
+- Pagination đầy đủ, không phụ thuộc outbox list 100 hay retention 7 ngày.
+- Pending local vẫn tách biệt với server-confirmed; không coi outbox pending là server đã thu.
+- Không dùng expected liters làm actual, không nộp lại giao dịch đã nộp; giữ idempotency.
+- Test local storage/IndexedDB trống + server có ACTIVE/COLLECTED, >100 records, retention, đổi tài khoản, mất mạng/retry.
+- Bảo toàn đơn chưa thu khi chỉ mở form, thoát form, reload, đóng/mở Mini App, logout/login.
+
+G. BẢO VỆ VÒNG ĐỜI CAN — P1
+AdminService.assignContainer/unassignContainer có thể ép IN_TRANSIT về AT_MERCHANT; UI cho Thu hồi can đang vận chuyển. assignContainer chưa cập nhật wardId nhất quán.
+Yêu cầu:
+- Luật cấp/thu hồi/trả can phải xét state, đơn mở và giao dịch chưa nộp trong transaction.
+- Backend chặn vi phạm kể cả gọi API trực tiếp; cập nhật cả endpoint assign cũ trong ContainersService, tránh hai luật khác nhau.
+- Giữ đúng merchant/ward, audit; UI ẩn/disable thao tác không hợp lệ và báo lý do.
+- Test cấp/thu hồi can IN_TRANSIT hoặc còn đơn mở bị chặn; luồng hợp lệ và request song song.
+
+H. KHÔNG MẤT PHIÊN VÌ LỖI TẠM — P2
+Admin AuthProvider xóa token với mọi lỗi me(); shared API client nuốt mọi lỗi refresh thành null; JwtAuthGuard gom cả lỗi Prisma thành 401.
+Yêu cầu:
+- Network/timeout/5xx/DB unavailable không được coi là token hết hạn.
+- Giữ token khi lỗi tạm, có retry và trạng thái lỗi rõ, không hiển thị dữ liệu được bảo vệ nếu chưa xác minh quyền.
+- Chỉ xóa phiên khi backend xác nhận credentials hết hạn/không hợp lệ hoặc user logout.
+- Test me/refresh 5xx, offline, DB timeout, session bị revoke, role không hợp lệ.
+
+I. SỬA QUÁN PHẢI ALL-OR-NOTHING — P2
+MerchantsService.update ghi merchant rồi mới ghi phone/location bằng lệnh riêng; phone unique conflict có thể để lại nửa thay đổi.
+Yêu cầu:
+- Cập nhật tên/phone/địa chỉ/phường/GPS và trạng thái liên quan trong một transaction.
+- Lỗi phone trùng có mã rõ ràng; rollback toàn bộ, không chuyển trạng thái quán một phần.
+- Admin refetch đúng; điểm chưa thu nhận tên/phone mới, lịch sử đã thu giữ snapshot.
+- Test phone conflict và location failure rollback; patch hợp lệ.
+
+J. TIMEOUT BAO GỒM RESPONSE BODY — P2
+miniapp api.ts clear timeout khi fetch vừa trả Response; response.text() sau đó không còn timeout.
+Yêu cầu:
+- Deadline bao fetch + đọc body; caller abort vẫn hoạt động sau headers, dọn timer/listener đúng.
+- Áp dụng me/refresh/request liên quan và bổ sung timeout hợp lý cho shared Admin client.
+- Test headers có ngay nhưng body treo, body chậm, abort sau headers; không xóa token/outbox khi timeout.
+
+K. GPS VÀ HƯỚNG DẪN RELAY — P2
+ZaloLocationProvider gom provider errors thành ZALO_LOCATION_TOKEN_INVALID/401; ảnh log trước đó có HTTP 200 + provider_error 117.
+Tài liệu chính thức https://docs.zaloplatforms.com/docs/MA/api/errorCode: 116 secret_key rỗng, 117 secret_key không hợp lệ; 118 code thuộc app khác, 119 code đã dùng. Kiểm tra tài liệu hiện hành trước khi sửa.
+Yêu cầu:
+- Phân biệt lỗi secret/cấu hình, token, quyền, relay auth, sai endpoint/dịch vụ, provider/timeout. Không retry token để che lỗi secret.
+- Safe diagnostics có request/stage/provider code nhưng không token/secret/PII. Giao diện báo nguyên nhân và hướng xử lý phù hợp; không giả GPS thật bằng tâm phường.
+- Sửa docs/ZALO_PROFILE_RELAY.md đang dùng profile port 8787: thống nhất GPS relay 8787, profile relay 8788, hai tunnel và biến môi trường riêng; GPS URL có /zalo/location.
+- Không tự đổi secret hoặc production config; cung cấp checklist người vận hành đối chiếu đúng Zalo App và secret nhập an toàn.
+- Test mock 116/117/118/119, sai relay/service/token, timeout và deny.
+- Gọi điện/QR/camera chỉ khẳng định đạt thực tế khi có kiểm tra trên điện thoại; giữ SDK chuẩn bị trước thao tác bấm, fallback tel: bằng nút bấm riêng, normalize số và sao chép. Không tự cho rằng đổi mã là đã sửa lỗi native.
+
+XÁC MINH VÀ BÀN GIAO
+- Baseline review: API unit 204, Admin 50, Mini App 132 + 1 lifecycle đều đạt; typecheck/lint cả 3 đạt. Chưa xác minh DB E2E, production build, native phone/GPS trong lượt review.
+- Bổ sung regression tests để chứng minh từng lỗi và bản sửa. Chạy lại unit/typecheck/lint; DB concurrency/E2E chỉ sau guard và DB cô lập được xác minh.
+- Build API/Admin/Mini App/ZMP bằng dependency đã có; nếu OneDrive khóa output, dùng output tạm an toàn, không xóa thư mục rộng.
+- Cuối cùng báo từng mục A–K: xác nhận lỗi/đã sửa/không áp dụng/còn chặn, file thay đổi, test thực tế và hạn chế. Không tính mock test là xác minh Zalo thật.
+- Kiểm tra git diff --check; không để secret, output build, node_modules hoặc lockfile ngoài dự kiến vào diff.
+- Nếu cần migration production hoặc thao tác external thì chỉ bàn giao nội dung, preflight, rủi ro và bước triển khai để tôi duyệt; không tự thực hiện.

@@ -91,19 +91,6 @@ export class OrdersService {
       throw new ForbiddenException('Container does not belong to merchant');
     }
 
-    const existing = await this.prisma.collectionOrder.findFirst({
-      where: { merchantId: merchant.id, containerId: container.id, status: { in: [OrderStatus.READY, OrderStatus.ASSIGNED] }, deletedAt: null },
-      orderBy: { requestedAt: 'desc' },
-      include: { container: true },
-    });
-    if (existing) {
-      throw new ConflictException({
-        code: 'ORDER_ALREADY_OPEN',
-        message: 'An order is already open for this container',
-        details: this.serialize(existing),
-      });
-    }
-
     const capacityL = Number(container.capacityLiters ?? 0);
     const expectedLiters = input.expected_liters ?? capacityL;
     if (expectedLiters <= 0 || expectedLiters > capacityL) {
@@ -116,6 +103,19 @@ export class OrdersService {
     const daysSinceLastCollection = merchant.lastCollectedAt ? Math.max(0, (Date.now() - merchant.lastCollectedAt.getTime()) / DAY_MS) : 14;
     const priority = calculatePriority({ expectedLiters, capacityL, daysSinceLastCollection });
     const result = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "containers" WHERE "id" = ${container.id}::uuid FOR UPDATE`;
+      const existing = await tx.collectionOrder.findFirst({
+        where: { merchantId: merchant.id, containerId: container.id, status: { in: [OrderStatus.READY, OrderStatus.ASSIGNED] }, deletedAt: null },
+        orderBy: { requestedAt: 'desc' },
+        include: { container: true },
+      });
+      if (existing) {
+        throw new ConflictException({
+          code: 'ORDER_ALREADY_OPEN',
+          message: 'An order is already open for this container',
+          details: this.serialize(existing),
+        });
+      }
       const order = await tx.collectionOrder.create({
         data: {
           merchantId: merchant.id,
@@ -181,13 +181,17 @@ export class OrdersService {
     if (order.merchantId !== merchant.id) {
       throw new ForbiddenException('Order ownership required');
     }
-    if (order.status !== OrderStatus.READY) {
-      throw new ConflictException('Only READY orders can be cancelled');
-    }
-    const cancelled = await this.prisma.collectionOrder.update({
-      where: { id },
-      data: { status: OrderStatus.CANCELLED, cancelledAt: new Date() },
-      include: { container: true },
+    const cancelled = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "collection_orders" WHERE "id" = ${id}::uuid FOR UPDATE`;
+      const locked = await tx.collectionOrder.findUnique({ where: { id }, include: { container: true } });
+      if (!locked || locked.merchantId !== merchant.id || locked.status !== OrderStatus.READY) {
+        throw new ConflictException('Only READY orders can be cancelled');
+      }
+      return tx.collectionOrder.update({
+        where: { id },
+        data: { status: OrderStatus.CANCELLED, cancelledAt: new Date() },
+        include: { container: true },
+      });
     });
     return this.serialize(cancelled);
   }
@@ -262,6 +266,7 @@ export class OrdersService {
 
     try {
       const route = await this.prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${collector.id}))`;
         const claimed = await tx.collectionOrder.updateMany({
           where: { id: { in: orderIds }, status: OrderStatus.READY, collectorId: null, deletedAt: null },
           data: { status: OrderStatus.ASSIGNED, collectorId: collector.id, assignedAt: new Date() },
@@ -362,15 +367,28 @@ export class OrdersService {
     }
     const cancelledAt = new Date();
     await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${collector.id}))`;
+      // Collection locks the order row before touching its route stop. Lock
+      // the same order rows first here to keep cancel/collect lock ordering
+      // consistent and avoid a route-row/order-row deadlock.
+      await tx.$queryRaw`SELECT "order_id" FROM "collection_route_stops" WHERE "route_id" = ${activeRoute.id}::uuid ORDER BY "order_id" FOR UPDATE`;
+      await tx.$queryRaw`SELECT "id" FROM "collection_routes" WHERE "id" = ${activeRoute.id}::uuid FOR UPDATE`;
+      const lockedRoute = await tx.collectionRoute.findUnique({
+        where: { id: activeRoute.id },
+        include: { stops: { orderBy: { sequence: 'asc' } } },
+      });
+      if (!lockedRoute || lockedRoute.status !== 'ACTIVE' || lockedRoute.stops.some((stop) => stop.status === 'COLLECTED')) {
+        throw new ConflictException({ code: 'ROUTE_HAS_COLLECTED_STOPS', message: 'Ca đã thay đổi trong lúc hủy; dữ liệu được giữ nguyên.', details: null });
+      }
       await tx.collectionOrder.updateMany({
-        where: { id: { in: activeRoute.stops.map((stop) => stop.orderId) }, collectorId: collector.id, status: OrderStatus.ASSIGNED },
+        where: { id: { in: lockedRoute.stops.map((stop) => stop.orderId) }, collectorId: collector.id, status: OrderStatus.ASSIGNED },
         data: { status: OrderStatus.READY, collectorId: null, assignedAt: null },
       });
       await tx.collectionRouteStop.updateMany({
-        where: { routeId: activeRoute.id, status: 'PENDING' },
+        where: { routeId: lockedRoute.id, status: 'PENDING' },
         data: { status: 'SKIPPED', skippedAt: cancelledAt, skipReason: input.reason ?? 'Ca bị hủy' },
       });
-      await tx.collectionRoute.update({ where: { id: activeRoute.id }, data: { status: 'CANCELLED', cancelledAt } });
+      await tx.collectionRoute.update({ where: { id: lockedRoute.id }, data: { status: 'CANCELLED', cancelledAt } });
     });
     return { route_id: activeRoute.id, status: 'CANCELLED' };
   }
@@ -553,6 +571,12 @@ export class OrdersService {
       .map((stop) => stop.orderId);
     const liveRows = await this.prisma.findLiveRouteStopMerchants(pendingOrderIds);
     const liveByOrderId = new Map(liveRows.map((row) => [row.orderId, row]));
+    const transactions = await this.prisma.collectionTransaction?.findMany({
+      where: { orderId: { in: route.stops.map((stop) => stop.orderId) }, deletedAt: null },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, clientUuid: true, orderId: true, actualLiters: true, actualKg: true, stationDeliveryId: true, syncedAt: true },
+    }) ?? [];
+    const transactionByOrderId = new Map(transactions.map((transaction) => [transaction.orderId, transaction]));
     const stops = route.stops.map((stop) => {
       const merchantSnapshot = stop.merchantSnapshot as Record<string, unknown>;
       const aiSnapshot = stop.aiSnapshot as Record<string, unknown>;
@@ -586,6 +610,9 @@ export class OrdersService {
         route_stop_status: stop.status,
         collected_at: stop.collectedAt?.toISOString() ?? null,
         skipped_at: stop.skippedAt?.toISOString() ?? null,
+        server_transaction: transactionByOrderId.has(stop.orderId)
+          ? (() => { const transaction = transactionByOrderId.get(stop.orderId)!; return { id: transaction.id, client_uuid: transaction.clientUuid, actual_liters: Number(transaction.actualLiters), actual_kg: transaction.actualKg === null ? null : Number(transaction.actualKg), station_delivery_id: transaction.stationDeliveryId, synced_at: transaction.syncedAt?.toISOString() ?? null }; })()
+          : null,
       };
     });
     return {

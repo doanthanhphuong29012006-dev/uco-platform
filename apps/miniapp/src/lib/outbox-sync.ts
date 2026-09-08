@@ -5,13 +5,15 @@ import {
   dexieOutboxStore,
   type OutboxRecord,
   type OutboxStore,
+  getOutboxOwner,
 } from './outbox-db';
+import { tokenStorage } from './storage';
 
 const SYNC_REQUEST_TIMEOUT_MS = 30_000;
 
 export interface SyncBatchClient {
-  syncBatch(items: CollectionCreateRequest[]): Promise<SyncBatchResponse>;
-  createStationDelivery?(payload: StationDeliveryCreateRequest): Promise<StationDeliveryResponse>;
+  syncBatch(items: CollectionCreateRequest[], accessToken?: string | null): Promise<SyncBatchResponse>;
+  createStationDelivery?(payload: StationDeliveryCreateRequest, accessToken?: string | null): Promise<StationDeliveryResponse>;
 }
 
 export interface SyncOutboxOptions {
@@ -79,6 +81,8 @@ async function performSync({ store = dexieOutboxStore, client, now = () => new D
   const currentTime = now();
   await store.recoverStaleSyncing?.(currentTime);
   const records = await store.getPending(OUTBOX_BATCH_SIZE, currentTime);
+  const ownerAtStart = getOutboxOwner();
+  const accessTokenAtStart = tokenStorage.getAccessToken();
   if (records.length === 0) {
     await store.deleteSyncedBefore(new Date(currentTime.getTime() - OUTBOX_RETENTION_DAYS * 24 * 60 * 60 * 1_000));
     return { sent: 0, synced: 0, failed: 0 };
@@ -98,7 +102,8 @@ async function performSync({ store = dexieOutboxStore, client, now = () => new D
   if (collectionRecords.length > 0) {
     sent += collectionRecords.length;
     try {
-      const response = await withSyncTimeout(syncClient.syncBatch(collectionRecords.map((record) => record.payload as CollectionCreateRequest)), syncTimeoutMs);
+      const response = await withSyncTimeout(syncClient.syncBatch(collectionRecords.map((record) => record.payload as CollectionCreateRequest), accessTokenAtStart), syncTimeoutMs);
+      if (ownerAtStart !== getOutboxOwner()) throw new Error('Phiên người thu gom đã thay đổi; giữ hàng chờ để đồng bộ lại.');
       const results = new Map(
         (Array.isArray(response.results) ? response.results : [])
           .filter((result) => typeof result.client_uuid === 'string' && result.client_uuid.length > 0)
@@ -131,7 +136,8 @@ async function performSync({ store = dexieOutboxStore, client, now = () => new D
       if (!syncClient.createStationDelivery) {
         throw new Error('API nộp trạm chưa được cấu hình');
       }
-      const response = await withSyncTimeout(syncClient.createStationDelivery(record.payload as StationDeliveryCreateRequest), syncTimeoutMs);
+      const response = await withSyncTimeout(syncClient.createStationDelivery(record.payload as StationDeliveryCreateRequest, accessTokenAtStart), syncTimeoutMs);
+      if (ownerAtStart !== getOutboxOwner()) throw new Error('Phiên người thu gom đã thay đổi; giữ hàng chờ để đồng bộ lại.');
       if (response.client_uuid !== record.client_uuid) {
         throw new Error('Phản hồi nộp trạm không khớp client_uuid');
       }

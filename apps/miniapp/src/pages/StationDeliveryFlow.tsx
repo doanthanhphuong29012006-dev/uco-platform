@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
-import { DEFAULT_DENSITY_KG_PER_LITER, DeliveryStatus } from '@eco-oil/shared-types';
+import { DEFAULT_DENSITY_KG_PER_LITER, DeliveryStatus, OilGrade, Quality } from '@eco-oil/shared-types';
 import type { CollectionCreateRequest, GeoPoint, StationDeliveryCreateRequest, StationDeliveryResponse, StationRecommendation } from '@eco-oil/shared-types';
 import { api } from '../lib/api';
 import { formatCurrency, formatLiters } from '../lib/formatters';
@@ -463,9 +463,32 @@ function ShiftCloseout({ candidates, onFinish }: { candidates: DeliveryCandidate
 function getCandidates(entries: CompletedStop[], rows: OutboxRecord[]): DeliveryCandidate[] {
   return entries.map((entry) => {
     const record = rows.find((row) => row.client_uuid === entry.clientUuid);
-    if (!record || record.status !== 'synced' || !record.server_id || record.type !== 'collection') return null;
-    return { ...entry, record, collection: record.payload as CollectionCreateRequest };
+    if (record && record.status === 'synced' && record.server_id && record.type === 'collection') {
+      return { ...entry, record, collection: record.payload as CollectionCreateRequest };
+    }
+    const server = entry.stop.server_transaction;
+    if (!server || server.station_delivery_id) return null;
+    const collection: CollectionCreateRequest = {
+      client_uuid: server.client_uuid,
+      order_id: entry.stop.order_id,
+      container_code: entry.stop.container_code,
+      actual_liters: server.actual_liters,
+      actual_kg: server.actual_kg ?? undefined,
+      quality: Quality.PASS,
+      grade: OilGrade.A,
+      collector_selected_grade: OilGrade.A,
+      collector_grade_confirmed: true,
+      geo: { lat: entry.stop.merchant.lat, lng: entry.stop.merchant.lng },
+      photos: [],
+      collected_at: stopCollectedAt(entry.stop),
+    };
+    const serverRecord = { client_uuid: server.client_uuid, owner_id: '', type: 'collection' as const, payload: collection, status: 'synced' as const, attempts: 0, last_error: null, next_attempt_at: null, created_at: stopCollectedAt(entry.stop), synced_at: server.synced_at, updated_at: server.synced_at ?? stopCollectedAt(entry.stop), sync_started_at: null, server_id: server.id };
+    return { ...entry, record: serverRecord, collection };
   }).filter((item): item is DeliveryCandidate => item !== null);
+}
+
+function stopCollectedAt(stop: CompletedStop['stop']): string {
+  return stop.collected_at ?? new Date().toISOString();
 }
 
 function collectionLiters(collection: CollectionCreateRequest): number {

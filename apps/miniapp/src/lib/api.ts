@@ -45,6 +45,7 @@ type RequestOptions = Omit<RequestInit, 'body'> & {
   body?: unknown;
   retry?: boolean;
   timeoutMs?: number;
+  accessTokenOverride?: string | null;
 };
 
 export const API_REQUEST_TIMEOUT_MS = 15_000;
@@ -74,6 +75,24 @@ function errorFromResponse(status: number, payload: unknown): ApiError {
     return new ApiError(status, { code: body.code, message: body.message, details: body.details ?? null });
   }
   return new ApiError(status, { code: status === 401 ? 'UNAUTHORIZED' : 'HTTP_ERROR', message: 'Không thể xử lý yêu cầu', details: null });
+}
+
+async function parseResponseWithTimeout(response: Response, timeoutMs: number): Promise<unknown> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      parseResponse(response),
+      new Promise<never>((_resolve, reject) => {
+        timer = globalThis.setTimeout(() => reject(new ApiError(0, {
+          code: 'REQUEST_TIMEOUT',
+          message: 'Máy chủ phản hồi quá thời gian chờ. Vui lòng thử lại.',
+          details: null,
+        })), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) globalThis.clearTimeout(timer);
+  }
 }
 
 export async function fetchWithTimeout(
@@ -130,7 +149,7 @@ async function refreshAccessToken(): Promise<string | null> {
     body: refreshToken ? JSON.stringify({ refresh_token: refreshToken }) : undefined,
     credentials: 'include',
   });
-  const payload = await parseResponse(response);
+  const payload = await parseResponseWithTimeout(response, API_REQUEST_TIMEOUT_MS);
   if (!response.ok) {
     throw errorFromResponse(response.status, payload);
   }
@@ -153,7 +172,7 @@ function getRefreshOnce(): Promise<string | null> {
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { body, retry = true, headers, timeoutMs = API_REQUEST_TIMEOUT_MS, ...init } = options;
-  const accessToken = tokenStorage.getAccessToken();
+  const accessToken = options.accessTokenOverride === undefined ? tokenStorage.getAccessToken() : options.accessTokenOverride;
   const requestHeaders = new Headers(headers);
   if (body !== undefined) {
     requestHeaders.set('Content-Type', 'application/json');
@@ -168,7 +187,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     body: body === undefined ? undefined : JSON.stringify(body),
     credentials: 'include',
   }, timeoutMs);
-  const payload = await parseResponse(response);
+  const payload = await parseResponseWithTimeout(response, timeoutMs);
   if (response.status === 401 && retry) {
     try {
       const refreshedToken = await getRefreshOnce();
@@ -266,10 +285,10 @@ export const api = {
   containerByQr: (code: string) => request<ContainerLookupResponse>(`/containers/by-qr/${encodeURIComponent(code)}`),
   createCollection: (payload: CollectionCreateRequest) =>
     request<CollectionTransactionResponse>('/collections', { method: 'POST', body: payload }),
-  syncBatch: (items: CollectionCreateRequest[]) =>
-    request<SyncBatchResponse>('/sync/batch', { method: 'POST', body: { items } }),
+  syncBatch: (items: CollectionCreateRequest[], accessTokenOverride?: string | null) =>
+    request<SyncBatchResponse>('/sync/batch', { method: 'POST', body: { items }, retry: false, accessTokenOverride }),
   recommendStations: (location: GeoPoint, liters: number) =>
     request<StationRecommendation[]>(`/stations/recommend?lat=${location.lat}&lng=${location.lng}&liters=${liters}`),
-  createStationDelivery: (payload: StationDeliveryCreateRequest) =>
-    request<StationDeliveryResponse>('/station-deliveries', { method: 'POST', body: payload }),
+  createStationDelivery: (payload: StationDeliveryCreateRequest, accessTokenOverride?: string | null) =>
+    request<StationDeliveryResponse>('/station-deliveries', { method: 'POST', body: payload, retry: false, accessTokenOverride }),
 };

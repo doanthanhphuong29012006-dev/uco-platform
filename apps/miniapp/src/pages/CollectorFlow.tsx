@@ -61,6 +61,12 @@ function completedStopFromOutbox(row: OutboxRecord, stop: RouteStop): CompletedS
   return { liters, kilograms, clientUuid: row.client_uuid, stop };
 }
 
+function completedStopFromServer(stop: RouteStop): CompletedStop | null {
+  const transaction = stop.server_transaction;
+  if (!transaction) return null;
+  return { liters: transaction.actual_liters, kilograms: transaction.actual_kg, clientUuid: transaction.client_uuid, stop };
+}
+
 export function reconcileRouteProgress(
   route: CurrentRouteResponse,
   storedCompleted: Record<string, CompletedStop>,
@@ -81,6 +87,13 @@ export function reconcileRouteProgress(
     }
     if (stop.route_stop_status === 'COLLECTED') {
       completedOrderIds.add(stop.order_id);
+    }
+
+    const serverCompleted = completedStopFromServer(stop);
+    if (serverCompleted) {
+      completed[stop.order_id] = serverCompleted;
+      completedOrderIds.add(stop.order_id);
+      continue;
     }
 
     const stored = canUseStoredCompleted ? storedCompleted[stop.order_id] : undefined;

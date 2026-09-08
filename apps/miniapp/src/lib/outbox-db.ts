@@ -112,7 +112,6 @@ export class EcoOilDatabase extends Dexie {
 
 export let ecoOilDb = new EcoOilDatabase();
 let activeOutboxOwnerId: string | null = null;
-let legacyClaimOwnerId: string | null = null;
 const OUTBOX_LIMIT_BYTES = 50 * 1024 * 1024;
 const subscribers = new Set<() => void>();
 export const OUTBOX_OPERATION_TIMEOUT_MS = 4_500;
@@ -120,23 +119,16 @@ export const OUTBOX_OPERATION_TIMEOUT_MS = 4_500;
 export function setOutboxOwner(ownerId: string | null): void {
   if (activeOutboxOwnerId === ownerId) return;
   activeOutboxOwnerId = ownerId;
-  legacyClaimOwnerId = ownerId;
+  // Legacy rows remain quarantined until an explicit, verified recovery action.
   emitChanged();
-  if (ownerId) {
-    void claimLegacyOutboxRecords(ownerId).catch((error: unknown) => {
-      console.warn('[outbox] Không thể gắn owner cho dữ liệu cũ', {
-        message: error instanceof Error ? error.message : 'unknown',
-      });
-    });
-  }
+  if (ownerId) emitChanged();
 }
+
+export function getOutboxOwner(): string | null { return activeOutboxOwnerId; }
 
 function belongsToActiveOwner(record: OutboxRecord): boolean {
   if (activeOutboxOwnerId === null) return false;
-  return (
-    record.owner_id === activeOutboxOwnerId ||
-    (!record.owner_id && legacyClaimOwnerId === activeOutboxOwnerId)
-  );
+  return record.owner_id === activeOutboxOwnerId;
 }
 
 function requireActiveOutboxOwner(): string {
@@ -155,7 +147,6 @@ export async function claimLegacyOutboxRecords(ownerId: string): Promise<number>
       await ecoOilDb.outbox.put({ ...record, owner_id: ownerId });
     }
   });
-  if (activeOutboxOwnerId === ownerId) legacyClaimOwnerId = null;
   emitChanged();
   return legacyRecords.length;
 }

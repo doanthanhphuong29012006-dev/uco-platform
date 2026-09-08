@@ -3,7 +3,8 @@
 Zalo User Access Token v4 can be exchanged by Render, but Zalo may reject the
 profile request when Render's egress IP is outside Vietnam (`error: -501`).
 This small relay forwards only the fixed Zalo profile request from a machine in
-Vietnam. It is not a general HTTP proxy.
+Vietnam. It is not a general HTTP proxy. GPS location uses a separate Location
+Relay on port 8787 and `/zalo/location`; this Profile Relay uses port 8788.
 
 ## Security
 
@@ -23,22 +24,22 @@ secret:
 
 ```powershell
 $env:ZALO_PROFILE_RELAY_SECRET = '<RELAY_SECRET_PLACEHOLDER_32_CHARS_MINIMUM>'
-$env:ZALO_PROFILE_RELAY_PORT = '8787'
+$env:ZALO_PROFILE_RELAY_PORT = '8788'
 pnpm --filter @eco-oil/api relay:zalo-profile
 ```
 
-The relay listens on `http://127.0.0.1:8787`. Keep the process running while
+The relay listens on `http://127.0.0.1:8788`. Keep the process running while
 the tunnel is active:
 
 ```powershell
-.\.tools\cloudflared.exe tunnel --url http://127.0.0.1:8787
+.\.tools\cloudflared.exe tunnel --url http://127.0.0.1:8788
 ```
 
 Check the public tunnel with `GET /health`; it returns `{"status":"ok"}`.
 
 ## Render Environment
 
-Set these values in Render, replacing the URL placeholder with the current
+Set these Profile Relay values in Render, replacing the URL placeholder with the current
 HTTPS Quick Tunnel URL. The URL below is deliberately not committed because
 Quick Tunnel URLs change:
 
@@ -56,3 +57,13 @@ x-zalo-profile-relay-secret: ${ZALO_PROFILE_RELAY_SECRET}
 Content-Type: application/json
 {"access_token":"<Zalo access token>"}
 ```
+
+Run a second tunnel for GPS and configure it separately:
+
+```powershell
+.\.tools\cloudflared.exe tunnel --url http://127.0.0.1:8787
+```
+
+Set `ZALO_LOCATION_RELAY_URL=https://<GPS_TUNNEL_HOST>.trycloudflare.com/zalo/location`
+and its independent `ZALO_LOCATION_RELAY_TOKEN`. Never use the Profile Relay
+host for GPS, and never print either secret or token.
