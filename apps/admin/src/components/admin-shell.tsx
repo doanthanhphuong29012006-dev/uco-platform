@@ -44,7 +44,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
     );
   return (
     <div className="min-h-screen bg-sand text-ink md:flex">
-      <aside className="w-full border-b border-slate-200 bg-ink p-4 text-white md:min-h-screen md:w-64 md:border-b-0 md:p-5">
+      <aside className="w-full border-b border-slate-200 bg-ink p-4 text-white md:sticky md:top-0 md:h-screen md:min-h-screen md:w-64 md:overflow-y-auto md:border-b-0 md:p-5">
         <div className="mb-6">
           <img src="/logo.svg" alt="ECOllect" className="mb-3 h-12 w-12" />
           <p className="text-xs uppercase tracking-[0.25em] text-emerald-300">ECOllect</p>
@@ -82,7 +82,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
             Đăng xuất
           </button>
         </header>
-        <main className="mx-auto max-w-7xl p-5 md:p-8">{children}</main>
+        <main className="mx-auto max-w-[1360px] p-5 md:p-8">{children}</main>
       </div>
     </div>
   );

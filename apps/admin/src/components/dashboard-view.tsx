@@ -93,7 +93,7 @@ export function DashboardView() {
               <XAxis dataKey="date" tickFormatter={(value: string) => value.slice(5)} />
               <YAxis />
               <Tooltip formatter={(value: number) => formatLiters(value)} />
-              <Bar dataKey="liters" fill="#2d6a4f" radius={[5, 5, 0, 0]} />
+              <Bar dataKey="liters" fill="#23732D" radius={[5, 5, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>

@@ -50,7 +50,7 @@ function Chart({ points }: { points: AdminPickupForecastBacktestPoint[] }) {
     'Dự báo': point.predicted_liters,
     'Thực tế': point.actual_liters,
   }));
-  return <div className="h-72 w-full"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 4 }}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 11 }} /><Tooltip /><Line type="monotone" dataKey="Dự báo" stroke="#047857" strokeWidth={2} dot={false} /><Line type="monotone" dataKey="Thực tế" stroke="#0f172a" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></div>;
+  return <div className="h-72 w-full"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 4 }}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 11 }} /><Tooltip /><Line type="monotone" dataKey="Dự báo" stroke="#23732D" strokeWidth={2} dot={false} /><Line type="monotone" dataKey="Thực tế" stroke="#183F22" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></div>;
 }
 
 export function AiPerformanceContent({ data }: { data: AdminPickupForecastPerformanceResponse }) {
