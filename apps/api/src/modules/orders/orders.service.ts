@@ -91,19 +91,28 @@ export class OrdersService {
       throw new ForbiddenException('Container does not belong to merchant');
     }
 
-    const capacityL = Number(container.capacityLiters ?? 0);
-    const expectedLiters = input.expected_liters ?? capacityL;
-    if (expectedLiters <= 0 || expectedLiters > capacityL) {
-      throw new BadRequestException({
-        code: 'EXPECTED_LITERS_EXCEEDS_CAPACITY',
-        message: `Số lít dự kiến phải lớn hơn 0 và không vượt quá dung tích can ${capacityL} lít`,
-        details: { capacity_l: capacityL, expected_liters: expectedLiters },
-      });
-    }
-    const daysSinceLastCollection = merchant.lastCollectedAt ? Math.max(0, (Date.now() - merchant.lastCollectedAt.getTime()) / DAY_MS) : 14;
-    const priority = calculatePriority({ expectedLiters, capacityL, daysSinceLastCollection });
     const result = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "containers" WHERE "id" = ${container.id}::uuid FOR UPDATE`;
+      const lockedContainer = await tx.container.findUnique({ where: { id: container.id } });
+      if (!lockedContainer || lockedContainer.deletedAt || lockedContainer.status !== EntityStatus.ACTIVE ||
+          lockedContainer.merchantId !== merchant.id || lockedContainer.state !== ContainerState.AT_MERCHANT) {
+        throw new ConflictException({
+          code: 'CONTAINER_NO_LONGER_AVAILABLE',
+          message: 'Can đã thay đổi hoặc không còn thuộc quán. Vui lòng tải lại danh sách can.',
+          details: { container_id: container.id },
+        });
+      }
+      const capacityL = Number(lockedContainer.capacityLiters ?? 0);
+      const expectedLiters = input.expected_liters ?? capacityL;
+      if (expectedLiters <= 0 || expectedLiters > capacityL) {
+        throw new BadRequestException({
+          code: 'EXPECTED_LITERS_EXCEEDS_CAPACITY',
+          message: `Số lít dự kiến phải lớn hơn 0 và không vượt quá dung tích can ${capacityL} lít`,
+          details: { capacity_l: capacityL, expected_liters: expectedLiters },
+        });
+      }
+      const daysSinceLastCollection = merchant.lastCollectedAt ? Math.max(0, (Date.now() - merchant.lastCollectedAt.getTime()) / DAY_MS) : 14;
+      const priority = calculatePriority({ expectedLiters, capacityL, daysSinceLastCollection });
       const existing = await tx.collectionOrder.findFirst({
         where: { merchantId: merchant.id, containerId: container.id, status: { in: [OrderStatus.READY, OrderStatus.ASSIGNED] }, deletedAt: null },
         orderBy: { requestedAt: 'desc' },

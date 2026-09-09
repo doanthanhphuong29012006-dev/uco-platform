@@ -1819,6 +1819,9 @@ export class AdminService {
     actorUserId: string,
   ) {
     const result = await this.prisma.$transaction(async (tx) => {
+      // Station delivery also updates this row. Recheck its state under the
+      // lock so a completed delivery cannot be overwritten by a stale read.
+      await tx.$queryRaw`SELECT "id" FROM "containers" WHERE "id" = ${id}::uuid FOR UPDATE`;
       const container = await tx.container.findUnique({
         where: { id },
         include: { merchant: true },

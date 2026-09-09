@@ -133,7 +133,10 @@ export class CollectionsService {
       }
       if (originalOrderStatus === OrderStatus.COLLECTED) {
         const replay = await this.loadByClientUuid(tx, input.client_uuid, collector.id);
-        if (replay) return { row: replay, replayed: true };
+        if (replay) {
+          this.assertReplayOrder(replay, input.order_id);
+          return { row: replay, replayed: true };
+        }
         throw new ConflictException({
           code: 'ORDER_ALREADY_COLLECTED',
           message: 'Order does not exist or has already been collected',
@@ -313,6 +316,7 @@ export class CollectionsService {
             details: null,
           });
         }
+        this.assertReplayOrder(replay, input.order_id);
         if (synced) {
           await tx.collectionTransaction.update({ where: { id: replay.id }, data: { syncedAt: new Date() } });
         }
@@ -462,6 +466,16 @@ export class CollectionsService {
       `,
     ]);
     return { data: rows.map((row) => this.serialize(row)), meta: { page: query.page, limit: query.limit, total: countRows[0]?.total ?? 0 } };
+  }
+
+  private assertReplayOrder(replay: CollectionRow, orderId: string): void {
+    if (replay.order_id !== orderId) {
+      throw new ConflictException({
+        code: 'IDEMPOTENCY_KEY_REUSED',
+        message: 'Mã giao dịch đã được dùng cho đơn khác. Không thể xác nhận đồng bộ đơn này.',
+        details: { order_id: orderId },
+      });
+    }
   }
 
   private async loadByClientUuid(tx: Prisma.TransactionClient, clientUuid: string, collectorId?: string): Promise<CollectionRow | null> {

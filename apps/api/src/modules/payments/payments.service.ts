@@ -155,6 +155,8 @@ export class PaymentsService {
 
   async markPaid(id: string, actorUserId: string) {
     return this.prisma.$transaction(async (database) => {
+      // Read the status only after competing confirmations have committed.
+      await database.$queryRaw`SELECT "id" FROM "payments" WHERE "id" = ${id}::uuid FOR UPDATE`;
       const payment = await database.payment.findUnique({ where: { id } });
       if (!payment) throw new NotFoundException('Payment not found');
       if (payment.status === PaymentStatus.PAID) {
