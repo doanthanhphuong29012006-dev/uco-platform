@@ -27,7 +27,7 @@ Quick Tunnel chỉ dành cho demo. URL `trycloudflare.com` thay đổi sau mỗi
 Mở URL health trước buổi demo vài phút:
 
 ```text
-https://eco-oil-api.onrender.com/health
+https://eco-oil-api.onrender.com/api/v1/health
 ```
 
 Render Free có thể mất khoảng 50 giây để khởi động sau thời gian không hoạt động.

@@ -46,7 +46,9 @@ Khi chạy local, có thể dùng `/api/v1` cùng Vite proxy. Trên Vercel phả
 
 `ADMIN_PASSWORD` chỉ được đặt ở API/server, không đặt `NEXT_PUBLIC_` và không đưa vào bundle trình duyệt.
 
-## Thứ tự triển khai
+## Khởi tạo môi trường demo mới, không dùng cho production hiện có
+
+Các lệnh dưới đây chỉ dành cho database demo mới đã xác minh đúng đích. Không chạy lại `seed:demo` trên Neon production khi cập nhật bản sửa: `upsert` vẫn có thể ghi đè dữ liệu. Máy local đã có dependency thì không cần cài lại.
 
 ```powershell
 pnpm install
@@ -55,7 +57,7 @@ pnpm prisma:migrate
 pnpm seed:demo
 ```
 
-Luôn chạy migration trước, sau đó mới chạy seed. `seed:demo` dùng ID cố định và `upsert`, có thể chạy nhiều lần mà không nhân bản dữ liệu.
+Trong môi trường demo mới, chạy migration trước rồi mới seed. `seed:demo` dùng ID cố định và `upsert`; không nhân bản ID không đồng nghĩa với bảo toàn dữ liệu đã thay đổi.
 
 ## Build và start
 
@@ -151,8 +153,15 @@ Root Directory là bắt buộc; trỏ vào gốc repo thì build sai app.
 
 ### Quy trình deploy khi có migration mới
 
-Render tự deploy mỗi lần push. Nên nếu push trước, code mới sẽ chạy trên
-schema cũ và trả lỗi 500. Thứ tự đúng:
+Với bản sửa `20260908120000_collection_order_transaction_guard`, thực hiện kiểm tra chỉ đọc bằng [`scripts/preflight-collection-transaction-guard.sql`](scripts/preflight-collection-transaction-guard.sql) trên đúng database production sau khi được người vận hành cho phép. Truy vấn này không áp dụng migration. Nếu có giao dịch live trùng `order_id`, dừng triển khai và đối soát nghiệp vụ; không tự xóa hoặc soft-delete giao dịch để vượt unique index.
+
+Trước khi chạy migration phải xác nhận bản sao lưu còn hiệu lực và cách khôi phục. Chạy trong khoảng bảo trì đã thống nhất, kiểm soát các request ghi trong thời gian tạo index. Kiểm tra toàn bộ migration đang chờ, không mặc định chỉ có một migration. Build/test local thành công không có nghĩa schema production đã được cập nhật.
+
+Commit local không tự push. Kiểm tra cấu hình auto-deploy thực tế của Render/Vercel trước khi push; không đẩy bản mới lên hệ thống đang dùng nếu migration bắt buộc chưa sẵn sàng.
+
+Nếu Render được cấu hình auto-deploy theo nhánh đang push, code mới có thể chạy
+trên schema cũ và lỗi nếu chưa tương thích. Chỉ thực hiện các lệnh dưới đây sau
+khi đã hoàn tất kiểm tra, sao lưu và được phép migration production:
 
 ```powershell
 cd "<đường dẫn repo>"
